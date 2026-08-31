@@ -1,22 +1,37 @@
+"""Episodic memory integration with Graphiti and FalkorDB.
+
+Responsible for saving episodic events, decisions, preferences, and state changes,
+recalling relevant graph knowledge, and formatting temporal memories with provenance.
+"""
+
+import asyncio
+from datetime import datetime, timezone
+import logging
 import os
+from typing import Any, Optional
 
 from dotenv import load_dotenv
-
 from graphiti_core import Graphiti
+from graphiti_core.cross_encoder.gemini_reranker_client import (
+    GeminiRerankerClient,
+)
 from graphiti_core.driver.falkordb_driver import FalkorDriver
-from graphiti_core.llm_client.gemini_client import GeminiClient
-from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.embedder.gemini import (
     GeminiEmbedder,
     GeminiEmbedderConfig,
 )
-from graphiti_core.cross_encoder.gemini_reranker_client import (
-    GeminiRerankerClient,
-)
+from graphiti_core.llm_client.config import LLMConfig
+from graphiti_core.llm_client.gemini_client import GeminiClient
+from graphiti_core.nodes import EpisodeType
+
+logger = logging.getLogger(__name__)
+
+_GLOBAL_GRAPHITI: Optional[Graphiti] = None
+_BOUND_LOOP_ID: Optional[int] = None
 
 
 def create_graphiti() -> Graphiti:
-    # Loads .env from the project directory/current working directory
+    """Instantiate a Graphiti client configured with FalkorDB and Gemini."""
     load_dotenv()
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -63,3 +78,136 @@ def create_graphiti() -> Graphiti:
         embedder=embedder,
         cross_encoder=cross_encoder,
     )
+
+
+def get_graphiti() -> Graphiti:
+    """Retrieve or initialize the global Graphiti instance for the active event loop."""
+    global _GLOBAL_GRAPHITI, _BOUND_LOOP_ID
+
+    try:
+        current_loop = asyncio.get_running_loop()
+        current_loop_id = id(current_loop)
+    except RuntimeError:
+        current_loop_id = None
+
+    if _GLOBAL_GRAPHITI is None or _BOUND_LOOP_ID != current_loop_id:
+        _GLOBAL_GRAPHITI = create_graphiti()
+        _BOUND_LOOP_ID = current_loop_id
+
+    return _GLOBAL_GRAPHITI
+
+
+async def close_graphiti() -> None:
+    """Explicitly close the active Graphiti client."""
+    global _GLOBAL_GRAPHITI, _BOUND_LOOP_ID
+    if _GLOBAL_GRAPHITI is not None:
+        try:
+            await _GLOBAL_GRAPHITI.close()
+        except Exception as e:
+            logger.debug(f"Error closing Graphiti driver: {e}")
+        finally:
+            _GLOBAL_GRAPHITI = None
+            _BOUND_LOOP_ID = None
+
+
+async def remember(
+    content: str,
+    name: Optional[str] = None,
+    source_description: str = "Context Memory Fabric MCP",
+    reference_time: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Ingest a new episode into episodic memory (Graphiti + FalkorDB).
+
+    Args:
+        content: The text content to store as an episodic memory.
+        name: An identifier name for the episode (auto-generated if omitted).
+        source_description: Description of the memory origin.
+        reference_time: Time when the event occurred (defaults to now UTC).
+    """
+    graphiti = get_graphiti()
+    ref_time = reference_time or datetime.now(timezone.utc)
+    episode_name = name or f"memory_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+    logger.info(f"Ingesting memory episode: '{episode_name}'")
+    await graphiti.add_episode(
+        name=episode_name,
+        episode_body=content,
+        source_description=source_description,
+        reference_time=ref_time,
+        source=EpisodeType.text,
+    )
+
+    return {
+        "status": "success",
+        "name": episode_name,
+        "reference_time": ref_time.isoformat(),
+        "source_description": source_description,
+        "message": f"Successfully remembered episode '{episode_name}' in episodic memory.",
+    }
+
+
+def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> str:
+    """Format extracted memory facts into clean Markdown for MCP tool responses."""
+    if not facts:
+        return f"No matching episodic memory found for query: '{query}'."
+
+    lines = [
+        f"### Episodic Memory Search Results for '{query}'",
+        f"Retrieved {len(facts)} relevant fact(s) from FalkorDB / Graphiti:\n",
+    ]
+
+    for idx, item in enumerate(facts, 1):
+        fact_text = item.get("fact", "Unknown fact")
+        valid_at = item.get("valid_at", "N/A")
+        invalid_at = item.get("invalid_at")
+        episodes = item.get("episodes", [])
+
+        status_tag = "ACTIVE" if not invalid_at else f"SUPERSEDED (invalidated at {invalid_at})"
+        lines.append(f"#### {idx}. {fact_text}")
+        lines.append(f"- **Status:** `{status_tag}`")
+        lines.append(f"- **Valid From:** `{valid_at}`")
+        if invalid_at:
+            lines.append(f"- **Superseded At:** `{invalid_at}`")
+        if episodes:
+            lines.append(f"- **Source Episodes:** `{', '.join(str(e) for e in episodes)}`")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+async def recall(
+    query: str,
+    max_results: int = 10,
+    format_for_mcp: bool = True,
+) -> str | list[dict[str, Any]]:
+    """Search episodic memory (Graphiti + FalkorDB) for facts related to query.
+
+    Args:
+        query: Search query for relevant facts.
+        max_results: Maximum facts to return.
+        format_for_mcp: If True, return formatted Markdown string.
+    """
+    graphiti = get_graphiti()
+    results = await graphiti.search(query)
+
+    facts: list[dict[str, Any]] = []
+    for edge in results[:max_results]:
+        fact_data = {
+            "fact": getattr(edge, "fact", str(edge)),
+            "valid_at": getattr(edge, "valid_at", None),
+            "invalid_at": getattr(edge, "invalid_at", None),
+            "episodes": getattr(edge, "episodes", []),
+            "created_at": getattr(edge, "created_at", None),
+        }
+        if isinstance(fact_data["valid_at"], datetime):
+            fact_data["valid_at"] = fact_data["valid_at"].isoformat()
+        if isinstance(fact_data["invalid_at"], datetime):
+            fact_data["invalid_at"] = fact_data["invalid_at"].isoformat()
+        if isinstance(fact_data["created_at"], datetime):
+            fact_data["created_at"] = fact_data["created_at"].isoformat()
+
+        facts.append(fact_data)
+
+    if format_for_mcp:
+        return format_memory_results_for_mcp(facts, query)
+    return facts
