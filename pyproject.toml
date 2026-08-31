@@ -1,0 +1,20 @@
+[project]
+name = "context-memory-fabric"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Todd Margolis", email = "9217299+tmargolis@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "graphiti-core[falkordb]>=0.29.3",
+    "mcp>=2.1.1",
+]
+
+[project.scripts]
+context-memory-fabric = "context_memory_fabric:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
