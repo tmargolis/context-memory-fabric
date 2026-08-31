@@ -8,8 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "graphiti-core[falkordb]>=0.29.3",
+    "graphiti-core[falkordb,google-genai]>=0.29.3",
     "mcp>=2.1.1",
+    "python-dotenv>=1.2.3",
 ]
 
 [project.scripts]
@@ -18,3 +19,6 @@ context-memory-fabric = "context_memory_fabric:main"
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.pyrefly]
+search-path = ["."]
