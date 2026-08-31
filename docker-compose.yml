@@ -1,0 +1,18 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: context-memory-fabric-falkordb
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - falkordb_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  falkordb_data:
