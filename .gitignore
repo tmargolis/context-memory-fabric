@@ -81,3 +81,6 @@ data/
 falkordb/
 falkordb_data/
 *.log
+
+# Context Memory Fabric runtime state and proposals
+.cmf/

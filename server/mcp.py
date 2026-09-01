@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 
 from server.context import get_context as assemble_context
 from server.memory import recall as recall_memory, remember as remember_memory
+from server.proposals import create_wiki_proposal, format_proposal_for_mcp
 from server.wiki import search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,34 @@ async def get_context(
         max_wiki_results=max_wiki_results,
         max_memory_results=max_memory_results,
     )
+
+
+@app.tool()
+async def propose_wiki_update(
+    target_path: str,
+    proposed_content: str,
+    rationale: str,
+    source_context: Optional[str] = None,
+) -> str:
+    """Create a persistent reviewable proposal to create or update a Wiki document without modifying LLM_Wiki.
+
+    Args:
+        target_path: Relative path to target file within LLM_Wiki (e.g. 'WIKI/projects/Atlas.md').
+        proposed_content: The full desired content of the text file.
+        rationale: Explanation of why this change or new document is being proposed.
+        source_context: Optional context or session notes explaining the proposal background.
+    """
+    try:
+        proposal = create_wiki_proposal(
+            target_path=target_path,
+            proposed_content=proposed_content,
+            rationale=rationale,
+            source_context=source_context,
+        )
+        return format_proposal_for_mcp(proposal)
+    except Exception as e:
+        logger.error(f"Error creating wiki proposal for '{target_path}': {e}")
+        return f"Error creating wiki proposal for '{target_path}': {e}"
 
 
 def main():
