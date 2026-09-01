@@ -57,13 +57,13 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 
 ### Historical memory imports
 
-Historical exports are staged under project-root `imports/`. Import logic should split source material into atomic candidates and route them conservatively:
+Historical memory content should be passed directly by an AI client/agent to the import MCP tool; source files do **not** need to be copied into the project. The importer should split the supplied content into atomic candidates and classify them conservatively:
 
 - **episodic:** dated decisions, events, changes, milestones → Graphiti/FalkorDB
-- **durable candidate:** stable facts, reference material, long-lived preferences → review only; do not copy into episodic memory
+- **durable candidate:** stable facts, reference material, long-lived preferences → review only
 - **ambiguous/undated:** review rather than inventing an event date
 
-Imports must preserve source/date provenance, be idempotent, and never mutate `LLM_Wiki`; durable candidates can later be promoted through `propose_wiki_update()`.
+Project-root `imports/` is reserved for local import state/reports, not source uploads. Imports must preserve source/date provenance, be idempotent, and never mutate `LLM_Wiki`.
 
 ---
 
