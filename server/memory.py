@@ -12,42 +12,35 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 from graphiti_core import Graphiti
-from graphiti_core.cross_encoder.gemini_reranker_client import (
-    GeminiRerankerClient,
-)
+from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
 from graphiti_core.driver.falkordb_driver import FalkorDriver
-from graphiti_core.embedder.gemini import (
-    GeminiEmbedder,
-    GeminiEmbedderConfig,
-)
+from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Cached Graphiti instance per running event loop
 _GLOBAL_GRAPHITI: Optional[Graphiti] = None
 _BOUND_LOOP_ID: Optional[int] = None
 
 
 def create_graphiti() -> Graphiti:
     """Instantiate a Graphiti client configured with FalkorDB and Gemini."""
-    load_dotenv()
-
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Add it to the project-root .env file."
-        )
+        raise RuntimeError("GEMINI_API_KEY is not set. Add it to the project-root .env file.")
 
     falkor_host = os.getenv("FALKORDB_HOST", "localhost")
     falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
+    falkor_password = os.getenv("FALKORDB_PASSWORD") or None
 
     driver = FalkorDriver(
         host=falkor_host,
         port=falkor_port,
-        username=None,
-        password=None,
+        password=falkor_password,
     )
 
     llm_client = GeminiClient(
@@ -115,6 +108,7 @@ async def remember(
     name: Optional[str] = None,
     source_description: str = "Context Memory Fabric MCP",
     reference_time: Optional[datetime] = None,
+    max_retries: int = 3,
 ) -> dict[str, Any]:
     """Ingest a new episode into episodic memory (Graphiti + FalkorDB).
 
@@ -123,19 +117,32 @@ async def remember(
         name: An identifier name for the episode (auto-generated if omitted).
         source_description: Description of the memory origin.
         reference_time: Time when the event occurred (defaults to now UTC).
+        max_retries: Number of retries on transient rate limits (429).
     """
     graphiti = get_graphiti()
     ref_time = reference_time or datetime.now(timezone.utc)
     episode_name = name or f"memory_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
     logger.info(f"Ingesting memory episode: '{episode_name}'")
-    await graphiti.add_episode(
-        name=episode_name,
-        episode_body=content,
-        source_description=source_description,
-        reference_time=ref_time,
-        source=EpisodeType.text,
-    )
+
+    for attempt in range(max_retries):
+        try:
+            await graphiti.add_episode(
+                name=episode_name,
+                episode_body=content,
+                source_description=source_description,
+                reference_time=ref_time,
+                source=EpisodeType.text,
+            )
+            break
+        except Exception as e:
+            err_msg = str(e).lower()
+            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg) and attempt < max_retries - 1:
+                backoff = 5.0 * (attempt + 1)
+                logger.warning(f"Rate limit encountered in remember(). Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                await asyncio.sleep(backoff)
+            else:
+                raise
 
     return {
         "status": "success",
@@ -179,6 +186,7 @@ async def recall(
     query: str,
     max_results: int = 10,
     format_for_mcp: bool = True,
+    max_retries: int = 3,
 ) -> str | list[dict[str, Any]]:
     """Search episodic memory (Graphiti + FalkorDB) for facts related to query.
 
@@ -186,9 +194,23 @@ async def recall(
         query: Search query for relevant facts.
         max_results: Maximum facts to return.
         format_for_mcp: If True, return formatted Markdown string.
+        max_retries: Number of retries on transient rate limits (429).
     """
     graphiti = get_graphiti()
-    results = await graphiti.search(query)
+
+    results = []
+    for attempt in range(max_retries):
+        try:
+            results = await graphiti.search(query)
+            break
+        except Exception as e:
+            err_msg = str(e).lower()
+            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg) and attempt < max_retries - 1:
+                backoff = 5.0 * (attempt + 1)
+                logger.warning(f"Rate limit encountered in recall(). Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                await asyncio.sleep(backoff)
+            else:
+                raise
 
     facts: list[dict[str, Any]] = []
     for edge in results[:max_results]:

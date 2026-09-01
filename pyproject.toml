@@ -1,11 +1,9 @@
 [project]
 name = "context-memory-fabric"
 version = "0.1.0"
-description = "Add your description here"
+description = "A portable context and memory substrate shared across AI clients"
 readme = "README.md"
-authors = [
-    { name = "Todd Margolis", email = "9217299+tmargolis@users.noreply.github.com" }
-]
+authors = []
 requires-python = ">=3.12"
 dependencies = [
     "graphiti-core[falkordb,google-genai]>=0.29.3",

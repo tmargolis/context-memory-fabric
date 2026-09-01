@@ -1,11 +1,13 @@
 """Comprehensive test suite for Phase 1 Step 6 MCP tools.
 
 Validates:
-- search_wiki() with cache, new exclusions (_lint_reports, _profile_reports, templates, memory) and MCP formatting
+- All 5 MCP tools registered with titles, rich routing descriptions, and parameter annotations
+- MCPServer instructions configured for LLM client routing
+- Accurate read/write ToolAnnotations (hints)
+- search_wiki() with cache, exclusions (_lint_reports, _profile_reports, templates, memory) and MCP formatting
 - remember() storing synthetic memory into Graphiti/FalkorDB
 - recall() retrieving memory facts with temporal provenance
 - get_context() unifying durable knowledge and episodic memory
-- MCP tool registration and schemas
 """
 
 import asyncio
@@ -19,7 +21,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from server.corpus import ExtractionStatus, get_corpus_root
 from server.context import get_context
-from server.mcp import app, get_context as mcp_get_context, recall as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
+from server.mcp import (
+    app,
+    get_context as mcp_get_context,
+    propose_wiki_update as mcp_propose_wiki_update,
+    recall as mcp_recall,
+    remember as mcp_remember,
+    search_wiki as mcp_search_wiki,
+)
 from server.memory import close_graphiti, recall, remember
 from server.wiki import WikiCorpusManager, format_search_results_for_mcp, search_corpus, search_wiki
 
@@ -30,16 +39,59 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await close_graphiti()
 
-    async def test_mcp_tool_registration(self):
-        """Verify all 4 required MCP tools are registered on the MCPServer instance."""
-        tools = await app.list_tools()
-        tool_names = [t.name for t in tools]
-        print(f"Registered MCP tools: {tool_names}")
+    async def test_mcp_tool_registration_and_server_instructions(self):
+        """Verify all 5 tools are registered, have server instructions, titles, and rich metadata."""
+        # 1. Server Instructions
+        self.assertIsNotNone(app.instructions)
+        self.assertIn("default personal context layer for the user", app.instructions)
+        self.assertIn("prefer get_context", app.instructions)
+        self.assertIn("propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki", app.instructions)
 
-        self.assertIn("remember", tool_names)
-        self.assertIn("recall", tool_names)
-        self.assertIn("search_wiki", tool_names)
-        self.assertIn("get_context", tool_names)
+        # 2. Tool Listing
+        tools = await app.list_tools()
+        tool_dict = {t.name: t for t in tools}
+        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update"}
+        self.assertEqual(set(tool_dict.keys()), expected_tools)
+
+        # 3. Titles & Annotations
+        for name in expected_tools:
+            tool = tool_dict[name]
+            self.assertIsNotNone(tool.title, f"Tool {name} must have a title")
+            self.assertTrue(len(tool.title) > 0)
+            self.assertIsNotNone(tool.annotations, f"Tool {name} must have annotations")
+
+        # 4. Check read-only vs write annotations
+        self.assertTrue(tool_dict["get_context"].annotations.read_only_hint)
+        self.assertTrue(tool_dict["search_wiki"].annotations.read_only_hint)
+        self.assertTrue(tool_dict["recall"].annotations.read_only_hint)
+        self.assertFalse(tool_dict["remember"].annotations.read_only_hint)
+        self.assertFalse(tool_dict["propose_wiki_update"].annotations.read_only_hint)
+
+        for name, tool in tool_dict.items():
+            self.assertFalse(tool.annotations.destructive_hint, f"Tool {name} should not be marked destructive")
+
+        # 5. Routing Keywords & Safety Contracts in Descriptions
+        self.assertIn("DEFAULT personal-context retrieval tool", tool_dict["get_context"].description)
+        self.assertIn("Where are we with", tool_dict["get_context"].description)
+
+        self.assertIn("Durable/source-material retrieval", tool_dict["search_wiki"].description)
+        self.assertIn("Find my notes on", tool_dict["search_wiki"].description)
+
+        self.assertIn("Temporal/episodic retrieval", tool_dict["recall"].description)
+        self.assertIn("What did I decide", tool_dict["recall"].description)
+
+        self.assertIn("Direct episodic write", tool_dict["remember"].description)
+        self.assertIn("Do NOT call this automatically for every casual chat message", tool_dict["remember"].description)
+
+        self.assertIn("DOES NOT modify LLM_Wiki", tool_dict["propose_wiki_update"].description)
+        self.assertIn("wiki-proposals/", tool_dict["propose_wiki_update"].description)
+
+        # 6. Parameter descriptions
+        for name, tool in tool_dict.items():
+            props = tool.input_schema.get("properties", {})
+            self.assertTrue(len(props) > 0, f"Tool {name} should have input properties")
+            for prop_name, prop_data in props.items():
+                self.assertIn("description", prop_data, f"Param '{prop_name}' on tool '{name}' must have a description")
 
     async def test_search_wiki_mcp_formatting_and_exclusions(self):
         """Verify search_wiki returns formatted Markdown and respects new exclusions."""

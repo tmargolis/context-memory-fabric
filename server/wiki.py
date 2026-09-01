@@ -289,7 +289,7 @@ def format_search_results_for_mcp(results: list[SearchResult], query: str) -> st
 
     lines = [
         f"### Durable Knowledge Search Results for '{query}'",
-        f"Found {len(results)} relevant asset(s) in `tmargolis/LLM_Wiki`:\n",
+        f"Found {len(results)} relevant asset(s) in `LLM_Wiki`:\n",
     ]
 
     for idx, r in enumerate(results, 1):

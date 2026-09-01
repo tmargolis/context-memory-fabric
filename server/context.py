@@ -42,7 +42,7 @@ async def get_context(
     sections: list[str] = [
         f"# Context Fabric: '{clean_topic}'\n",
         "---",
-        "## 📚 DURABLE KNOWLEDGE (Source: `tmargolis/LLM_Wiki`)\n",
+        "## 📚 DURABLE KNOWLEDGE (Source: `LLM_Wiki`)\n",
     ]
 
     if wiki_results:

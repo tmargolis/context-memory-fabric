@@ -1,4 +1,4 @@
-"""Read-only acceptance test against real LLM_Wiki (/Users/todd/LLM_Wiki).
+"""Read-only acceptance test against configured local LLM_Wiki.
 
 Runs a full read-only scan, calculates statistics, and executes demonstration
 searches across Markdown, Reports/Output, PDF, and Media/Binary assets.

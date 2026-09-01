@@ -43,8 +43,8 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         self.temp_wiki = tempfile.TemporaryDirectory()
         self.wiki_root = Path(self.temp_wiki.name)
 
-        self.temp_cmf = tempfile.TemporaryDirectory()
-        self.cmf_proposals_dir = Path(self.temp_cmf.name) / "wiki-proposals"
+        self.temp_proposals = tempfile.TemporaryDirectory()
+        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
 
         # Populate a minimal synthetic Wiki
         wiki_dir = self.wiki_root / "WIKI"
@@ -59,7 +59,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.temp_wiki.cleanup()
-        self.temp_cmf.cleanup()
+        self.temp_proposals.cleanup()
 
     async def asyncTearDown(self):
         await close_graphiti()
@@ -78,7 +78,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             rationale=rationale,
             source_context="Session 42 discussion",
             wiki_root=self.wiki_root,
-            proposals_dir=self.cmf_proposals_dir,
+            proposals_dir=self.proposals_dir,
         )
 
         # 1. Verify proposal fields
@@ -110,7 +110,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             proposed_content=proposed_text,
             rationale=rationale,
             wiki_root=self.wiki_root,
-            proposals_dir=self.cmf_proposals_dir,
+            proposals_dir=self.proposals_dir,
         )
 
         # 1. Verify proposal metadata
@@ -157,7 +157,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             proposed_content=f"# Project Atlas\nContains {secret_token}",
             rationale="Testing search isolation",
             wiki_root=self.wiki_root,
-            proposals_dir=self.cmf_proposals_dir,
+            proposals_dir=self.proposals_dir,
         )
 
         # Search the synthetic wiki
@@ -171,16 +171,16 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             proposed_content="# Project Atlas\nUpdated content",
             rationale="Persistence test",
             wiki_root=self.wiki_root,
-            proposals_dir=self.cmf_proposals_dir,
+            proposals_dir=self.proposals_dir,
         )
 
         # Retrieve proposal from a fresh listing / read
-        loaded_prop = get_proposal(prop.proposal_id, proposals_dir=self.cmf_proposals_dir)
+        loaded_prop = get_proposal(prop.proposal_id, proposals_dir=self.proposals_dir)
         self.assertIsNotNone(loaded_prop)
         self.assertEqual(loaded_prop.proposal_id, prop.proposal_id)
         self.assertEqual(loaded_prop.rationale, "Persistence test")
 
-        all_props = list_proposals(proposals_dir=self.cmf_proposals_dir)
+        all_props = list_proposals(proposals_dir=self.proposals_dir)
         self.assertIn(prop.proposal_id, [p.proposal_id for p in all_props])
 
     async def test_full_five_tool_mcp_contract(self):
