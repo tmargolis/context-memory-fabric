@@ -84,6 +84,9 @@ def get_graphiti() -> Graphiti:
         current_loop_id = None
 
     if _GLOBAL_GRAPHITI is None or _BOUND_LOOP_ID != current_loop_id:
+        if _GLOBAL_GRAPHITI is not None:
+            _GLOBAL_GRAPHITI = None
+            _BOUND_LOOP_ID = None
         _GLOBAL_GRAPHITI = create_graphiti()
         _BOUND_LOOP_ID = current_loop_id
 
@@ -91,16 +94,34 @@ def get_graphiti() -> Graphiti:
 
 
 async def close_graphiti() -> None:
-    """Explicitly close the active Graphiti client."""
+    """Explicitly close the active Graphiti client and its associated resources."""
     global _GLOBAL_GRAPHITI, _BOUND_LOOP_ID
     if _GLOBAL_GRAPHITI is not None:
         try:
+            # Close LLM client if open
+            if hasattr(_GLOBAL_GRAPHITI, "llm_client") and hasattr(_GLOBAL_GRAPHITI.llm_client, "client"):
+                c = getattr(_GLOBAL_GRAPHITI.llm_client, "client")
+                if hasattr(c, "aclose"):
+                    try:
+                        await c.aclose()
+                    except Exception:
+                        pass
+            # Close embedder client if open
+            if hasattr(_GLOBAL_GRAPHITI, "embedder") and hasattr(_GLOBAL_GRAPHITI.embedder, "client"):
+                c = getattr(_GLOBAL_GRAPHITI.embedder, "client")
+                if hasattr(c, "aclose"):
+                    try:
+                        await c.aclose()
+                    except Exception:
+                        pass
             await _GLOBAL_GRAPHITI.close()
         except Exception as e:
             logger.debug(f"Error closing Graphiti driver: {e}")
         finally:
             _GLOBAL_GRAPHITI = None
             _BOUND_LOOP_ID = None
+            import gc
+            gc.collect()
 
 
 async def remember(

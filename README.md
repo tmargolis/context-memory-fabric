@@ -54,6 +54,7 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 | **`recall(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes. |
 | **`remember(content, name, source_description)`** | State Write | Ingests a substantive decision, event, preference change, or milestone into the episodic knowledge graph in FalkorDB. |
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
+| **`import_memories(content, source, source_description, dry_run)`** | Admin / Bulk Ingest | Parses historical memory exports passed directly by AI clients, conservatively classifies them, and ingests dated episodic entries into Graphiti. |
 
 ### Historical memory imports
 

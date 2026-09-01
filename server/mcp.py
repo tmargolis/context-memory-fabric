@@ -16,6 +16,7 @@ import mcp.types as types
 from pydantic import Field
 
 from server.context import get_context as assemble_context
+from server.importer import import_memories_content
 from server.memory import recall as recall_memory, remember as remember_memory
 from server.proposals import create_wiki_proposal, format_proposal_for_mcp
 from server.wiki import search_wiki as query_wiki
@@ -27,7 +28,8 @@ SERVER_INSTRUCTIONS = (
     "projects, prior work, decisions, current state, or personal knowledge, prefer get_context "
     "when both durable and recent context may matter. Use search_wiki for durable corpus retrieval "
     "and recall for temporal episodic retrieval. remember writes episodic state. "
-    "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki."
+    "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
+    "import_memories is an explicit administrative bulk-import tool for AI memory exports."
 )
 
 # Initialize MCP Server with instructions
@@ -312,6 +314,70 @@ async def propose_wiki_update(
     except Exception as e:
         logger.error(f"Error creating wiki proposal for '{target_path}': {e}")
         return f"Error creating wiki proposal for '{target_path}': {e}"
+
+
+@app.tool(
+    title="Import Historical Memories",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def import_memories(
+    content: Annotated[
+        str,
+        Field(
+            description="Historical memory export or summary text (Markdown or plain-text) passed directly by the AI client."
+        ),
+    ],
+    source: Annotated[
+        str,
+        Field(
+            description="Origin AI platform. Must be one of: 'chatgpt', 'claude', 'gemini'."
+        ),
+    ],
+    source_description: Annotated[
+        Optional[str],
+        Field(
+            description="Optional descriptive label for this import source or export batch (e.g. 'ChatGPT memory export March 2026')."
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="If true (default), parses and classifies candidates without ingesting to Graphiti or updating import state. If false, ingests accepted episodic memories."
+        ),
+    ] = True,
+) -> str:
+    """Administrative bulk-import tool for historical memories from ChatGPT, Claude, or Gemini exports.
+
+    WHEN TO USE:
+    - Invoke ONLY when the user explicitly requests to import, seed, or ingest historical memories from an AI client export (ChatGPT, Claude, or Gemini).
+    - Do NOT invoke automatically during ordinary chat conversations or for everyday facts (use 'remember' for individual observations).
+
+    INPUT FORMAT:
+    - Pass the memory content directly as an in-memory string in 'content'.
+    - 'source' must be one of: 'chatgpt', 'claude', 'gemini'.
+    - 'dry_run=True' (default) parses and classifies items into episodic, durable_candidate, and ambiguous categories without modifying Graphiti.
+    - 'dry_run=False' ingests accepted episodic items with preserved timestamps into Graphiti/FalkorDB and records idempotency state in imports/.
+
+    SEMANTIC BOUNDARIES:
+    - Ingests ONLY episodic items (dated decisions, milestones, configuration changes, events).
+    - Skips durable items (stable profile/preferences/inventory) and undated/ambiguous items.
+    - Never modifies LLM_Wiki.
+
+    SIDE EFFECTS:
+    - In dry-run mode: writes a review report to imports/results/. No Graphiti writes.
+    - In committed mode (dry_run=False): writes episodic episodes to Graphiti and tracks idempotency state in imports/state/.
+    """
+    return await import_memories_content(
+        content=content,
+        source=source,
+        source_description=source_description,
+        dry_run=dry_run,
+    )
 
 
 def main():

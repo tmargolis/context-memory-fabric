@@ -188,7 +188,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         # 1. MCP Tool Registration
         tools = await app.list_tools()
         tool_names = {t.name for t in tools}
-        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update"}
+        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories"}
         self.assertEqual(tool_names, expected_tools, f"Expected exactly {expected_tools}, got {tool_names}")
 
         # 2. Direct Episodic Write
