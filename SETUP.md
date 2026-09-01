@@ -25,7 +25,7 @@ This guide covers setting up, configuring, running, and testing the **Context Me
 ### 1. Clone & Install Dependencies
 
 ```bash
-git clone https://github.com/<your-username>/context-memory-fabric.git
+git clone https://github.com/tmargolis/context-memory-fabric.git
 cd context-memory-fabric
 uv sync
 ```
