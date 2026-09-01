@@ -27,14 +27,10 @@ This guide covers setting up, configuring, running, and testing the **Context Me
 ```bash
 git clone https://github.com/<your-username>/context-memory-fabric.git
 cd context-memory-fabric
-
-# Install virtualenv and dependencies with uv
 uv sync
 ```
 
 ### 2. Start FalkorDB Container
-
-Run the lightweight FalkorDB Docker container:
 
 ```bash
 docker run -d \
@@ -44,44 +40,35 @@ docker run -d \
   falkordb/falkordb:latest
 ```
 
-Alternatively, use the included `docker-compose.yml`:
+Or use the included Compose file:
 
 ```bash
 docker compose up -d
 ```
 
-- **FalkorDB Database Port:** `localhost:6379`
-- **FalkorDB Web Browser UI:** `http://localhost:3001` (connect to host `localhost:6379`, graph name `default_db`)
+- **FalkorDB:** `localhost:6379`
+- **Browser:** `http://localhost:3001` (graph `default_db`)
 
 ---
 
 ## Configuration Options
 
-Configuration can be set via a project-root `.env` file, environment variables, or CLI arguments:
-
-### Environment Variables
+Configuration can be set via project-root `.env`, environment variables, or CLI arguments.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `LLM_WIKI_PATH` | **Yes** | — | Absolute path to the local durable knowledge corpus directory (e.g. `/Users/username/LLM_Wiki`). |
-| `GEMINI_API_KEY` | **Yes** | — | Google Gemini API key used by Graphiti for entity extraction and embeddings. |
-| `FALKORDB_HOST` | No | `localhost` | FalkorDB server host. |
-| `FALKORDB_PORT` | No | `6379` | FalkorDB server port. |
-| `FALKORDB_PASSWORD` | No | `None` | FalkorDB password if authentication is enabled. |
-| `CMF_STATE_DIR` | No | `./wiki-proposals` | Custom directory for storing pending wiki update proposals. |
+| `LLM_WIKI_PATH` | **Yes** | — | Absolute path to the local durable knowledge corpus. |
+| `GEMINI_API_KEY` | **Yes** | — | Gemini key used by Graphiti extraction/embeddings. |
+| `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
+| `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
+| `FALKORDB_PASSWORD` | No | `None` | FalkorDB password if enabled. |
+| `CMF_STATE_DIR` | No | `./wiki-proposals` | Pending Wiki proposal storage. |
 
-### Example `.env`
-
-Create a `.env` file in the project root:
+Example:
 
 ```bash
-# Path to your local durable knowledge folder
 LLM_WIKI_PATH=/path/to/your/LLM_Wiki
-
-# Gemini API Key for Graphiti
-GEMINI_API_KEY=AIzaSy...
-
-# FalkorDB connection settings
+GEMINI_API_KEY=...
 FALKORDB_HOST=localhost
 FALKORDB_PORT=6379
 ```
@@ -90,42 +77,67 @@ FALKORDB_PORT=6379
 
 ## Running the MCP Server
 
-The server supports three transport protocols via CLI flags:
-
-### 1. Standard I/O (Default, recommended for desktop clients)
+### Standard I/O (default; desktop clients)
 
 ```bash
 uv run python -m server.mcp
 ```
 
-### 2. Server-Sent Events (SSE)
+### SSE
 
 ```bash
 uv run python -m server.mcp --transport sse --host 127.0.0.1 --port 8000
 ```
-- SSE endpoint: `http://localhost:8000/sse`
 
-### 3. Streamable HTTP
+### Streamable HTTP
 
 ```bash
 uv run python -m server.mcp --transport streamable-http --host 127.0.0.1 --port 8000
 ```
-- Endpoint: `http://localhost:8000/mcp`
 
-### CLI Arguments
+CLI options: `--transport`, `--host`, `--port`, `--wiki-path`.
+
+---
+
+## Reset Episodic Memory
+
+For a clean import/test cycle, clear all nodes and relationships from the Graphiti graph while leaving the FalkorDB container/volume intact:
+
+```bash
+docker exec context-memory-fabric-falkordb redis-cli GRAPH.QUERY default_db "MATCH (n) DETACH DELETE n"
+```
+
+Confirm the graph name first if needed:
+
+```bash
+docker exec context-memory-fabric-falkordb redis-cli GRAPH.LIST
+```
+
+This is destructive to episodic memory. It does **not** modify `LLM_Wiki` or pending Wiki proposals. Avoid `docker compose down -v` unless you intend to delete the entire FalkorDB volume.
+
+---
+
+## Historical Memory Imports
+
+Stage ChatGPT/Claude/Gemini exports under project-root:
 
 ```text
---transport     Transport protocol: 'stdio', 'sse', or 'streamable-http' (default: stdio)
---host          Host address for network transports (default: 127.0.0.1)
---port          Port number for network transports (default: 8000)
---wiki-path     Path to local LLM_Wiki corpus root directory (overrides LLM_WIKI_PATH in .env)
+imports/
 ```
+
+The importer should keep this directory out of Git and automatically classify atomic items as:
+
+- **episodic** — dated events, decisions, changes, milestones → ingest into Graphiti
+- **durable candidate** — stable facts/reference knowledge/preferences → retain for review, not episodic ingestion
+- **ambiguous/undated** — retain for review rather than inventing a date
+
+Import requirements: preserve source and original event/reference time, prevent duplicates on reruns, support dry-run, and never write directly to `LLM_Wiki`. Durable candidates can later be handled through `propose_wiki_update()`.
+
+**Privacy:** episodic items ingested through Graphiti are processed by the configured LLM/embedding provider.
 
 ---
 
 ## Running Tests
-
-Run the full automated unit and integration test suite with `pytest`:
 
 ```bash
 uv run pytest
