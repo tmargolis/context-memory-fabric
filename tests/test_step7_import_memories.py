@@ -357,6 +357,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "get_context",
             "propose_wiki_update",
             "import_memories",
+            "edit_memory",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

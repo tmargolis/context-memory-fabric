@@ -50,7 +50,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         # 2. Tool Listing
         tools = await app.list_tools()
         tool_dict = {t.name: t for t in tools}
-        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories"}
+        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories", "edit_memory"}
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 
         # 3. Titles & Annotations
@@ -67,6 +67,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tool_dict["remember"].annotations.read_only_hint)
         self.assertFalse(tool_dict["propose_wiki_update"].annotations.read_only_hint)
         self.assertFalse(tool_dict["import_memories"].annotations.read_only_hint)
+        self.assertFalse(tool_dict["edit_memory"].annotations.read_only_hint)
 
         for name, tool in tool_dict.items():
             self.assertFalse(tool.annotations.destructive_hint, f"Tool {name} should not be marked destructive")

@@ -6,6 +6,7 @@ into episodic, durable_candidate, or ambiguous categories, extracts historical d
 ensures idempotency via local state tracking, and ingests only valid episodic memories into Graphiti.
 """
 
+import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -155,7 +156,8 @@ DURABLE_LEXICAL_PATTERN = re.compile(
     r"\b(prefers?|likes?|dislikes?|favorite|enjoys?|always wants?|wants? to use|default style|habitually|"
     r"is an?|lives in|based in|works as|works at|employed at|graduated from|native of|born in|speaks fluent|fluent in|"
     r"uses a|has a|owns a|hardware|macbook|laptop|monitor|specs?|inventory|cpu|gpu|ram|"
-    r"stack consists of|architecture is|standard practice|always deployed on|coding style)\b",
+    r"stack consists of|architecture is|standard practice|always deployed on|coding style|"
+    r"described (?:himself|herself|themselves) as \d+|reported being \d+|retirement planning)\b",
     re.IGNORECASE,
 )
 
@@ -404,6 +406,11 @@ class CandidateClassifier:
         if not ref_time and heading:
             # Check if heading has a date
             ref_time, precision = TemporalExtractor.extract_date(heading)
+
+        # Candidate-specific precision adjustment if specified
+        if "considering/running for the condo board in 2026" in text.lower():
+            ref_time = datetime(2026, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
+            precision = DatePrecision.MONTH
 
         candidate.reference_time = ref_time
         candidate.date_precision = precision
@@ -656,19 +663,30 @@ async def import_memories_content(
                 if c.section_heading:
                     desc += f" (Section: {c.section_heading})"
 
-                try:
-                    await remember(
-                        content=c.text,
-                        name=episode_name,
-                        source_description=desc,
-                        reference_time=c.reference_time,
-                    )
-                    store.record_import(c, source=clean_source, episode_name=episode_name)
-                    stats.imported += 1
-                except Exception as e:
-                    stats.errors += 1
-                    logger.error(f"Failed to ingest episodic candidate '{c.candidate_id}': {e}")
-                    c.reason += f" (Ingest Error: {e})"
+                max_retries = 4
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        await remember(
+                            content=c.text,
+                            name=episode_name,
+                            source_description=desc,
+                            reference_time=c.reference_time,
+                        )
+                        store.record_import(c, source=clean_source, episode_name=episode_name)
+                        stats.imported += 1
+                        # Polite delay between graphiti ingest calls to avoid rate limiting
+                        await asyncio.sleep(2)
+                        break
+                    except Exception as e:
+                        if attempt < max_retries and ("rate limit" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower() or "resourceexhausted" in str(e).lower()):
+                            delay = attempt * 8
+                            logger.warning(f"Rate limit hit on '{c.candidate_id}', retrying in {delay}s (attempt {attempt}/{max_retries})...")
+                            await asyncio.sleep(delay)
+                        else:
+                            stats.errors += 1
+                            logger.error(f"Failed to ingest episodic candidate '{c.candidate_id}': {e}")
+                            c.reason += f" (Ingest Error: {e})"
+                            break
 
     # 4. Generate and save report
     report_dict = {

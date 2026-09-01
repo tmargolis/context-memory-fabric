@@ -9,19 +9,19 @@ Context Memory Fabric is a portable personal context and memory layer shared acr
 ## Architectural Separation
 
 ```text
-                  Context Memory Fabric MCP (mcp.py)
-                                  │
-    ┌────────────────┬────────────┼────────────┬────────────────┐
-    │                │            │            │                │
-remember()        recall()   search_wiki()  get_context()  propose_wiki_update()
-    │                │            │            │                │
- direct           episodic    canonical    unified context   reviewable
-episodic          factual      durable     (provenance &      proposal
- write              read         read       guidance)          write
-    │                │            │            │                │
-    ▼                ▼            ▼            ▼                ▼
-Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
-                                                          (Wiki UNTOUCHED)
+                                         Context Memory Fabric MCP (mcp.py)
+                                                         │
+   ┌──────────────┬──────────────┬──────────────┬────────┴───────┬──────────────┬──────────────────────┬──────────────────┐
+   │              │              │              │                │              │                      │                  │
+remember()    recall()     edit_memory()  search_wiki()    get_context()   propose_wiki_update()   import_memories()
+   │              │              │              │                │              │                      │
+ direct        episodic      episodic       canonical         unified       reviewable             administrative
+episodic       factual      mutation /       durable          context        proposal                historical
+ write           read        re-date          read          assembly          write                 bulk import
+   │              │              │              │                │              │                      │
+   ▼              ▼              ▼              ▼                ▼              ▼                      ▼
+        Graphiti / FalkorDB                  LLM_Wiki       Both Stores   wiki-proposals/     Graphiti / FalkorDB
+                                                                          (Wiki UNTOUCHED)    (imports/ registry)
 ```
 
 1. **Durable Knowledge (`LLM_Wiki`):**
@@ -32,6 +32,7 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 2. **Episodic Memory (Graphiti + FalkorDB):**
    - Dynamic temporal knowledge graph storing past decisions, evolving state, preferences, milestones, and entity relationships.
    - Tracks temporal validity (`valid_at`, `invalid_at`) so newer decisions supersede older ones without silently deleting history.
+   - Can be directly updated, re-dated, and corrected using `edit_memory()` while keeping provenance and import state in sync.
 
 3. **Unified Context Assembly (`get_context`):**
    - Assembles both durable knowledge and episodic memory into clean Markdown with clear provenance tags and conflict interpretation guidance.
@@ -53,6 +54,7 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 | **`search_wiki(query)`** | Read-Only | Lexical search over the local durable knowledge corpus (`WIKI/`, `REPORTS/`, `RAW/`, `TO-RESEARCH/`, etc.) with extracted snippet previews and media metadata. |
 | **`recall(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes. |
 | **`remember(content, name, source_description)`** | State Write | Ingests a substantive decision, event, preference change, or milestone into the episodic knowledge graph in FalkorDB. |
+| **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** | Memory Mutation | Modifies, corrects, or re-dates existing episodic episodes, entity nodes, and graph relationships in FalkorDB, synchronizing local import state. |
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
 | **`import_memories(content, source, source_description, dry_run)`** | Admin / Bulk Ingest | Parses historical memory exports passed directly by AI clients, conservatively classifies them, and ingests dated episodic entries into Graphiti. |
 

@@ -9,6 +9,8 @@ import argparse
 import asyncio
 import logging
 import os
+from pathlib import Path
+import sys
 from typing import Annotated, Optional
 
 from mcp.server.mcpserver import MCPServer
@@ -17,7 +19,11 @@ from pydantic import Field
 
 from server.context import get_context as assemble_context
 from server.importer import import_memories_content
-from server.memory import recall as recall_memory, remember as remember_memory
+from server.memory import (
+    edit_memory as edit_episodic_memory,
+    recall as recall_memory,
+    remember as remember_memory,
+)
 from server.proposals import create_wiki_proposal, format_proposal_for_mcp
 from server.wiki import search_wiki as query_wiki
 
@@ -28,6 +34,7 @@ SERVER_INSTRUCTIONS = (
     "projects, prior work, decisions, current state, or personal knowledge, prefer get_context "
     "when both durable and recent context may matter. Use search_wiki for durable corpus retrieval "
     "and recall for temporal episodic retrieval. remember writes episodic state. "
+    "edit_memory corrects, re-dates, or modifies existing episodic memory and entity nodes. "
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
     "import_memories is an explicit administrative bulk-import tool for AI memory exports."
 )
@@ -380,6 +387,79 @@ async def import_memories(
     )
 
 
+@app.tool(
+    title="Edit or Correct Episodic Memory",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def edit_memory(
+    target_query: Annotated[
+        str,
+        Field(
+            description="Search query, entity name, episode name, or UUID identifying the episodic memory or entity to modify (e.g. 'C7 right transverse process fracture', 'Ski accident', or episode UUID)."
+        ),
+    ],
+    new_reference_time: Annotated[
+        Optional[str],
+        Field(
+            description="New date or timestamp to set for the episode / valid_at (e.g. '2025-01-13' or '2025-01-13T00:00:00Z')."
+        ),
+    ] = None,
+    new_content: Annotated[
+        Optional[str],
+        Field(
+            description="Optional updated narrative content for the episode."
+        ),
+    ] = None,
+    new_summary: Annotated[
+        Optional[str],
+        Field(
+            description="Optional updated summary text for the matched entity node(s)."
+        ),
+    ] = None,
+    new_name: Annotated[
+        Optional[str],
+        Field(
+            description="Optional updated identifier name for the episode or entity."
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="Set to true to preview proposed modifications without writing to FalkorDB or the import registry (default: false)."
+        ),
+    ] = False,
+) -> str:
+    """Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.
+
+    WHEN TO USE:
+    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.
+    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).
+    - Use to update entity summaries or episode narrative content in the knowledge graph.
+
+    EXAMPLES OF USER INTENT:
+    - 'My ski accident was on 2025-01-13, not 2024-01-13. Update that in memory.'
+    - 'Fix the date for the C7 transverse process fracture to 2025-01-13.'
+    - 'Correct the summary for the Tesla Model 3 entity.'
+
+    SIDE EFFECTS:
+    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.
+    """
+    return await edit_episodic_memory(
+        target_query=target_query,
+        new_reference_time=new_reference_time,
+        new_content=new_content,
+        new_summary=new_summary,
+        new_name=new_name,
+        dry_run=dry_run,
+        format_for_mcp=True,
+    )  # type: ignore
+
+
 def main():
     """Run the MCP server supporting stdio, sse, and streamable-http transports."""
     parser = argparse.ArgumentParser(description="Context Memory Fabric MCP Server")
@@ -410,7 +490,7 @@ def main():
     if args.wiki_path:
         os.environ["LLM_WIKI_PATH"] = str(Path(args.wiki_path).expanduser().resolve())
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 
     if args.transport == "sse":
         logger.info(f"Starting Context Memory Fabric MCP Server on SSE transport at http://{args.host}:{args.port}/sse ...")
@@ -419,7 +499,6 @@ def main():
         logger.info(f"Starting Context Memory Fabric MCP Server on HTTP transport at http://{args.host}:{args.port}/mcp ...")
         app.run(transport="streamable-http", host=args.host, port=args.port)
     else:
-        logger.info("Starting Context Memory Fabric MCP Server on stdio transport...")
         app.run(transport="stdio")
 
 

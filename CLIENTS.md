@@ -41,7 +41,7 @@ Claude Desktop can launch and manage Context Memory Fabric automatically in the 
 > [!TIP]
 > You can also pass `--wiki-path /path/to/your/LLM_Wiki` directly inside the `"args"` array instead of using the `"env"` block.
 
-3. Restart Claude Desktop (`Cmd + Q` and reopen). The 5 Context Memory Fabric tools (`get_context`, `search_wiki`, `recall`, `remember`, `propose_wiki_update`) will appear in the connectors/tool list.
+3. Restart Claude Desktop (`Cmd + Q` and reopen). All 7 Context Memory Fabric tools (`get_context`, `search_wiki`, `recall`, `remember`, `edit_memory`, `propose_wiki_update`, `import_memories`) will appear in the connectors/tool list.
 
 ---
 
@@ -107,3 +107,17 @@ For remote web clients that require an HTTPS endpoint:
    ```
 2. Expose the port securely through your chosen reverse proxy, Cloudflare Tunnel, or HTTPS gateway.
 3. Configure the remote MCP connector URL in the client's developer settings.
+
+---
+
+## Available MCP Tools Summary
+
+All connected clients receive access to the full suite of 7 Context Memory Fabric tools:
+
+1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
+2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
+3. **`recall(query)`** *(Read-Only)* — Semantic search across episodic memory facts and temporal history in FalkorDB / Graphiti.
+4. **`remember(content, name, source_description)`** *(State Write)* — Ingests a substantive decision, milestone, preference change, or event into episodic memory.
+5. **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** *(Memory Mutation)* — Edits, corrects, or re-dates existing episodic episodes, entity nodes, and graph edges, synchronizing local import state.
+6. **`propose_wiki_update(target_path, proposed_content, rationale)`** *(Proposal Write)* — Creates a reviewable staging proposal in `wiki-proposals/` without mutating the canonical Wiki.
+7. **`import_memories(content, source, source_description, dry_run)`** *(Admin Ingest)* — Administrative bulk import tool for importing AI memory summaries (ChatGPT, Claude, Gemini) into episodic memory.
