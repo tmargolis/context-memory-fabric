@@ -40,8 +40,8 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 
 ## Documentation & Guides
 
-- 🛠️ **[Installation, Configuration & Setup Guide](SETUP.md):** Complete prerequisites, Docker configuration, `.env` options, and testing instructions.
-- 🔌 **[Client Integration & Harness Guide](CLIENTS.md):** Step-by-step setup for Claude Desktop, Antigravity IDE, Cursor, and other MCP harnesses.
+- 🛠️ **[Installation, Configuration & Setup Guide](SETUP.md):** Prerequisites, Docker, `.env`, testing, graph reset, and historical-memory import.
+- 🔌 **[Client Integration & Harness Guide](CLIENTS.md):** Claude Desktop, Antigravity IDE, Cursor, and other MCP clients.
 
 ---
 
@@ -54,6 +54,16 @@ Graphiti / FalkorDB          LLM_Wiki    Both Stores       wiki-proposals/
 | **`recall(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes. |
 | **`remember(content, name, source_description)`** | State Write | Ingests a substantive decision, event, preference change, or milestone into the episodic knowledge graph in FalkorDB. |
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
+
+### Historical memory imports
+
+Historical exports are staged under project-root `imports/`. Import logic should split source material into atomic candidates and route them conservatively:
+
+- **episodic:** dated decisions, events, changes, milestones → Graphiti/FalkorDB
+- **durable candidate:** stable facts, reference material, long-lived preferences → review only; do not copy into episodic memory
+- **ambiguous/undated:** review rather than inventing an event date
+
+Imports must preserve source/date provenance, be idempotent, and never mutate `LLM_Wiki`; durable candidates can later be promoted through `propose_wiki_update()`.
 
 ---
 
@@ -70,4 +80,3 @@ cp .env.example .env  # configure LLM_WIKI_PATH and GEMINI_API_KEY
 # 3. Run the MCP server
 uv run python -m server.mcp
 ```
-
