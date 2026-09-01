@@ -119,19 +119,15 @@ This is destructive to episodic memory. It does **not** modify `LLM_Wiki` or pen
 
 ## Historical Memory Imports
 
-Stage ChatGPT/Claude/Gemini exports under project-root:
+Historical memory content is supplied directly by the calling AI client/agent to the import MCP tool. No source file needs to be copied into the project.
 
-```text
-imports/
-```
-
-The importer should keep this directory out of Git and automatically classify atomic items as:
+The importer should classify atomic items as:
 
 - **episodic** — dated events, decisions, changes, milestones → ingest into Graphiti
 - **durable candidate** — stable facts/reference knowledge/preferences → retain for review, not episodic ingestion
 - **ambiguous/undated** — retain for review rather than inventing a date
 
-Import requirements: preserve source and original event/reference time, prevent duplicates on reruns, support dry-run, and never write directly to `LLM_Wiki`. Durable candidates can later be handled through `propose_wiki_update()`.
+Project-root `imports/` is reserved for generated import state/reports (for idempotency and review), not source uploads. Imports should preserve source and original event/reference time, prevent duplicates on reruns, support dry-run, and never write directly to `LLM_Wiki`.
 
 **Privacy:** episodic items ingested through Graphiti are processed by the configured LLM/embedding provider.
 
