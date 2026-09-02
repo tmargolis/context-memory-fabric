@@ -26,12 +26,11 @@ from graphiti_core.nodes import EpisodeType
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Cached Graphiti instance per running event loop
-_GLOBAL_GRAPHITI: Optional[Graphiti] = None
-_BOUND_LOOP_ID: Optional[int] = None
+# Cached Graphiti instances per (event_loop_id, graph_name)
+_GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
 
 
-def create_graphiti() -> Graphiti:
+def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     """Instantiate a Graphiti client configured with FalkorDB and Gemini."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -40,11 +39,13 @@ def create_graphiti() -> Graphiti:
     falkor_host = os.getenv("FALKORDB_HOST", "localhost")
     falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
     falkor_password = os.getenv("FALKORDB_PASSWORD") or None
+    target_database = graph_name.strip() if graph_name and graph_name.strip() else os.getenv("FALKORDB_DATABASE", "default_db")
 
     driver = FalkorDriver(
         host=falkor_host,
         port=falkor_port,
         password=falkor_password,
+        database=target_database,
     )
 
     llm_client = GeminiClient(
@@ -77,9 +78,9 @@ def create_graphiti() -> Graphiti:
     )
 
 
-def get_graphiti() -> Graphiti:
-    """Retrieve or initialize the global Graphiti instance for the active event loop."""
-    global _GLOBAL_GRAPHITI, _BOUND_LOOP_ID
+def get_graphiti(graph_name: Optional[str] = None) -> Graphiti:
+    """Retrieve or initialize the Graphiti instance for the active event loop and target graph database."""
+    global _GRAPHITI_INSTANCES
 
     try:
         current_loop = asyncio.get_running_loop()
@@ -87,45 +88,45 @@ def get_graphiti() -> Graphiti:
     except RuntimeError:
         current_loop_id = None
 
-    if _GLOBAL_GRAPHITI is None or _BOUND_LOOP_ID != current_loop_id:
-        if _GLOBAL_GRAPHITI is not None:
-            _GLOBAL_GRAPHITI = None
-            _BOUND_LOOP_ID = None
-        _GLOBAL_GRAPHITI = create_graphiti()
-        _BOUND_LOOP_ID = current_loop_id
+    target_database = graph_name.strip() if graph_name and graph_name.strip() else os.getenv("FALKORDB_DATABASE", "default_db")
+    cache_key = (current_loop_id, target_database)
 
-    return _GLOBAL_GRAPHITI
+    if cache_key not in _GRAPHITI_INSTANCES:
+        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(graph_name=target_database)
+
+    return _GRAPHITI_INSTANCES[cache_key]
 
 
 async def close_graphiti() -> None:
-    """Explicitly close the active Graphiti client and its associated resources."""
-    global _GLOBAL_GRAPHITI, _BOUND_LOOP_ID
-    if _GLOBAL_GRAPHITI is not None:
+    """Explicitly close all active Graphiti clients and their associated resources."""
+    global _GRAPHITI_INSTANCES
+    instances = list(_GRAPHITI_INSTANCES.values())
+    _GRAPHITI_INSTANCES.clear()
+
+    for instance in instances:
         try:
             # Close LLM client if open
-            if hasattr(_GLOBAL_GRAPHITI, "llm_client") and hasattr(_GLOBAL_GRAPHITI.llm_client, "client"):
-                c = getattr(_GLOBAL_GRAPHITI.llm_client, "client")
+            if hasattr(instance, "llm_client") and hasattr(instance.llm_client, "client"):
+                c = getattr(instance.llm_client, "client")
                 if hasattr(c, "aclose"):
                     try:
                         await c.aclose()
                     except Exception:
                         pass
             # Close embedder client if open
-            if hasattr(_GLOBAL_GRAPHITI, "embedder") and hasattr(_GLOBAL_GRAPHITI.embedder, "client"):
-                c = getattr(_GLOBAL_GRAPHITI.embedder, "client")
+            if hasattr(instance, "embedder") and hasattr(instance.embedder, "client"):
+                c = getattr(instance.embedder, "client")
                 if hasattr(c, "aclose"):
                     try:
                         await c.aclose()
                     except Exception:
                         pass
-            await _GLOBAL_GRAPHITI.close()
+            await instance.close()
         except Exception as e:
             logger.debug(f"Error closing Graphiti driver: {e}")
-        finally:
-            _GLOBAL_GRAPHITI = None
-            _BOUND_LOOP_ID = None
-            import gc
-            gc.collect()
+
+    import gc
+    gc.collect()
 
 
 async def remember(

@@ -17,7 +17,7 @@ from mcp.server.mcpserver import MCPServer
 import mcp.types as types
 from pydantic import Field
 
-from server.chatgpt_exporter import import_chatgpt_exports as run_import_chatgpt_exports
+from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
 from server.context import get_context as assemble_context
 from server.importer import import_memories_content
 from server.memory import (
@@ -413,6 +413,24 @@ async def import_chatgpt_exports(
             description="If true (default), parses and classifies candidates without ingesting to Graphiti. If false, ingests accepted episodic memories."
         ),
     ] = True,
+    graph_name: Annotated[
+        Optional[str],
+        Field(
+            description="Target graph database name in FalkorDB (e.g. 'cmf_chatgpt_000'). Required when dry_run=False. Refuses to default to protected database."
+        ),
+    ] = None,
+    review_overrides: Annotated[
+        Optional[list[dict]],
+        Field(
+            description="Optional list of review override dictionaries keyed by immutable source_record_ids (supports actions: 'reclassify', 'consolidate', 'exclude')."
+        ),
+    ] = None,
+    review_overrides_path: Annotated[
+        Optional[str],
+        Field(
+            description="Optional path to a gitignored review overrides JSON file (e.g. 'imports/review/overrides.json')."
+        ),
+    ] = None,
 ) -> str:
     """Administrative tool to import or dry-run native ChatGPT conversation export JSON files.
 
@@ -424,9 +442,17 @@ async def import_chatgpt_exports(
     - Reconstructs active conversation branch from current_node backwards.
     - USER messages are primary evidence; ASSISTANT messages provide contextual resolution only.
     - Classifies into episodic, durable_candidate, ambiguous, and non_memory.
+    - Supports runtime review overrides keyed by immutable source_record_ids.
     - In dry-run mode (default), writes full breakdown reports to imports/results/ without modifying FalkorDB.
+    - When dry_run=False, graph_name is strictly required and target graph is isolated from production default_db.
     """
-    report_md, _ = await run_import_chatgpt_exports(paths=paths, dry_run=dry_run)
+    report_md, _ = await run_import_chatgpt_exports(
+        paths=paths,
+        dry_run=dry_run,
+        graph_name=graph_name,
+        review_overrides=review_overrides,
+        review_overrides_path=review_overrides_path,
+    )
     return report_md
 
 
@@ -443,13 +469,13 @@ async def edit_memory(
     target_query: Annotated[
         str,
         Field(
-            description="Search query, entity name, episode name, or UUID identifying the episodic memory or entity to modify (e.g. 'C7 right transverse process fracture', 'Ski accident', or episode UUID)."
+            description="Search query, entity name, episode name, or UUID identifying the episodic memory or entity to modify (e.g. 'Project kickoff', 'Database decision', or episode UUID)."
         ),
     ],
     new_reference_time: Annotated[
         Optional[str],
         Field(
-            description="New date or timestamp to set for the episode / valid_at (e.g. '2025-01-13' or '2025-01-13T00:00:00Z')."
+            description="New date or timestamp to set for the episode / valid_at (e.g. '2024-06-15' or '2024-06-15T00:00:00Z')."
         ),
     ] = None,
     new_content: Annotated[
@@ -485,9 +511,9 @@ async def edit_memory(
     - Use to update entity summaries or episode narrative content in the knowledge graph.
 
     EXAMPLES OF USER INTENT:
-    - 'My ski accident was on 2025-01-13, not 2024-01-13. Update that in memory.'
-    - 'Fix the date for the C7 transverse process fracture to 2025-01-13.'
-    - 'Correct the summary for the Tesla Model 3 entity.'
+    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'
+    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'
+    - 'Correct the summary for the SQLite database entity.'
 
     SIDE EFFECTS:
     - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.
