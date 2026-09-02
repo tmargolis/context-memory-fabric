@@ -12,7 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union, overload
 
 from dotenv import load_dotenv
 from graphiti_core import Graphiti
@@ -208,6 +208,33 @@ def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> st
     return "\n".join(lines).strip()
 
 
+@overload
+async def recall(
+    query: str,
+    max_results: int = 10,
+    format_for_mcp: Literal[True] = True,
+    max_retries: int = 3,
+) -> str: ...
+
+
+@overload
+async def recall(
+    query: str,
+    max_results: int = 10,
+    format_for_mcp: Literal[False] = ...,
+    max_retries: int = 3,
+) -> list[dict[str, Any]]: ...
+
+
+@overload
+async def recall(
+    query: str,
+    max_results: int = 10,
+    format_for_mcp: bool = ...,
+    max_retries: int = 3,
+) -> str | list[dict[str, Any]]: ...
+
+
 async def recall(
     query: str,
     max_results: int = 10,
@@ -272,7 +299,7 @@ def parse_iso_datetime(date_input: str | datetime) -> datetime:
             return date_input.replace(tzinfo=timezone.utc)
         return date_input.astimezone(timezone.utc)
 
-    s = str(date_input).strip()
+    s = date_input.strip()
     # YYYY-MM-DD
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
         dt = datetime.strptime(s, "%Y-%m-%d")
@@ -368,6 +395,45 @@ def format_edit_memory_results_for_mcp(
     return "\n".join(lines).strip()
 
 
+@overload
+async def edit_memory(
+    target_query: str,
+    new_reference_time: Optional[str | datetime] = None,
+    new_content: Optional[str] = None,
+    new_summary: Optional[str] = None,
+    new_name: Optional[str] = None,
+    dry_run: bool = False,
+    format_for_mcp: Literal[True] = True,
+    registry_path: Optional[str | Path] = None,
+) -> str: ...
+
+
+@overload
+async def edit_memory(
+    target_query: str,
+    new_reference_time: Optional[str | datetime] = None,
+    new_content: Optional[str] = None,
+    new_summary: Optional[str] = None,
+    new_name: Optional[str] = None,
+    dry_run: bool = False,
+    format_for_mcp: Literal[False] = ...,
+    registry_path: Optional[str | Path] = None,
+) -> dict[str, Any]: ...
+
+
+@overload
+async def edit_memory(
+    target_query: str,
+    new_reference_time: Optional[str | datetime] = None,
+    new_content: Optional[str] = None,
+    new_summary: Optional[str] = None,
+    new_name: Optional[str] = None,
+    dry_run: bool = False,
+    format_for_mcp: bool = ...,
+    registry_path: Optional[str | Path] = None,
+) -> str | dict[str, Any]: ...
+
+
 async def edit_memory(
     target_query: str,
     new_reference_time: Optional[str | datetime] = None,
@@ -424,7 +490,7 @@ async def edit_memory(
     ent_rows = await driver.execute_query(cypher_entities, query=clean_query)
     if ent_rows and len(ent_rows) > 0 and isinstance(ent_rows[0], list):
         for r in ent_rows[0]:
-            entities_map[r["uuid"]] = r
+            entities_map[r["uuid"]] = dict(r)
 
     # Query Episode nodes
     cypher_episodes = (
@@ -437,7 +503,7 @@ async def edit_memory(
     ep_rows = await driver.execute_query(cypher_episodes, query=clean_query)
     if ep_rows and len(ep_rows) > 0 and isinstance(ep_rows[0], list):
         for r in ep_rows[0]:
-            episodes_map[r["uuid"]] = r
+            episodes_map[r["uuid"]] = dict(r)
 
     # For each matched Entity, find connected Episodes
     for ent_uuid in list(entities_map.keys()):
@@ -450,7 +516,7 @@ async def edit_memory(
         if conn_eps and len(conn_eps) > 0 and isinstance(conn_eps[0], list):
             for r in conn_eps[0]:
                 if r["uuid"] not in episodes_map:
-                    episodes_map[r["uuid"]] = r
+                    episodes_map[r["uuid"]] = dict(r)
 
     # For each matched Episode, find connected Entities
     for ep_uuid in list(episodes_map.keys()):
@@ -463,7 +529,7 @@ async def edit_memory(
         if conn_ents and len(conn_ents) > 0 and isinstance(conn_ents[0], list):
             for r in conn_ents[0]:
                 if r["uuid"] not in entities_map:
-                    entities_map[r["uuid"]] = r
+                    entities_map[r["uuid"]] = dict(r)
 
     # 3. Find connected Edges
     edges_map: dict[str, dict[str, Any]] = {}
@@ -476,7 +542,7 @@ async def edit_memory(
         edge_rows = await driver.execute_query(cypher_edge, ep_uuid=ep_uuid)
         if edge_rows and len(edge_rows) > 0 and isinstance(edge_rows[0], list):
             for r in edge_rows[0]:
-                edges_map[r["uuid"]] = r
+                edges_map[r["uuid"]] = dict(r)
 
     # 4. Plan and track modifications
     modified_episodes: list[dict[str, Any]] = []
@@ -541,10 +607,11 @@ async def edit_memory(
                 if oc in target_name:
                     target_name = target_name.replace(oc, new_compact_str)
                     name_changed = True
-            for od in old_date_strs:
-                if od in target_name:
-                    target_name = target_name.replace(od, new_date_str)
-                    name_changed = True
+            if new_date_str:
+                for od in old_date_strs:
+                    if od in target_name:
+                        target_name = target_name.replace(od, new_date_str)
+                        name_changed = True
 
         if valid_at_changed or content_changed or name_changed:
             ep_change = {
@@ -750,6 +817,33 @@ def format_reconcile_results_for_mcp(
         lines.append("")
 
     return "\n".join(lines).strip()
+
+
+@overload
+async def reconcile_memories(
+    records: list[dict[str, Any]],
+    dry_run: bool = False,
+    format_for_mcp: Literal[True] = True,
+    registry_path: Optional[Path] = None,
+) -> str: ...
+
+
+@overload
+async def reconcile_memories(
+    records: list[dict[str, Any]],
+    dry_run: bool = False,
+    format_for_mcp: Literal[False] = ...,
+    registry_path: Optional[Path] = None,
+) -> dict[str, Any]: ...
+
+
+@overload
+async def reconcile_memories(
+    records: list[dict[str, Any]],
+    dry_run: bool = False,
+    format_for_mcp: bool = ...,
+    registry_path: Optional[Path] = None,
+) -> str | dict[str, Any]: ...
 
 
 async def reconcile_memories(

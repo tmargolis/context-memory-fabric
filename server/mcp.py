@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Optional
+from typing import Annotated, Optional, cast
 
 from mcp.server.mcpserver import MCPServer
 import mcp.types as types
@@ -155,7 +155,7 @@ async def search_wiki(
     SIDE EFFECTS:
     - Read-only. Does not modify any Wiki files.
     """
-    return query_wiki(query=query, max_results=max_results, force_rescan=force_rescan, format_for_mcp=True)  # type: ignore
+    return query_wiki(query=query, max_results=max_results, force_rescan=force_rescan, format_for_mcp=True)
 
 
 @app.tool(
@@ -201,7 +201,7 @@ async def recall(
     SIDE EFFECTS:
     - Read-only. Does not modify episodic memory.
     """
-    return await recall_memory(query=query, max_results=max_results, format_for_mcp=True)  # type: ignore
+    return await recall_memory(query=query, max_results=max_results, format_for_mcp=True)
 
 
 @app.tool(
@@ -526,7 +526,7 @@ async def edit_memory(
         new_name=new_name,
         dry_run=dry_run,
         format_for_mcp=True,
-    )  # type: ignore
+    )
 
 
 @app.tool(
@@ -570,7 +570,7 @@ async def reconcile_memories(
         records=records,
         dry_run=dry_run,
         format_for_mcp=True,
-    )  # type: ignore
+    )
 
 
 def main():

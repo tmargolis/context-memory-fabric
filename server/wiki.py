@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from typing import Optional
+from typing import Literal, Optional, overload
 
 from server.corpus import (
     IGNORED_DIR_NAMES,
@@ -337,6 +337,33 @@ def search_corpus(
     else:
         # Use cached global manager
         return _GLOBAL_CORPUS_MANAGER.search(query=query, max_results=max_results)
+
+
+@overload
+def search_wiki(
+    query: str,
+    max_results: int = 10,
+    force_rescan: bool = False,
+    format_for_mcp: Literal[True] = True,
+) -> str: ...
+
+
+@overload
+def search_wiki(
+    query: str,
+    max_results: int = 10,
+    force_rescan: bool = False,
+    format_for_mcp: Literal[False] = ...,
+) -> list[SearchResult]: ...
+
+
+@overload
+def search_wiki(
+    query: str,
+    max_results: int = 10,
+    force_rescan: bool = False,
+    format_for_mcp: bool = ...,
+) -> str | list[SearchResult]: ...
 
 
 def search_wiki(
