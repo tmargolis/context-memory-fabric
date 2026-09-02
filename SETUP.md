@@ -113,7 +113,7 @@ Confirm the graph name first if needed:
 docker exec context-memory-fabric-falkordb redis-cli GRAPH.LIST
 ```
 
-This is destructive to episodic memory. It does **not** modify `LLM_Wiki` or pending Wiki proposals. Avoid `docker compose down -v` unless you intend to delete the entire FalkorDB volume.
+This is destructive to episodic memory. It does **not** modify `LLM_Wiki` or pending Wiki proposals. Avoid `docker compose down -v` unless you intend to delete the entire FalkorDB volume. For a complete list of safe inspection and validation queries, see [FalkorDB / Cypher Query Reference](FALKORDB-QUERIES.md).
 
 ---
 

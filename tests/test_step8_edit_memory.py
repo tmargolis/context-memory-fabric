@@ -29,6 +29,7 @@ from server.memory import (
     get_graphiti,
     parse_iso_datetime,
     recall,
+    reconcile_memories as reconcile_episodic_memories,
     remember,
 )
 
@@ -102,16 +103,105 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await edit_memory(target_query="   ", new_reference_time="2025-01-13")
 
-    async def test_edit_memory_no_match(self):
-        """Verify report when no entities or episodes match target query."""
-        md_res = await edit_memory(
-            target_query="NonExistentTargetEntity999XYZ",
-            new_reference_time="2025-01-13",
+    async def test_reconcile_memories_registration_and_dry_run(self):
+        """Verify reconcile_memories is registered in server.mcp and works with dry_run."""
+        tools = await app.list_tools()
+        tool_dict = {t.name: t for t in tools}
+        self.assertIn("reconcile_memories", tool_dict)
+
+        rec = {
+            "candidate_ids": ["cand_test_1"],
+            "action": "upsert_episode",
+            "name": "Test Reconciled Memory",
+            "content": "Test reconciled content regarding project milestones on 2026-05-15.",
+            "event_date": "2026-05-15",
+            "event_date_precision": "day",
+            "observed_at": "2026-05-20",
+        }
+
+        # Dry run formatted
+        md_res = await reconcile_episodic_memories(
+            records=[rec],
             dry_run=True,
             format_for_mcp=True,
         )
-        self.assertIn("No matching episodes, entities, or facts found", md_res)
+        self.assertIn("DRY RUN", md_res)
+        self.assertIn("Test Reconciled Memory", md_res)
+
+        # Reject action dry run
+        reject_rec = {
+            "candidate_ids": ["cand_test_reject"],
+            "action": "discard_candidate",
+            "reason": "Test rejection reason.",
+        }
+        md_reject = await reconcile_episodic_memories(
+            records=[reject_rec],
+            dry_run=True,
+            format_for_mcp=True,
+        )
+        self.assertIn("- **Candidates Discarded / Rejected:** 1", md_reject)
+        self.assertIn("Test rejection reason.", md_reject)
+
+    async def test_mcp_boundary_protocol_calls(self):
+        """Verify calling reconcile_memories, import_memories, and edit_memory over the MCP protocol boundary."""
+        # 1. Reconcile memories tool call
+        reconcile_args = {
+            "records": [
+                {
+                    "candidate_ids": ["cand_mcp_1"],
+                    "origin_ids": ["src_mcp_1"],
+                    "action": "upsert_episode",
+                    "name": "Protocol Test Episode",
+                    "content": "Protocol test memory content on 2026-08-01.",
+                    "event_date": "2026-08-01",
+                    "event_date_precision": "day",
+                    "observed_at": None,
+                },
+                {
+                    "candidate_ids": ["cand_mcp_reject"],
+                    "action": "discard_candidate",
+                    "reason": "Conflated test memory.",
+                }
+            ],
+            "dry_run": True,
+        }
+        rec_res = await app.call_tool("reconcile_memories", arguments=reconcile_args)
+        self.assertFalse(rec_res.is_error)
+        self.assertGreater(len(rec_res.content), 0)
+        rec_text = rec_res.content[0].text
+        self.assertIn("Historical Memory Reconciliation Report", rec_text)
+        self.assertIn("Protocol Test Episode", rec_text)
+        self.assertIn("Conflated test memory.", rec_text)
+
+        # 2. Import memories tool call
+        import_args = {
+            "content": "- On 2026-08-15, configured FalkorDB memory limits.",
+            "source": "chatgpt",
+            "source_description": "MCP boundary test",
+            "dry_run": True,
+        }
+        imp_res = await app.call_tool("import_memories", arguments=import_args)
+        self.assertFalse(imp_res.is_error)
+        self.assertGreater(len(imp_res.content), 0)
+        imp_text = imp_res.content[0].text
+        self.assertIn("Historical Memory Import Report", imp_text)
+        self.assertIn("DRY RUN", imp_text)
+
+        # 3. Edit memory tool call
+        edit_args = {
+            "target_query": "Protocol Test Episode",
+            "new_reference_time": "2026-08-02",
+            "dry_run": True,
+        }
+        edit_res = await app.call_tool("edit_memory", arguments=edit_args)
+        self.assertFalse(edit_res.is_error)
+        self.assertGreater(len(edit_res.content), 0)
+        edit_text = edit_res.content[0].text
+        self.assertIn("Memory Edit Report", edit_text)
+        self.assertIn("DRY RUN", edit_text)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

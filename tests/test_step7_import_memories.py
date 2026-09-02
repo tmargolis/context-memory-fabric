@@ -97,6 +97,46 @@ class TestMemoryParserAndClassifier(unittest.TestCase):
         self.assertTrue(any("PostgreSQL 16" in c.text for c in candidates))
         self.assertTrue(any("Redis" in c.text for c in candidates))
 
+    def test_stable_candidate_identity_invariance_under_insertions_and_deletions(self):
+        """Verify inserting or removing earlier bullets does NOT change stable origin_id of later candidates."""
+        # Document version A
+        doc_a = """## Technical Decisions
+- Switched caching layer to Redis on 2026-03-15.
+- On 2026-08-31, decided to use PostgreSQL 16 for Project Atlas.
+- Released v1.0 on 2026-09-01.
+"""
+        candidates_a = MemoryTextParser.parse(doc_a, source="chatgpt")
+        pg_cand_a = next(c for c in candidates_a if "PostgreSQL 16" in c.text)
+        self.assertEqual(pg_cand_a.display_ordinal, 2)
+        self.assertEqual(pg_cand_a.candidate_id, "cand_2")
+        self.assertTrue(pg_cand_a.origin_id.startswith("src_"))
+
+        # Document version B: Insert an unrelated new bullet at the very beginning
+        doc_b = """## Technical Decisions
+- Investigated ClickHouse for analytics on 2026-01-10.
+- Switched caching layer to Redis on 2026-03-15.
+- On 2026-08-31, decided to use PostgreSQL 16 for Project Atlas.
+- Released v1.0 on 2026-09-01.
+"""
+        candidates_b = MemoryTextParser.parse(doc_b, source="chatgpt")
+        pg_cand_b = next(c for c in candidates_b if "PostgreSQL 16" in c.text)
+        self.assertEqual(pg_cand_b.display_ordinal, 3)
+        self.assertEqual(pg_cand_b.candidate_id, "cand_3")  # Display ordinal shifted
+        # Stable origin_id MUST be identical despite insertion
+        self.assertEqual(pg_cand_b.origin_id, pg_cand_a.origin_id)
+
+        # Document version C: Delete the Redis bullet before PostgreSQL
+        doc_c = """## Technical Decisions
+- On 2026-08-31, decided to use PostgreSQL 16 for Project Atlas.
+- Released v1.0 on 2026-09-01.
+"""
+        candidates_c = MemoryTextParser.parse(doc_c, source="chatgpt")
+        pg_cand_c = next(c for c in candidates_c if "PostgreSQL 16" in c.text)
+        self.assertEqual(pg_cand_c.display_ordinal, 1)
+        self.assertEqual(pg_cand_c.candidate_id, "cand_1")  # Display ordinal shifted
+        # Stable origin_id MUST remain completely identical despite deletion
+        self.assertEqual(pg_cand_c.origin_id, pg_cand_a.origin_id)
+
     def test_temporal_extractor_dates_and_precision(self):
         """Verify exact dates, partial dates, and rejection of relative/absent dates."""
         # Exact ISO
@@ -358,6 +398,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "propose_wiki_update",
             "import_memories",
             "edit_memory",
+            "reconcile_memories",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

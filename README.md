@@ -43,6 +43,7 @@ episodic       factual      mutation /       durable          context        pro
 
 - 🛠️ **[Installation, Configuration & Setup Guide](SETUP.md):** Prerequisites, Docker, `.env`, testing, graph reset, and historical-memory import.
 - 🔌 **[Client Integration & Harness Guide](CLIENTS.md):** Claude Desktop, Antigravity IDE, Cursor, and other MCP clients.
+- 📊 **[FalkorDB / Cypher Query Reference](FALKORDB-QUERIES.md):** Operator and developer Cypher query reference for inspecting, auditing, and validating the Graphiti graph.
 
 ---
 
@@ -55,6 +56,7 @@ episodic       factual      mutation /       durable          context        pro
 | **`recall(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes. |
 | **`remember(content, name, source_description)`** | State Write | Ingests a substantive decision, event, preference change, or milestone into the episodic knowledge graph in FalkorDB. |
 | **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** | Memory Mutation | Modifies, corrects, or re-dates existing episodic episodes, entity nodes, and graph relationships in FalkorDB, synchronizing local import state. |
+| **`reconcile_memories(records, dry_run)`** | Reconciliation | Consolidates, updates, and upserts episodic memories with real upsert/reject semantics in FalkorDB and synchronizes local import registry state. |
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
 | **`import_memories(content, source, source_description, dry_run)`** | Admin / Bulk Ingest | Parses historical memory exports passed directly by AI clients, conservatively classifies them, and ingests dated episodic entries into Graphiti. |
 

@@ -6,12 +6,13 @@ recalling relevant graph knowledge, and formatting temporal memories with proven
 
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from dotenv import load_dotenv
 from graphiti_core import Graphiti
@@ -161,8 +162,8 @@ async def remember(
             break
         except Exception as e:
             err_msg = str(e).lower()
-            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg) and attempt < max_retries - 1:
-                backoff = 5.0 * (attempt + 1)
+            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg or "rate limit" in err_msg) and attempt < max_retries - 1:
+                backoff = 25.0 * (attempt + 1)
                 logger.warning(f"Rate limit encountered in remember(). Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
                 await asyncio.sleep(backoff)
             else:
@@ -467,7 +468,7 @@ async def edit_memory(
     edges_map: dict[str, dict[str, Any]] = {}
     for ep_uuid in episodes_map.keys():
         cypher_edge = (
-            "MATCH (s:Entity)-[r:RELATION]->(t:Entity) "
+            "MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity) "
             "WHERE $ep_uuid IN r.episodes "
             "RETURN r.uuid AS uuid, r.name AS name, r.fact AS fact, r.valid_at AS valid_at, r.invalid_at AS invalid_at, r.episodes AS episodes"
         )
@@ -691,4 +692,307 @@ async def edit_memory(
             registry_updates=registry_updates,
         )
     return result_data
+
+
+def format_reconcile_results_for_mcp(
+    created: list[dict[str, Any]],
+    updated: list[dict[str, Any]],
+    consolidated: list[dict[str, Any]],
+    discarded: list[dict[str, Any]],
+    dry_run: bool = False,
+    errors: int = 0,
+) -> str:
+    """Format memory reconciliation results into structured Markdown for MCP."""
+    status_str = "DRY RUN (No Graphiti writes)" if dry_run else "COMMITTED (Graphiti/FalkorDB updated)"
+    lines = [
+        f"### 🔄 Historical Memory Reconciliation Report ({status_str})\n",
+        f"- **Episodes Created:** {len(created)}",
+        f"- **Episodes Updated / Upserted:** {len(updated)}",
+        f"- **Candidates Consolidated:** {len(consolidated)}",
+        f"- **Candidates Discarded / Rejected:** {len(discarded)}",
+        f"- **Errors:** {errors}",
+        "",
+    ]
+
+    if created:
+        lines.append("#### 🆕 Episodes Created:")
+        for ep in created:
+            lines.append(f"- **{ep.get('name')}** (Date: `{ep.get('event_date')}`, Precision: `{ep.get('event_date_precision', 'day')}`)")
+            lines.append(f"  - **Content:** {ep.get('content')}")
+            if ep.get("observed_at"):
+                lines.append(f"  - **Observed At:** `{ep.get('observed_at')}`")
+            if ep.get("candidate_ids"):
+                lines.append(f"  - **Candidates:** {', '.join(ep.get('candidate_ids', []))}")
+        lines.append("")
+
+    if updated:
+        lines.append("#### ✏️ Episodes Updated / Upserted:")
+        for ep in updated:
+            lines.append(f"- **{ep.get('name')}** (Date: `{ep.get('event_date')}`)")
+            lines.append(f"  - **Content:** {ep.get('content')}")
+            if ep.get("observed_at"):
+                lines.append(f"  - **Observed At:** `{ep.get('observed_at')}`")
+            if ep.get("candidate_ids"):
+                lines.append(f"  - **Candidates:** {', '.join(ep.get('candidate_ids', []))}")
+        lines.append("")
+
+    if consolidated:
+        lines.append("#### 🔗 Candidates Consolidated:")
+        for c in consolidated:
+            lines.append(f"- **{c.get('name')}** (Consolidated: {', '.join(c.get('candidate_ids', []))})")
+        lines.append("")
+
+    if discarded:
+        lines.append("#### 🚫 Candidates Discarded / Rejected:")
+        for d in discarded:
+            lines.append(f"- **{', '.join(d.get('candidate_ids', []))}**: {d.get('reason')}")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+async def reconcile_memories(
+    records: list[dict[str, Any]],
+    dry_run: bool = False,
+    format_for_mcp: bool = True,
+    registry_path: Optional[Path] = None,
+) -> Union[str, dict[str, Any]]:
+    """Reconcile and upsert episodic memories with real upsert/reject semantics.
+
+    Args:
+        records: List of structured reconciliation candidate records.
+        dry_run: If True, previews changes without writing to Graphiti/FalkorDB.
+        format_for_mcp: If True, returns formatted Markdown for MCP responses.
+        registry_path: Optional path to import_registry.json.
+    """
+    if not records:
+        if format_for_mcp:
+            return "No reconciliation records provided."
+        return {"created": [], "updated": [], "consolidated": [], "discarded": [], "errors": 0}
+
+    graphiti = get_graphiti()
+    driver = graphiti.driver
+    actual_reg_path = Path(registry_path) if registry_path else Path(__file__).resolve().parent.parent / "imports" / "state" / "import_registry.json"
+
+    reg_data: dict[str, Any] = {"version": "1.0", "records": {}, "rejected_records": {}}
+    if actual_reg_path.exists():
+        try:
+            with open(actual_reg_path, "r", encoding="utf-8") as f:
+                reg_data = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load existing registry: {e}")
+
+    created: list[dict[str, Any]] = []
+    updated: list[dict[str, Any]] = []
+    consolidated: list[dict[str, Any]] = []
+    discarded: list[dict[str, Any]] = []
+    errors = 0
+
+    for rec in records:
+        action = rec.get("action", "upsert_episode").lower()
+        candidate_ids = rec.get("candidate_ids", [])
+        if isinstance(candidate_ids, str):
+            candidate_ids = [candidate_ids]
+
+        # Case 1: Discard / Reject
+        if action in ["discard_candidate", "reject_candidate", "reject", "discard"]:
+            reason = rec.get("reason", "False or conflated memory.")
+            notes = rec.get("notes", "")
+            for cid in candidate_ids:
+                reg_data.setdefault("rejected_records", {})[cid] = {
+                    "candidate_id": cid,
+                    "reason": reason,
+                    "notes": notes,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            discarded.append({"candidate_ids": candidate_ids, "reason": reason, "notes": notes})
+
+            if not dry_run:
+                # If any matching episode exists, remove it
+                for cid in candidate_ids:
+                    try:
+                        await driver.execute_query(
+                            "MATCH (e:Episodic) WHERE toLower(e.name) CONTAINS toLower($cid) OR toLower(e.content) CONTAINS toLower($cid) DETACH DELETE e",
+                            cid=cid,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error purging rejected candidate {cid}: {e}")
+            continue
+
+        # Case 2: Upsert / Consolidate
+        content = rec.get("content", "").strip()
+        name = rec.get("name", "").strip()
+        event_date_str = rec.get("event_date", "").strip()
+        precision = rec.get("event_date_precision", "day").lower()
+        observed_at = rec.get("observed_at")
+        valid_from = rec.get("valid_from")
+        valid_to = rec.get("valid_to")
+        entities = rec.get("entities", [])
+        notes = rec.get("notes", "")
+        source = rec.get("source", "chatgpt").lower()
+
+        if not content or not event_date_str:
+            errors += 1
+            logger.error(f"Record missing content or event_date: {rec}")
+            continue
+
+        # Parse event date
+        try:
+            if re.match(r"^\d{4}-\d{2}$", event_date_str):
+                parts = event_date_str.split("-")
+                event_dt = datetime(int(parts[0]), int(parts[1]), 1, tzinfo=timezone.utc)
+                if precision == "day":
+                    precision = "month"
+            elif re.match(r"^\d{4}$", event_date_str):
+                event_dt = datetime(int(event_date_str), 1, 1, tzinfo=timezone.utc)
+                precision = "year"
+            else:
+                event_dt = parse_iso_datetime(event_date_str)
+        except Exception as e:
+            errors += 1
+            logger.error(f"Failed to parse event_date '{event_date_str}': {e}")
+            continue
+
+        raw_fp = f"{source}:{content.lower()}:{event_dt.strftime('%Y%m%d')}"
+        fp = hashlib.sha256(raw_fp.encode("utf-8")).hexdigest()[:8]
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", name.lower()).strip("_")[:30] if name else "episode"
+        episode_name = f"reconciled_{event_dt.strftime('%Y%m%d')}_{slug}_{fp}"
+
+        # Check if matching episode exists in FalkorDB
+        matching_ep_uuid = None
+        # 1. Search by candidate IDs or origin IDs in existing registry records
+        for reg_k, reg_v in reg_data.get("records", {}).items():
+            reg_cand_ids = reg_v.get("candidate_ids", [])
+            if isinstance(reg_cand_ids, str):
+                reg_cand_ids = [reg_cand_ids]
+            if reg_v.get("candidate_id"):
+                reg_cand_ids.append(reg_v.get("candidate_id"))
+            if reg_v.get("origin_id"):
+                reg_cand_ids.append(reg_v.get("origin_id"))
+
+            if any(cid in reg_cand_ids for cid in candidate_ids):
+                ep_n = reg_v.get("episode_name")
+                if ep_n:
+                    ep_check = await driver.execute_query(
+                        "MATCH (e:Episodic) WHERE e.name = $ep_n RETURN e.uuid AS uuid",
+                        ep_n=ep_n,
+                    )
+                    if ep_check and ep_check[0] and len(ep_check[0]) > 0:
+                        matching_ep_uuid = ep_check[0][0]["uuid"]
+                        break
+
+        # 2. Search by content snippet and valid_at in FalkorDB
+        if not matching_ep_uuid:
+            snip = content[:40].lower()
+            ep_check = await driver.execute_query(
+                "MATCH (e:Episodic) WHERE e.valid_at STARTS WITH $dt_prefix AND toLower(e.content) CONTAINS $snip RETURN e.uuid AS uuid",
+                dt_prefix=event_dt.strftime("%Y-%m"),
+                snip=snip,
+            )
+            if ep_check and ep_check[0] and len(ep_check[0]) > 0:
+                matching_ep_uuid = ep_check[0][0]["uuid"]
+
+        item_info = {
+            "name": name or episode_name,
+            "episode_name": episode_name,
+            "content": content,
+            "event_date": event_date_str,
+            "event_date_precision": precision,
+            "observed_at": observed_at,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "candidate_ids": candidate_ids,
+            "entities": entities,
+            "notes": notes,
+        }
+
+        if matching_ep_uuid:
+            # Update/replace existing episode in FalkorDB using Graphiti native removal + re-ingest
+            updated.append(item_info)
+            if not dry_run:
+                try:
+                    await graphiti.remove_episode(matching_ep_uuid)
+                    desc = f"Reconciled {source.upper()} historical memory: {name}" if name else f"Reconciled {source.upper()} historical memory"
+                    if notes:
+                        desc += f" ({notes})"
+                    await remember(
+                        content=content,
+                        name=episode_name,
+                        source_description=desc,
+                        reference_time=event_dt,
+                    )
+                    await asyncio.sleep(3.5)
+                except Exception as e:
+                    errors += 1
+                    logger.error(f"Failed to replace episode {matching_ep_uuid}: {e}")
+        else:
+            # Create new episode via Graphiti
+            created.append(item_info)
+            if not dry_run:
+                try:
+                    desc = f"Reconciled {source.upper()} historical memory: {name}" if name else f"Reconciled {source.upper()} historical memory"
+                    if notes:
+                        desc += f" ({notes})"
+                    await remember(
+                        content=content,
+                        name=episode_name,
+                        source_description=desc,
+                        reference_time=event_dt,
+                    )
+                    # Polite sleep between Graphiti ingest calls to respect LLM rate limits
+                    await asyncio.sleep(3.5)
+                except Exception as e:
+                    errors += 1
+                    logger.error(f"Failed to create episode {episode_name}: {e}")
+
+        if len(candidate_ids) > 1:
+            consolidated.append(item_info)
+
+        # Update registry record
+        reg_data.setdefault("records", {})[fp] = {
+            "fingerprint": fp,
+            "candidate_ids": candidate_ids,
+            "action": action,
+            "name": name,
+            "episode_name": episode_name,
+            "text": content,
+            "reference_time": event_dt.isoformat(),
+            "event_date": event_date_str,
+            "event_date_precision": precision,
+            "observed_at": observed_at,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "entities": entities,
+            "notes": notes,
+            "source": source,
+            "reconciled_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # Save registry
+    if not dry_run:
+        actual_reg_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(actual_reg_path, "w", encoding="utf-8") as f:
+                json.dump(reg_data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save import registry: {e}")
+
+    if format_for_mcp:
+        return format_reconcile_results_for_mcp(
+            created=created,
+            updated=updated,
+            consolidated=consolidated,
+            discarded=discarded,
+            dry_run=dry_run,
+            errors=errors,
+        )
+
+    return {
+        "created": created,
+        "updated": updated,
+        "consolidated": consolidated,
+        "discarded": discarded,
+        "errors": errors,
+    }
+
 

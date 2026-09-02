@@ -47,7 +47,9 @@ class MemoryCandidate:
     """Atomic memory candidate extracted from import content."""
 
     candidate_id: str
-    text: str
+    origin_id: str = ""
+    display_ordinal: int = 0
+    text: str = ""
     category: CandidateCategory = CandidateCategory.AMBIGUOUS
     reason: str = ""
     reference_time: Optional[datetime] = None
@@ -59,6 +61,8 @@ class MemoryCandidate:
     def to_dict(self) -> dict[str, Any]:
         """Convert candidate to a serializable dictionary."""
         return {
+            "origin_id": self.origin_id,
+            "display_ordinal": self.display_ordinal,
             "candidate_id": self.candidate_id,
             "text": self.text,
             "category": self.category.value,
@@ -251,10 +255,11 @@ class MemoryTextParser:
     HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$")
 
     @classmethod
-    def parse(cls, content: str) -> list[MemoryCandidate]:
+    def parse(cls, content: str, source: str = "chatgpt") -> list[MemoryCandidate]:
         """Parse text content into a list of atomic candidates with section hierarchy.
 
         Handles nested bullets and deduplicates generic summary headers with detailed child items.
+        Derives an immutable, stable origin_id for each candidate based on source, heading, and text.
         """
         lines = content.splitlines()
         raw_items: list[dict[str, Any]] = []
@@ -373,18 +378,26 @@ class MemoryTextParser:
             })
             i = j
 
-        # Construct MemoryCandidate objects
+        # Construct MemoryCandidate objects with immutable origin_id
         candidates: list[MemoryCandidate] = []
         for idx, item in enumerate(raw_items, 1):
-            cand_id = f"cand_{idx}"
             clean_text = item["text"].strip()
             if not clean_text:
                 continue
 
+            heading_str = (item.get("heading") or "").strip()
+            norm_heading = re.sub(r"\s+", " ", heading_str.lower())
+            norm_text = re.sub(r"\s+", " ", clean_text.lower())
+            raw_origin = f"{source.lower()}:{norm_heading}:{norm_text}"
+            origin_id = f"src_{hashlib.sha256(raw_origin.encode('utf-8')).hexdigest()[:16]}"
+            cand_id = f"cand_{idx}"
+
             cand = MemoryCandidate(
                 candidate_id=cand_id,
+                origin_id=origin_id,
+                display_ordinal=idx,
                 text=clean_text,
-                section_heading=item.get("heading"),
+                section_heading=heading_str if heading_str else None,
                 raw_lines=item.get("lines", []),
             )
             candidates.append(cand)
@@ -406,11 +419,6 @@ class CandidateClassifier:
         if not ref_time and heading:
             # Check if heading has a date
             ref_time, precision = TemporalExtractor.extract_date(heading)
-
-        # Candidate-specific precision adjustment if specified
-        if "considering/running for the condo board in 2026" in text.lower():
-            ref_time = datetime(2026, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
-            precision = DatePrecision.MONTH
 
         candidate.reference_time = ref_time
         candidate.date_precision = precision
@@ -467,10 +475,9 @@ class CandidateClassifier:
                 candidate.reason = "Undated statement with unclear episodic-vs-durable semantics."
 
         # Compute deterministic fingerprint for idempotency
-        # source + normalized_text + reference_time_iso
-        norm_text = re.sub(r"\s+", " ", text.strip().lower())
+        # origin_id + reference_time_iso
         ref_iso = ref_time.isoformat() if ref_time else "undated"
-        raw_fingerprint = f"{source.lower()}:{norm_text}:{ref_iso}"
+        raw_fingerprint = f"{candidate.origin_id}:{ref_iso}"
         candidate.fingerprint = hashlib.sha256(raw_fingerprint.encode("utf-8")).hexdigest()[:16]
 
 
@@ -518,10 +525,13 @@ class ImportStateStore:
         records = registry.setdefault("records", {})
         records[candidate.fingerprint] = {
             "fingerprint": candidate.fingerprint,
+            "origin_id": candidate.origin_id,
             "candidate_id": candidate.candidate_id,
+            "display_ordinal": candidate.display_ordinal,
             "source": source.lower(),
             "episode_name": episode_name,
             "reference_time": candidate.reference_time.isoformat() if candidate.reference_time else None,
+            "date_precision": candidate.date_precision.value,
             "imported_at": datetime.now(timezone.utc).isoformat(),
             "text": candidate.text,
             "section_heading": candidate.section_heading,
@@ -628,8 +638,8 @@ async def import_memories_content(
     store = ImportStateStore(imports_dir=imports_dir)
     stats = ImportStats()
 
-    # 1. Parse content into atomic candidates
-    candidates = MemoryTextParser.parse(clean_content)
+    # 1. Parse content into atomic candidates with stable origin IDs
+    candidates = MemoryTextParser.parse(clean_content, source=clean_source)
     stats.total_candidates = len(candidates)
 
     if not candidates:
@@ -663,7 +673,7 @@ async def import_memories_content(
                 if c.section_heading:
                     desc += f" (Section: {c.section_heading})"
 
-                max_retries = 4
+                max_retries = 5
                 for attempt in range(1, max_retries + 1):
                     try:
                         await remember(
@@ -674,12 +684,12 @@ async def import_memories_content(
                         )
                         store.record_import(c, source=clean_source, episode_name=episode_name)
                         stats.imported += 1
-                        # Polite delay between graphiti ingest calls to avoid rate limiting
-                        await asyncio.sleep(2)
+                        # Delay between graphiti ingest calls to avoid rate limiting
+                        await asyncio.sleep(4)
                         break
                     except Exception as e:
-                        if attempt < max_retries and ("rate limit" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower() or "resourceexhausted" in str(e).lower()):
-                            delay = attempt * 8
+                        if attempt < max_retries and ("rate limit" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower() or "resource" in str(e).lower()):
+                            delay = attempt * 25.0
                             logger.warning(f"Rate limit hit on '{c.candidate_id}', retrying in {delay}s (attempt {attempt}/{max_retries})...")
                             await asyncio.sleep(delay)
                         else:

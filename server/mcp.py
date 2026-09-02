@@ -22,6 +22,7 @@ from server.importer import import_memories_content
 from server.memory import (
     edit_memory as edit_episodic_memory,
     recall as recall_memory,
+    reconcile_memories as reconcile_episodic_memories,
     remember as remember_memory,
 )
 from server.proposals import create_wiki_proposal, format_proposal_for_mcp
@@ -35,6 +36,7 @@ SERVER_INSTRUCTIONS = (
     "when both durable and recent context may matter. Use search_wiki for durable corpus retrieval "
     "and recall for temporal episodic retrieval. remember writes episodic state. "
     "edit_memory corrects, re-dates, or modifies existing episodic memory and entity nodes. "
+    "reconcile_memories reconciles and upserts episodic memories with real upsert and reject semantics. "
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
     "import_memories is an explicit administrative bulk-import tool for AI memory exports."
 )
@@ -455,6 +457,50 @@ async def edit_memory(
         new_content=new_content,
         new_summary=new_summary,
         new_name=new_name,
+        dry_run=dry_run,
+        format_for_mcp=True,
+    )  # type: ignore
+
+
+@app.tool(
+    title="Reconcile and Ingest Episodic Memories",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def reconcile_memories(
+    records: Annotated[
+        list[dict],
+        Field(
+            description="List of reconciliation candidate records with fields: candidate_ids, action (upsert_episode, consolidate_and_upsert_episode, discard_candidate), name, content, event_date, event_date_precision, observed_at, valid_from, valid_to, entities, notes, reason."
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="Set to true to preview reconciliation without writing to FalkorDB or updating the import registry (default: false)."
+        ),
+    ] = False,
+) -> str:
+    """Reconcile, consolidate, and upsert episodic memories with real upsert and reject semantics.
+
+    WHEN TO USE:
+    - Use to apply structured reconciliation decisions across historical candidate memories.
+    - Use to upsert existing episodic memories in-place without creating duplicate nodes.
+    - Use to record rejected candidates (e.g. cand_55) and ensure they never become active graph nodes.
+
+    EXAMPLES OF USER INTENT:
+    - 'Reconcile these 17 episodic memories and reject the false Anthropic candidate.'
+    - 'Apply reviewed candidate decisions with exact observed_at timestamps and date precision.'
+
+    SIDE EFFECTS:
+    - When dry_run=False, writes/updates episodic nodes in FalkorDB and synchronizes local import registry records.
+    """
+    return await reconcile_episodic_memories(
+        records=records,
         dry_run=dry_run,
         format_for_mcp=True,
     )  # type: ignore
