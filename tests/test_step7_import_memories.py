@@ -397,6 +397,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "get_context",
             "propose_wiki_update",
             "import_memories",
+            "import_chatgpt_exports",
             "edit_memory",
             "reconcile_memories",
         }

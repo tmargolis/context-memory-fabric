@@ -50,7 +50,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         # 2. Tool Listing
         tools = await app.list_tools()
         tool_dict = {t.name: t for t in tools}
-        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories", "edit_memory", "reconcile_memories"}
+        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories"}
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 
         # 3. Titles & Annotations

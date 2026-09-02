@@ -17,6 +17,7 @@ from mcp.server.mcpserver import MCPServer
 import mcp.types as types
 from pydantic import Field
 
+from server.chatgpt_exporter import import_chatgpt_exports as run_import_chatgpt_exports
 from server.context import get_context as assemble_context
 from server.importer import import_memories_content
 from server.memory import (
@@ -38,7 +39,8 @@ SERVER_INSTRUCTIONS = (
     "edit_memory corrects, re-dates, or modifies existing episodic memory and entity nodes. "
     "reconcile_memories reconciles and upserts episodic memories with real upsert and reject semantics. "
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
-    "import_memories is an explicit administrative bulk-import tool for AI memory exports."
+    "import_memories is an explicit administrative bulk-import tool for AI memory exports. "
+    "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files."
 )
 
 # Initialize MCP Server with instructions
@@ -387,6 +389,45 @@ async def import_memories(
         source_description=source_description,
         dry_run=dry_run,
     )
+
+
+@app.tool(
+    title="Import Native ChatGPT Conversation Exports",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def import_chatgpt_exports(
+    paths: Annotated[
+        list[str],
+        Field(
+            description="Explicit list of absolute paths to native ChatGPT conversations-*.json export files."
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="If true (default), parses and classifies candidates without ingesting to Graphiti. If false, ingests accepted episodic memories."
+        ),
+    ] = True,
+) -> str:
+    """Administrative tool to import or dry-run native ChatGPT conversation export JSON files.
+
+    WHEN TO USE:
+    - Use when the user explicitly provides local file paths to native ChatGPT conversation export JSON files (e.g. conversations-000.json).
+    - Reads explicit file paths directly to support multi-megabyte native JSON exports without saturating context windows.
+
+    SEMANTIC BOUNDARIES:
+    - Reconstructs active conversation branch from current_node backwards.
+    - USER messages are primary evidence; ASSISTANT messages provide contextual resolution only.
+    - Classifies into episodic, durable_candidate, ambiguous, and non_memory.
+    - In dry-run mode (default), writes full breakdown reports to imports/results/ without modifying FalkorDB.
+    """
+    report_md, _ = await run_import_chatgpt_exports(paths=paths, dry_run=dry_run)
+    return report_md
 
 
 @app.tool(
