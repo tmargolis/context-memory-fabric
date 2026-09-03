@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 import re
 import sys
 from typing import Any, Optional, Sequence, Union
@@ -1457,6 +1458,12 @@ async def import_chatgpt_exports(
     review_overrides_path: Optional[str] = None,
     results_dir: Optional[Path] = None,
     allowed_root: Optional[Path] = None,
+    max_new_candidates: Optional[int] = None,
+    inter_candidate_delay: float = 6.0,
+    max_retries: int = 5,
+    max_retry_delay: float = 120.0,
+    halt_on_rate_limit: bool = True,
+    state_dir: Optional[Path] = None,
 ) -> tuple[str, dict[str, Any]]:
     """Process native ChatGPT export conversation JSON files.
     
@@ -1468,6 +1475,12 @@ async def import_chatgpt_exports(
         review_overrides_path: Optional path to a gitignored review overrides JSON file.
         results_dir: Optional directory to store import reports.
         allowed_root: Optional allowed base directory for path containment checks.
+        max_new_candidates: Optional limit on newly ingested episodes (useful for canary).
+        inter_candidate_delay: Seconds to delay between successful episode ingestions.
+        max_retries: Maximum attempts per candidate on transient rate limits (429).
+        max_retry_delay: Maximum delay cap for exponential backoff.
+        halt_on_rate_limit: If True, halts import immediately when 429 retries are exhausted.
+        state_dir: Optional directory for registry state (defaults to imports/state).
         
     Returns:
         tuple: (Markdown formatted report string, raw report dict)
@@ -1488,9 +1501,9 @@ async def import_chatgpt_exports(
     actual_results_dir = Path(results_dir) if results_dir else Path(__file__).resolve().parent.parent / "imports" / "results"
     actual_results_dir.mkdir(parents=True, exist_ok=True)
 
-    state_dir = Path(__file__).resolve().parent.parent / "imports" / "state"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    registry_file = state_dir / f"import_registry_{target_graph}.json"
+    actual_state_dir = Path(state_dir) if state_dir else (Path(__file__).resolve().parent.parent / "imports" / "state")
+    actual_state_dir.mkdir(parents=True, exist_ok=True)
+    registry_file = actual_state_dir / f"import_registry_{target_graph}.json"
 
     registry_data: dict[str, Any] = {"imported_episodes": {}, "durable_candidates": {}}
     if registry_file.exists():
@@ -1732,6 +1745,10 @@ async def import_chatgpt_exports(
 
     # 5. Execute Real Ingestion if dry_run is False
     ingest_results = []
+    import_status = "SUCCESS"
+    halt_reason = None
+    new_ingested_count = 0
+
     if dry_run is False:
         from server.memory import get_graphiti
         from graphiti_core.nodes import EpisodeType
@@ -1746,6 +1763,13 @@ async def import_chatgpt_exports(
         logger.info(f"Starting committed ingestion of {len(episodic_cands)} episodic candidates into '{target_graph}'...")
 
         for idx, cand in enumerate(episodic_cands, 1):
+            if max_new_candidates is not None and new_ingested_count >= max_new_candidates:
+                logger.info(
+                    f"Reached max_new_candidates limit ({max_new_candidates}). "
+                    f"Cleanly halting candidate loop."
+                )
+                break
+
             fp = cand.content_fingerprint
             if fp in registry_data.get("imported_episodes", {}):
                 logger.info(f"[{idx}/{len(episodic_cands)}] Candidate '{cand.candidate_id}' already in registry for '{target_graph}', skipping.")
@@ -1768,11 +1792,13 @@ async def import_chatgpt_exports(
             ep_name = f"chatgpt_{cand.candidate_id}_{fp[:8]}"
             source_desc = f"ChatGPT Native Export: {cand.conversation_title}"
 
-            max_retries = 5
             success = False
+            rate_limit_exhausted = False
+            attempt_records = []
+
             for attempt in range(1, max_retries + 1):
                 try:
-                    logger.info(f"[{idx}/{len(episodic_cands)}] Ingesting candidate '{cand.candidate_id}' into graph '{target_graph}' (attempt {attempt})...")
+                    logger.info(f"[{idx}/{len(episodic_cands)}] Ingesting candidate '{cand.candidate_id}' into graph '{target_graph}' (attempt {attempt}/{max_retries})...")
                     ep = await client.add_episode(
                         name=ep_name,
                         episode_body=cand.memory_text,
@@ -1795,9 +1821,14 @@ async def import_chatgpt_exports(
                         "event_date_basis": cand.event_date_basis,
                         "imported_at": datetime.now(timezone.utc).isoformat(),
                     }
-                    with open(registry_file, "w", encoding="utf-8") as f:
-                        json.dump(registry_data, f, indent=2)
 
+                    # Atomic checkpointing: write to temp file then replace
+                    temp_registry = registry_file.with_suffix(".tmp")
+                    with open(temp_registry, "w", encoding="utf-8") as f:
+                        json.dump(registry_data, f, indent=2)
+                    temp_registry.replace(registry_file)
+
+                    new_ingested_count += 1
                     ingest_results.append({
                         "candidate_id": cand.candidate_id,
                         "status": "success",
@@ -1806,23 +1837,92 @@ async def import_chatgpt_exports(
                         "reference_time": ref_dt.isoformat(),
                         "reference_time_basis": norm_basis,
                     })
-                    # Rate limiting throttle
-                    await asyncio.sleep(4)
+
+                    # Optional configurable inter-candidate delay
+                    if inter_candidate_delay > 0:
+                        logger.info(f"Candidate '{cand.candidate_id}' succeeded. Delaying {inter_candidate_delay}s to reduce burst pressure...")
+                        await asyncio.sleep(inter_candidate_delay)
                     break
+
                 except Exception as e:
-                    if attempt < max_retries and ("rate limit" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower() or "resource" in str(e).lower()):
-                        delay = attempt * 25.0
-                        logger.warning(f"Rate limit hit on '{cand.candidate_id}', retrying in {delay}s...")
+                    # Sanitize error message to prevent logging credentials
+                    raw_err = str(e)
+                    clean_err = re.sub(r"key=[A-Za-z0-9_-]+", "key=[REDACTED]", raw_err)
+                    clean_err = re.sub(r"AIza[0-9A-Za-z-_]{35}", "[REDACTED_API_KEY]", clean_err)
+
+                    is_rate_limit = any(term in clean_err.lower() for term in (
+                        "rate limit", "429", "quota", "resource_exhausted", "too many requests"
+                    ))
+
+                    # Parse Retry-After if available
+                    retry_after = None
+                    resp = getattr(e, "response", None)
+                    if resp and hasattr(resp, "headers") and resp.headers:
+                        ra_hdr = resp.headers.get("retry-after")
+                        if ra_hdr:
+                            try:
+                                retry_after = float(ra_hdr)
+                            except ValueError:
+                                pass
+                    if retry_after is None:
+                        ra_match = re.search(r"retry(?:\s+after|\s+in)?\s+([0-9.]+)\s*s", clean_err, re.IGNORECASE)
+                        if ra_match:
+                            try:
+                                retry_after = float(ra_match.group(1))
+                            except ValueError:
+                                pass
+
+                    # Exponential backoff with random jitter
+                    backoff = min(max_retry_delay, (2 ** attempt) * 5.0 + random.uniform(1.0, 5.0))
+                    delay = max(retry_after or 0.0, backoff)
+                    delay = min(delay, max_retry_delay)
+
+                    attempt_records.append({
+                        "attempt": attempt,
+                        "delay": delay,
+                        "is_rate_limit": is_rate_limit,
+                        "error": clean_err[:200],
+                    })
+
+                    if is_rate_limit and attempt < max_retries:
+                        logger.warning(
+                            f"Rate limit (429/quota) on '{cand.candidate_id}' (attempt {attempt}/{max_retries}). "
+                            f"Retrying in {delay:.1f}s (retry_after={retry_after})..."
+                        )
                         await asyncio.sleep(delay)
-                    else:
-                        logger.error(f"Failed to ingest episodic candidate '{cand.candidate_id}': {e}")
+                    elif is_rate_limit:
+                        logger.error(
+                            f"Rate limit retries exhausted on candidate '{cand.candidate_id}' after {max_retries} attempts."
+                        )
+                        rate_limit_exhausted = True
                         ingest_results.append({
                             "candidate_id": cand.candidate_id,
-                            "status": "error",
-                            "error": str(e),
+                            "status": "error_rate_limited",
+                            "error": clean_err[:300],
                             "fingerprint": fp,
+                            "attempts": attempt_records,
                         })
                         break
+                    else:
+                        logger.error(f"Permanent failure ingesting '{cand.candidate_id}': {clean_err[:200]}")
+                        ingest_results.append({
+                            "candidate_id": cand.candidate_id,
+                            "status": "error_permanent",
+                            "error": clean_err[:300],
+                            "fingerprint": fp,
+                            "attempts": attempt_records,
+                        })
+                        break
+
+            if rate_limit_exhausted and halt_on_rate_limit:
+                import_status = "INCOMPLETE_RATE_LIMITED"
+                halt_reason = (
+                    f"Candidate '{cand.candidate_id}' exhausted {max_retries} rate-limit retries. "
+                    f"Halted to preserve quota and avoid cascaded failures."
+                )
+                logger.error(f"CRITICAL: {halt_reason}")
+                break
+
 
     # Calculate token length metrics for final episodic candidate bodies
     token_lengths = [len(c.memory_text.split()) for c in final_candidates if c.category == NativeCandidateCategory.EPISODIC and c.memory_text]
@@ -1845,6 +1945,9 @@ async def import_chatgpt_exports(
     report_data = {
         "target_graph": target_graph,
         "dry_run": dry_run,
+        "import_status": import_status,
+        "halt_reason": halt_reason,
+        "new_ingested_count": new_ingested_count,
         "stats": stats.to_dict(),
         "ingest_results": ingest_results,
         "token_metrics": {
