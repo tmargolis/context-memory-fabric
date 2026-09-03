@@ -114,7 +114,7 @@ MS3 and MS4a may partially interleave: capture writes events and can ship before
   - retrospective `reference_time` preservation (`cand_8f7ed87e0b4a` → 2014, commit gates → 2023-12-19).
 - [x] **Write the first three ADRs** into `docs/adr/`: `0001-four-layer-model.md` (evidence / memory / knowledge / context), `0002-provider-boundaries.md`, `0003-graph-and-state-topology.md`.
 - [x] **Secret hygiene.** `GEMINI_API_KEY` is stored in plaintext in both `.env` and `claude_desktop_config.json`. `.env` is confirmed gitignored. Todd's call (2026-09-03): don't rotate, and use this exposure as a live fixture later for the MS4a privacy/secret-filtering acceptance test ("an argument containing an API-key-shaped string never reaches the journal").
-- [ ] **Tag the baseline** `phase-1-baseline` once the above is green.
+- [x] **Tag the baseline** `phase-1-baseline` once the above is green. *(Committed as `2e1ee1b`, tagged `phase-1-baseline` on 2026-09-03.)*
 
 ### Files touched
 
