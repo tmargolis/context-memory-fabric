@@ -2,19 +2,38 @@
 
 Orchestrates concurrent retrieval across durable knowledge (LLM_Wiki) and episodic
 memory (Graphiti/FalkorDB), preserving distinct provenance, timestamps, and conflict awareness.
+
+Consumes server.core.protocols.KnowledgeProvider / MemoryProvider (Milestone 1;
+see docs/adr/0002-provider-boundaries.md) rather than importing server.wiki
+and server.memory concretely, so a configured-but-unavailable knowledge
+provider degrades this section gracefully instead of raising — the one
+observable behavior change in this milestone, and only in a configuration
+(LLM_WIKI_PATH unset) that the current deployment does not use.
 """
 
 from typing import Any, Optional
 
+from server.core.protocols import KnowledgeProvider, MemoryProvider
 from server.corpus import ExtractionStatus
-from server.memory import recall
-from server.wiki import search_corpus
+from server.providers import get_default_knowledge_provider, get_default_memory_provider
+
+# Default providers for the current single-deployment configuration. A
+# future multi-provider deployment (Milestone 5) would pass explicit
+# providers into get_context() instead of relying on these module-level
+# defaults; kept simple here because there is exactly one of each today.
+# Sourced via server.providers's factory functions, not imported by concrete
+# class name, so this module has no direct dependency on which backend
+# (Graphiti, or a future alternative) is actually plugged in.
+_default_knowledge_provider = get_default_knowledge_provider()
+_default_memory_provider = get_default_memory_provider()
 
 
 async def get_context(
     topic: str,
     max_wiki_results: int = 5,
     max_memory_results: int = 5,
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    memory_provider: Optional[MemoryProvider] = None,
 ) -> str:
     """Retrieve and synthesize unified context for a given topic across both memory tiers.
 
@@ -22,6 +41,10 @@ async def get_context(
         topic: The topic or query to retrieve context for.
         max_wiki_results: Max number of durable wiki assets to include.
         max_memory_results: Max number of episodic memory facts to include.
+        knowledge_provider: Override the default knowledge provider (for
+            tests/fakes). Defaults to server.providers.get_default_knowledge_provider().
+        memory_provider: Override the default memory provider (for
+            tests/fakes). Defaults to server.providers.get_default_memory_provider().
 
     Returns:
         Structured Markdown string with separated Durable Knowledge and Episodic Memory sections.
@@ -30,13 +53,15 @@ async def get_context(
     if not clean_topic:
         return "Please provide a non-empty topic to retrieve context."
 
-    # 1. Retrieve Durable Knowledge from LLM_Wiki
-    wiki_results = search_corpus(clean_topic, max_results=max_wiki_results)
+    knowledge = knowledge_provider or _default_knowledge_provider
+    memory = memory_provider or _default_memory_provider
+
+    # 1. Retrieve Durable Knowledge from LLM_Wiki, if a knowledge provider is configured.
+    knowledge_configured = knowledge.is_configured()
+    wiki_results = knowledge.search(clean_topic, max_results=max_wiki_results) if knowledge_configured else []
 
     # 2. Retrieve Episodic Memory from Graphiti / FalkorDB
-    memory_facts: list[dict[str, Any]] = await recall(
-        clean_topic, max_results=max_memory_results, format_for_mcp=False
-    )  # type: ignore
+    memory_facts: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=max_memory_results)
 
     # 3. Assemble Unified Context
     sections: list[str] = [
@@ -45,7 +70,9 @@ async def get_context(
         "## 📚 DURABLE KNOWLEDGE (Source: `LLM_Wiki`)\n",
     ]
 
-    if wiki_results:
+    if not knowledge_configured:
+        sections.append("_No knowledge provider configured (LLM_WIKI_PATH unset) — durable knowledge is unavailable this deployment._\n")
+    elif wiki_results:
         for idx, r in enumerate(wiki_results, 1):
             sections.append(f"### {idx}. `{r.relative_path}` ({r.top_level_area})")
             sections.append(f"- **Media Type:** `{r.media_type}` | **Match:** `{r.match_basis}` | **Extraction:** `{r.extraction_status}`")

@@ -19,6 +19,7 @@ from pydantic import Field
 
 from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
 from server.context import get_context as assemble_context
+from server.core.config import load_config
 from server.importer import import_memories_content
 from server.memory import (
     edit_memory as edit_episodic_memory,
@@ -31,6 +32,13 @@ from server.wiki import search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
 
+# Capability discovery (Milestone 1): search_wiki and propose_wiki_update are
+# only registered below when a knowledge provider is actually configured,
+# per docs/adr/0002-provider-boundaries.md. Read once at server-definition
+# time (module import), matching the current single-process, single-config
+# deployment model — a config change requires a server restart either way.
+_config = load_config()
+
 SERVER_INSTRUCTIONS = (
     "Context Memory Fabric is the default personal context layer for the user. For questions about "
     "projects, prior work, decisions, current state, or personal knowledge, prefer get_context "
@@ -41,6 +49,11 @@ SERVER_INSTRUCTIONS = (
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
     "import_memories is an explicit administrative bulk-import tool for AI memory exports. "
     "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files."
+) + (
+    ""
+    if _config.knowledge_enabled
+    else " No knowledge provider is configured in this deployment (LLM_WIKI_PATH unset): "
+    "search_wiki and propose_wiki_update are unavailable, and get_context returns episodic memory only."
 )
 
 # Initialize MCP Server with instructions
@@ -106,15 +119,6 @@ async def get_context(
     )
 
 
-@app.tool(
-    title="Search Durable Knowledge Wiki",
-    annotations=types.ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
-    ),
-)
 async def search_wiki(
     query: Annotated[
         str,
@@ -156,6 +160,18 @@ async def search_wiki(
     - Read-only. Does not modify any Wiki files.
     """
     return query_wiki(query=query, max_results=max_results, force_rescan=force_rescan, format_for_mcp=True)
+
+
+if _config.knowledge_enabled:
+    app.tool(
+        title="Search Durable Knowledge Wiki",
+        annotations=types.ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+    )(search_wiki)
 
 
 @app.tool(
@@ -259,15 +275,6 @@ async def remember(
     return f"Memory stored successfully.\n- Episode: `{res['name']}`\n- Timestamp: `{res['reference_time']}`\n- Message: {res['message']}"
 
 
-@app.tool(
-    title="Propose Durable Wiki Update",
-    annotations=types.ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=False,
-        open_world_hint=False,
-    ),
-)
 async def propose_wiki_update(
     target_path: Annotated[
         str,
@@ -325,6 +332,18 @@ async def propose_wiki_update(
     except Exception as e:
         logger.error(f"Error creating wiki proposal for '{target_path}': {e}")
         return f"Error creating wiki proposal for '{target_path}': {e}"
+
+
+if _config.knowledge_enabled:
+    app.tool(
+        title="Propose Durable Wiki Update",
+        annotations=types.ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+    )(propose_wiki_update)
 
 
 @app.tool(
