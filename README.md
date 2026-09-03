@@ -59,6 +59,7 @@ episodic       factual      mutation /       durable          context        pro
 | **`reconcile_memories(records, dry_run)`** | Reconciliation | Consolidates, updates, and upserts episodic memories with real upsert/reject semantics in FalkorDB and synchronizes local import registry state. |
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
 | **`import_memories(content, source, source_description, dry_run)`** | Admin / Bulk Ingest | Parses historical memory exports passed directly by AI clients, conservatively classifies them, and ingests dated episodic entries into Graphiti. |
+| **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** | Admin / Bulk Ingest | Parses native ChatGPT `conversations-*.json` export files by explicit file path, reconstructs active conversation branches, and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Refuses to write into the protected `default_db` graph. |
 
 ### Historical memory imports
 

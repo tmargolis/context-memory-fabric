@@ -62,6 +62,7 @@ Configuration can be set via project-root `.env`, environment variables, or CLI 
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
 | `FALKORDB_PASSWORD` | No | `None` | FalkorDB password if enabled. |
+| `FALKORDB_DATABASE` | **Yes** | — | Target FalkorDB graph database name. No default is assumed — an unset value raises a startup error rather than silently selecting a graph. |
 | `CMF_STATE_DIR` | No | `./wiki-proposals` | Pending Wiki proposal storage. |
 
 Example:
@@ -71,7 +72,11 @@ LLM_WIKI_PATH=/path/to/your/LLM_Wiki
 GEMINI_API_KEY=...
 FALKORDB_HOST=localhost
 FALKORDB_PORT=6379
+FALKORDB_DATABASE=memory-fabric
 ```
+
+> [!IMPORTANT]
+> `FALKORDB_DATABASE` has no implicit default. Earlier versions of this project silently fell back to a graph named `default_db`, which caused MCP reads/writes to diverge from the graph an operator believed was configured. Always set this explicitly.
 
 ---
 

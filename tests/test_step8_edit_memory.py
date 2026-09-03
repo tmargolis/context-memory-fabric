@@ -76,6 +76,18 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
 
     async def test_edit_memory_dry_run(self):
         """Verify dry_run previews changes without modifying state."""
+        # Seed a synthetic fixture episode so this test is self-contained and
+        # does not depend on incidental content already present in whichever
+        # graph the suite is pointed at (see tests/conftest.py).
+        await remember(
+            content=(
+                "On 2025-01-14, a synthetic test subject was diagnosed with a "
+                "C7 right transverse process fracture (fixture data, not a real record)."
+            ),
+            name="test_fixture_edit_memory_c7_fracture",
+            source_description="test_step8_edit_memory synthetic fixture",
+        )
+
         # Use target query for C7 right transverse process fracture
         res = await edit_memory(
             target_query="C7 right transverse process fracture",

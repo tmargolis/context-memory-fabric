@@ -31,7 +31,8 @@ Claude Desktop can launch and manage Context Memory Fabric automatically in the 
       ],
       "env": {
         "LLM_WIKI_PATH": "/path/to/your/LLM_Wiki",
-        "GEMINI_API_KEY": "your-gemini-api-key"
+        "GEMINI_API_KEY": "your-gemini-api-key",
+        "FALKORDB_DATABASE": "memory-fabric"
       }
     }
   }
@@ -94,6 +95,7 @@ Add the MCP server command in your client settings:
 - **Environment Variables:**
   - `LLM_WIKI_PATH`: `/path/to/your/LLM_Wiki`
   - `GEMINI_API_KEY`: `AIzaSy...`
+  - `FALKORDB_DATABASE`: `memory-fabric`
 
 ---
 
@@ -112,7 +114,7 @@ For remote web clients that require an HTTPS endpoint:
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 8 Context Memory Fabric tools:
+All connected clients receive access to the full suite of 9 Context Memory Fabric tools:
 
 1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
 2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
@@ -122,3 +124,4 @@ All connected clients receive access to the full suite of 8 Context Memory Fabri
 6. **`reconcile_memories(records, dry_run)`** *(Reconciliation)* — Consolidates, updates, and upserts episodic memories with real upsert/reject semantics in FalkorDB and synchronizes local import registry state.
 7. **`propose_wiki_update(target_path, proposed_content, rationale)`** *(Proposal Write)* — Creates a reviewable staging proposal in `wiki-proposals/` without mutating the canonical Wiki.
 8. **`import_memories(content, source, source_description, dry_run)`** *(Admin Ingest)* — Administrative bulk import tool for importing AI memory summaries (ChatGPT, Claude, Gemini) into episodic memory.
+9. **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** *(Admin Ingest)* — Parses native ChatGPT `conversations-*.json` export files by explicit file path and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Requires an explicit non-default `graph_name` when committing.

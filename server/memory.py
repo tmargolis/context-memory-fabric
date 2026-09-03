@@ -30,6 +30,46 @@ logger = logging.getLogger(__name__)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
 
 
+class MissingGraphConfigurationError(RuntimeError):
+    """Raised when no FalkorDB target graph can be resolved.
+
+    FALKORDB_DATABASE previously defaulted silently to "default_db" when unset.
+    That caused production reads/writes to diverge from the graph an operator
+    believed was configured (see docs/adr/0003-graph-and-state-topology.md).
+    Failing loudly here is deliberate: a misconfigured deployment must not
+    silently read or write the wrong episodic graph.
+    """
+
+
+def resolve_target_database(graph_name: Optional[str] = None) -> str:
+    """Resolve the FalkorDB graph name to use, with no implicit default.
+
+    Args:
+        graph_name: Explicit override (e.g. from an MCP tool argument). Takes
+            precedence over environment configuration when non-empty.
+
+    Returns:
+        The resolved graph name.
+
+    Raises:
+        MissingGraphConfigurationError: if neither `graph_name` nor the
+            `FALKORDB_DATABASE` environment variable is set.
+    """
+    if graph_name and graph_name.strip():
+        return graph_name.strip()
+
+    env_value = os.getenv("FALKORDB_DATABASE")
+    if env_value and env_value.strip():
+        return env_value.strip()
+
+    raise MissingGraphConfigurationError(
+        "FALKORDB_DATABASE is not set and no graph_name was provided. "
+        "Set FALKORDB_DATABASE in the project-root .env file (e.g. "
+        "FALKORDB_DATABASE=memory-fabric) to select the target FalkorDB graph. "
+        "There is no default graph name."
+    )
+
+
 def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     """Instantiate a Graphiti client configured with FalkorDB and Gemini."""
     api_key = os.getenv("GEMINI_API_KEY")
@@ -39,7 +79,7 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     falkor_host = os.getenv("FALKORDB_HOST", "localhost")
     falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
     falkor_password = os.getenv("FALKORDB_PASSWORD") or None
-    target_database = graph_name.strip() if graph_name and graph_name.strip() else os.getenv("FALKORDB_DATABASE", "default_db")
+    target_database = resolve_target_database(graph_name)
 
     driver = FalkorDriver(
         host=falkor_host,
@@ -88,7 +128,7 @@ def get_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     except RuntimeError:
         current_loop_id = None
 
-    target_database = graph_name.strip() if graph_name and graph_name.strip() else os.getenv("FALKORDB_DATABASE", "default_db")
+    target_database = resolve_target_database(graph_name)
     cache_key = (current_loop_id, target_database)
 
     if cache_key not in _GRAPHITI_INSTANCES:

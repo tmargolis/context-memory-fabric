@@ -2,7 +2,8 @@
 
 **Status:** Draft implementation roadmap  
 **Updated:** 2026-09-03  
-**Current baseline:** Phase 1 implementation on `main`
+**Current baseline:** Phase 1 implementation on `main`  
+**Execution plan:** [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) — this roadmap states *what and why*; the plan states *how, in what order, and how we know it worked*.
 
 ## Purpose
 
@@ -89,6 +90,9 @@ The names below are logical boundaries. They may initially remain within the exi
 | `cmf-mcp` | MCP server and tool schemas | Optional transport |
 | `cmf-http` | HTTP/webhook ingestion and retrieval | Optional transport |
 | `cmf-import-chatgpt` | ChatGPT export parsing and classification | Optional |
+| `cmf-import-claude` | Claude conversation/project/memory export parsing | Optional |
+| `cmf-import-gemini` | Gemini (Google Takeout) activity export parsing | Optional |
+| `cmf-adapter-mcp` | MCP-boundary capture for any connected MCP client | Optional |
 | `cmf-adapter-claude-code` | Claude Code lifecycle capture | Optional |
 | `cmf-adapter-codex` | Codex lifecycle capture | Optional |
 | `cmf-adapter-gemini-cli` | Gemini CLI lifecycle capture | Optional |
@@ -177,6 +181,10 @@ An assembled response should retain sections or annotations identifying:
 
 ## Milestone 0 — Stabilize the Phase 1 baseline
 
+**Status: substantially complete (2026-09-03).** The reviewed production import finished and was verified: 57/57 candidates ingested into `memory-fabric`, 1-to-1 registry/graph mapping, zero forbidden IDs, retrospective `reference_time` values preserved, idempotent rerun with zero writes, and no Wiki mutation.
+
+Three deliverables were not produced and move into **Milestone 0.5** in the execution plan: MCP tool-contract fixtures, regression cases for the known date/provenance/inference failures, and the architecture decision records. Milestone 0.5 also resolves two defects found during the 2026-09-03 review — the MCP server resolving the wrong FalkorDB graph, and test-suite writes landing in the production graph.
+
 **Goal:** Create a known-good point before restructuring.
 
 Deliverables:
@@ -235,6 +243,8 @@ Deliverables:
 - store content or redacted content according to policy;
 - add journal export and replay commands;
 - link imported ChatGPT candidates back to source events;
+- backfill source events for memories imported before the journal existed, marked as reconstructed provenance;
+- add Claude and Gemini export importers (`cmf-import-claude`, `cmf-import-gemini`) written against the canonical envelope rather than directly against the memory provider;
 - distinguish receipt time from historical event time.
 
 Acceptance criteria:
@@ -283,14 +293,22 @@ Acceptance criteria:
 
 **Goal:** Demonstrate genuine cross-harness continuity.
 
-Priority order:
+**Blocking prerequisite:** the privacy and cost gate below must be answered before continuous capture is enabled by default.
 
-1. Claude Code;
-2. Codex;
-3. Gemini CLI;
-4. OpenClaw;
-5. API/framework adapters;
-6. consumer-chat export or explicit-save paths.
+Adapters are organized by capture *mechanism* rather than by harness name, because the available mechanism differs sharply between harnesses. Priority order reflects actual usage:
+
+| Sub-milestone | Adapter | Mechanism | Harnesses served |
+|---|---|---|---|
+| **4a** | MCP-boundary capture | Server middleware plus MCP `client_info` inside CMF | **Claude Desktop**, ChatGPT, Cursor, Antigravity, any MCP client |
+| **4b** | Claude Code | Lifecycle hooks plus local JSONL session transcripts | Claude Code |
+| **4c** | OpenClaw | HTTP ingest of canonical events across hosts; requires `cmf-http` | OpenClaw Studio Network |
+| **4d** | Codex, Gemini CLI | Per-harness; survey local surfaces before designing | Codex, Gemini CLI |
+
+Sub-milestone 4a comes first because it is a single implementation that serves several harnesses at once, including the highest-priority one.
+
+**Claude Desktop's limitation must be stated rather than designed around.** Claude Desktop keeps no local conversation transcript and exposes no hook API, so it cannot be served by a transcript-tailing adapter. MCP-boundary capture records every interaction routed through a CMF tool, with full harness provenance — but it does not see turns where no CMF tool is called. Claude Desktop capture is therefore interaction-triggered, not continuous. The gaps are covered by an explicit checkpoint tool, server instructions that encourage context retrieval at session start, and periodic Claude export ingestion. Documentation must not imply continuous capture that the mechanism cannot deliver.
+
+Sub-milestone 4c pulls `cmf-http` forward from its previously unscheduled position, because OpenClaw runs on separate hardware from CMF.
 
 Common adapter requirements:
 
@@ -433,6 +451,14 @@ Acceptance criteria:
 
 ### Security and privacy
 
+**Blocking gate before Milestone 4a.** Today every ingested episode is sent to the Gemini Developer API for entity extraction and embedding. At the current volume of curated episodes that is a bounded, deliberate exposure. Continuous capture across Claude Desktop, Claude Code, and OpenClaw changes the posture materially: every captured turn becomes an extraction call, the existing corpus already contains medical, financial, and legal material, and cost is currently unbounded and unmeasured. Three questions must be answered before capture is enabled by default:
+
+1. **Local extraction.** Route consolidation for sensitive content classes to a local model, keeping the hosted provider for the rest.
+2. **Sampling and triage.** Capture everything to the journal, which is local and cheap, but consolidate selectively, which is remote and expensive. This is the natural shape given the journal/consolidation split and is the recommended default.
+3. **Budget ceiling.** A hard spend cap on extraction, with capture continuing to the journal after the cap is reached so nothing is lost.
+
+Ongoing concerns:
+
 - secret and credential filtering;
 - content-class allow/deny policies;
 - encryption in transit and at rest;
@@ -472,18 +498,23 @@ Measure:
 
 The next implementation work should follow this order:
 
-1. finish and verify the current production import;
-2. tag or record the Phase 1 baseline;
-3. add architecture decision records for the four-layer model and provider boundaries;
-4. define provider protocols;
-5. make Wiki configuration optional;
-6. specify the canonical event envelope;
-7. implement the journal and link the ChatGPT importer to it;
-8. separate capture from consolidation;
-9. build the first Claude Code adapter;
-10. prove cross-harness recall with Codex or Gemini CLI;
-11. build review/governance surfaces;
-12. begin retrieval and memory evaluations.
+1. ~~finish and verify the current production import~~ (complete 2026-09-03);
+2. resolve the graph topology, pin the production graph in configuration, and isolate test writes;
+3. record MCP tool-contract fixtures and regression cases for the known date and provenance failures;
+4. add architecture decision records for the four-layer model and provider boundaries;
+5. tag the Phase 1 baseline;
+6. define provider protocols;
+7. make Wiki configuration optional;
+8. specify the canonical event envelope;
+9. implement the journal, link the ChatGPT importer to it, and backfill existing memories;
+10. add the Claude and Gemini export importers;
+11. separate capture from consolidation;
+12. answer the privacy and cost gate;
+13. build MCP-boundary capture and prove Claude Desktop continuity;
+14. build the Claude Code adapter;
+15. build `cmf-http` and the OpenClaw adapter;
+16. build review/governance surfaces;
+17. begin retrieval and memory evaluations.
 
 ## Explicit non-goals for the next phase
 
@@ -505,6 +536,7 @@ Before each expansion, answer:
 |---|---|
 | Journal backend | Is the local implementation sufficiently durable and queryable, or is PostgreSQL required? |
 | Capture policy | Which event types are stored raw, redacted, summarized, or excluded? |
+| Extraction privacy and cost | Which content classes may reach a hosted extraction provider, which require local inference, and what is the spend ceiling? |
 | Consolidation policy | Which memories may be accepted automatically and which require review? |
 | Scope model | How do personal, project, team, and organization contexts inherit or isolate access? |
 | Provider API | Can a second memory provider and a second knowledge provider pass conformance tests? |

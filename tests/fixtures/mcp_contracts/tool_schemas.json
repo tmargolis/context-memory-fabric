@@ -1,0 +1,579 @@
+{
+  "edit_memory": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.\n    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).\n    - Use to update entity summaries or episode narrative content in the knowledge graph.\n\n    EXAMPLES OF USER INTENT:\n    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'\n    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'\n    - 'Correct the summary for the SQLite database entity.'\n\n    SIDE EFFECTS:\n    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.\n    ",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "description": "Set to true to preview proposed modifications without writing to FalkorDB or the import registry (default: false).",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "new_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional updated narrative content for the episode.",
+          "title": "New Content"
+        },
+        "new_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional updated identifier name for the episode or entity.",
+          "title": "New Name"
+        },
+        "new_reference_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New date or timestamp to set for the episode / valid_at (e.g. '2024-06-15' or '2024-06-15T00:00:00Z').",
+          "title": "New Reference Time"
+        },
+        "new_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional updated summary text for the matched entity node(s).",
+          "title": "New Summary"
+        },
+        "target_query": {
+          "description": "Search query, entity name, episode name, or UUID identifying the episodic memory or entity to modify (e.g. 'Project kickoff', 'Database decision', or episode UUID).",
+          "title": "Target Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_query"
+      ],
+      "title": "edit_memoryArguments",
+      "type": "object"
+    },
+    "name": "edit_memory",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "edit_memoryOutput",
+      "type": "object"
+    },
+    "title": "Edit or Correct Episodic Memory"
+  },
+  "get_context": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "DEFAULT personal-context retrieval tool when an ongoing project or topic may benefit from both durable LLM_Wiki knowledge and recent episodic memory.\n\n    WHEN TO USE:\n    - Prefer as the primary retrieval tool for broad, exploratory, or status questions about projects, topics, decisions, or current thinking.\n    - Use when you need a unified view combining curated documentation and recent episodic state.\n\n    EXAMPLES OF USER INTENT:\n    - 'Where are we with Project Atlas?'\n    - 'What do we know about the Spark architecture?'\n    - 'What's my current thinking on EV charging?'\n    - 'Continue our work on Context Memory Fabric.'\n    - 'Catch me up on our discussions regarding the database.'\n\n    DISTINCTIONS:\n    - Unlike search_wiki (which only searches durable files) or recall (which only queries episodic facts), get_context queries both sources concurrently and formats them into distinct sections with temporal conflict guidance.\n\n    SIDE EFFECTS:\n    - Read-only. Does not modify any memory or Wiki files.\n    ",
+    "input_schema": {
+      "properties": {
+        "max_memory_results": {
+          "default": 5,
+          "description": "Maximum number of episodic memory facts to return (default: 5).",
+          "title": "Max Memory Results",
+          "type": "integer"
+        },
+        "max_wiki_results": {
+          "default": 5,
+          "description": "Maximum number of durable Wiki documents/notes to return (default: 5).",
+          "title": "Max Wiki Results",
+          "type": "integer"
+        },
+        "topic": {
+          "description": "The project, topic, or question to retrieve full personal context for (e.g. 'Project Atlas', 'Spark architecture', 'EV charging').",
+          "title": "Topic",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "get_contextArguments",
+      "type": "object"
+    },
+    "name": "get_context",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_contextOutput",
+      "type": "object"
+    },
+    "title": "Get Unified Personal Context"
+  },
+  "import_chatgpt_exports": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Administrative tool to import or dry-run native ChatGPT conversation export JSON files.\n\n    WHEN TO USE:\n    - Use when the user explicitly provides local file paths to native ChatGPT conversation export JSON files (e.g. conversations-000.json).\n    - Reads explicit file paths directly to support multi-megabyte native JSON exports without saturating context windows.\n\n    SEMANTIC BOUNDARIES:\n    - Reconstructs active conversation branch from current_node backwards.\n    - USER messages are primary evidence; ASSISTANT messages provide contextual resolution only.\n    - Classifies into episodic, durable_candidate, ambiguous, and non_memory.\n    - Supports runtime review overrides keyed by immutable source_record_ids.\n    - In dry-run mode (default), writes full breakdown reports to imports/results/ without modifying FalkorDB.\n    - When dry_run=False, graph_name is strictly required and target graph is isolated from production default_db.\n    ",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "description": "If true (default), parses and classifies candidates without ingesting to Graphiti. If false, ingests accepted episodic memories.",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "graph_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target graph database name in FalkorDB (e.g. 'cmf_chatgpt_000'). Required when dry_run=False. Refuses to default to protected database.",
+          "title": "Graph Name"
+        },
+        "paths": {
+          "description": "Explicit list of absolute paths to native ChatGPT conversations-*.json export files.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "review_overrides": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional list of review override dictionaries keyed by immutable source_record_ids (supports actions: 'reclassify', 'consolidate', 'exclude').",
+          "title": "Review Overrides"
+        },
+        "review_overrides_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional path to a gitignored review overrides JSON file (e.g. 'imports/review/overrides.json').",
+          "title": "Review Overrides Path"
+        }
+      },
+      "required": [
+        "paths"
+      ],
+      "title": "import_chatgpt_exportsArguments",
+      "type": "object"
+    },
+    "name": "import_chatgpt_exports",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "import_chatgpt_exportsOutput",
+      "type": "object"
+    },
+    "title": "Import Native ChatGPT Conversation Exports"
+  },
+  "import_memories": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Administrative bulk-import tool for historical memories from ChatGPT, Claude, or Gemini exports.\n\n    WHEN TO USE:\n    - Invoke ONLY when the user explicitly requests to import, seed, or ingest historical memories from an AI client export (ChatGPT, Claude, or Gemini).\n    - Do NOT invoke automatically during ordinary chat conversations or for everyday facts (use 'remember' for individual observations).\n\n    INPUT FORMAT:\n    - Pass the memory content directly as an in-memory string in 'content'.\n    - 'source' must be one of: 'chatgpt', 'claude', 'gemini'.\n    - 'dry_run=True' (default) parses and classifies items into episodic, durable_candidate, and ambiguous categories without modifying Graphiti.\n    - 'dry_run=False' ingests accepted episodic items with preserved timestamps into Graphiti/FalkorDB and records idempotency state in imports/.\n\n    SEMANTIC BOUNDARIES:\n    - Ingests ONLY episodic items (dated decisions, milestones, configuration changes, events).\n    - Skips durable items (stable profile/preferences/inventory) and undated/ambiguous items.\n    - Never modifies LLM_Wiki.\n\n    SIDE EFFECTS:\n    - In dry-run mode: writes a review report to imports/results/. No Graphiti writes.\n    - In committed mode (dry_run=False): writes episodic episodes to Graphiti and tracks idempotency state in imports/state/.\n    ",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "Historical memory export or summary text (Markdown or plain-text) passed directly by the AI client.",
+          "title": "Content",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": true,
+          "description": "If true (default), parses and classifies candidates without ingesting to Graphiti or updating import state. If false, ingests accepted episodic memories.",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "source": {
+          "description": "Origin AI platform. Must be one of: 'chatgpt', 'claude', 'gemini'.",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional descriptive label for this import source or export batch (e.g. 'ChatGPT memory export March 2026').",
+          "title": "Source Description"
+        }
+      },
+      "required": [
+        "content",
+        "source"
+      ],
+      "title": "import_memoriesArguments",
+      "type": "object"
+    },
+    "name": "import_memories",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "import_memoriesOutput",
+      "type": "object"
+    },
+    "title": "Import Historical Memories"
+  },
+  "propose_wiki_update": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Create a persistent reviewable proposal to create or update a Wiki document without modifying LLM_Wiki.\n\n    WHEN TO USE:\n    - Use when the user asks to add, update, draft, or propose a change to the durable Wiki, or when stable reusable knowledge should be promoted from episodic experience into durable documentation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Propose an update to WIKI/projects/Personal-Context-Service.md.'\n    - 'Draft a new wiki page for Project Orion in WIKI/projects/Orion.md.'\n    - 'Suggest adding our new database decision to the wiki documentation.'\n    - 'Propose a new research backlog note in TO-RESEARCH/audio-transcription.md.'\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under wiki-proposals/ with SHA-256 hashes and a unified diff for human inspection.\n\n    DISTINCTIONS:\n    - Writes a pending proposal JSON file to local state (wiki-proposals/). Does not write to Graphiti or modify canonical Wiki files.\n\n    SIDE EFFECTS:\n    - Creates a persistent proposal file on disk in wiki-proposals/. Non-destructive to LLM_Wiki.\n    ",
+    "input_schema": {
+      "properties": {
+        "proposed_content": {
+          "description": "The complete desired textual content of the target file. Partial diffs or patches are not accepted.",
+          "title": "Proposed Content",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Clear explanation of why this change or new document is being proposed for the durable Wiki.",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "source_context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional background notes, decision references, or session context that prompted this proposal.",
+          "title": "Source Context"
+        },
+        "target_path": {
+          "description": "Relative path of the target file within LLM_Wiki (e.g. 'WIKI/projects/Atlas.md', 'TO-RESEARCH/new-topic.md').",
+          "title": "Target Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_path",
+        "proposed_content",
+        "rationale"
+      ],
+      "title": "propose_wiki_updateArguments",
+      "type": "object"
+    },
+    "name": "propose_wiki_update",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "propose_wiki_updateOutput",
+      "type": "object"
+    },
+    "title": "Propose Durable Wiki Update"
+  },
+  "recall": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Temporal/episodic retrieval tool from Graphiti and FalkorDB.\n\n    WHEN TO USE:\n    - Prefer for temporal questions about past decisions, recent events, changing preferences, milestones, and evolving project state across sessions.\n    - Use when looking for 'what changed', 'what happened', 'last time', or 'recently'.\n\n    EXAMPLES OF USER INTENT:\n    - 'What did I decide about the database last time?'\n    - 'What changed recently regarding our Spark configuration?'\n    - 'What was the outcome of the meeting with Noel?'\n    - 'What are my current preferred model baselines?'\n    - 'What did we agree on during the last session?'\n\n    DISTINCTIONS:\n    - Queries the episodic knowledge graph in FalkorDB for temporal facts and state transitions with timestamps (valid_at, invalid_at).\n    - Does NOT search the Wiki filesystem corpus.\n\n    SIDE EFFECTS:\n    - Read-only. Does not modify episodic memory.\n    ",
+    "input_schema": {
+      "properties": {
+        "max_results": {
+          "default": 10,
+          "description": "Maximum number of memory facts to return (default: 10).",
+          "title": "Max Results",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search terms or question regarding past decisions, changing preferences, past events, milestones, or evolving project state.",
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "recallArguments",
+      "type": "object"
+    },
+    "name": "recall",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "recallOutput",
+      "type": "object"
+    },
+    "title": "Recall Episodic Memory"
+  },
+  "reconcile_memories": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Reconcile, consolidate, and upsert episodic memories with real upsert and reject semantics.\n\n    WHEN TO USE:\n    - Use to apply structured reconciliation decisions across historical candidate memories.\n    - Use to upsert existing episodic memories in-place without creating duplicate nodes.\n    - Use to record rejected candidates (e.g. cand_55) and ensure they never become active graph nodes.\n\n    EXAMPLES OF USER INTENT:\n    - 'Reconcile these 17 episodic memories and reject the false Anthropic candidate.'\n    - 'Apply reviewed candidate decisions with exact observed_at timestamps and date precision.'\n\n    SIDE EFFECTS:\n    - When dry_run=False, writes/updates episodic nodes in FalkorDB and synchronizes local import registry records.\n    ",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "description": "Set to true to preview reconciliation without writing to FalkorDB or updating the import registry (default: false).",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "records": {
+          "description": "List of reconciliation candidate records with fields: candidate_ids, action (upsert_episode, consolidate_and_upsert_episode, discard_candidate), name, content, event_date, event_date_precision, observed_at, valid_from, valid_to, entities, notes, reason.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Records",
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "title": "reconcile_memoriesArguments",
+      "type": "object"
+    },
+    "name": "reconcile_memories",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "reconcile_memoriesOutput",
+      "type": "object"
+    },
+    "title": "Reconcile and Ingest Episodic Memories"
+  },
+  "remember": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Direct episodic write tool to Graphiti and FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user explicitly asks to save, remember, record, or log an important event, decision, preference change, project milestone, experimental outcome, or state observation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Remember that we chose PostgreSQL for Project Atlas.'\n    - 'Save this preference: my preferred Spark baseline is GLM-4.7-Flash + Qwen3.5-27B.'\n    - 'Note that I decided to use port 6379 for FalkorDB.'\n    - 'Record that the regulatory mapping review was completed on August 31.'\n\n    IMPORTANT USAGE GUIDELINE:\n    - Do NOT call this automatically for every casual chat message or temporary conversational turn. Only store substantive, meaningful decisions, preferences, milestones, and state changes.\n\n    DISTINCTIONS:\n    - Writes directly into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.\n    - Does NOT modify LLM_Wiki files.\n\n    SIDE EFFECTS:\n    - Creates persistent episodic memory nodes and relationship edges in FalkorDB. Non-destructive.\n    ",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "The substantive decision, event, preference, milestone, result, or state change to store in episodic memory.",
+          "title": "Content",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional recognizable identifier/slug for the episode (auto-generated if omitted).",
+          "title": "Name"
+        },
+        "source_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional description of the memory origin (e.g. 'Claude Desktop session', 'Meeting debrief').",
+          "title": "Source Description"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "rememberArguments",
+      "type": "object"
+    },
+    "name": "remember",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "rememberOutput",
+      "type": "object"
+    },
+    "title": "Remember Episodic Event or Decision"
+  },
+  "search_wiki": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Durable/source-material retrieval tool from the local LLM_Wiki corpus.\n\n    WHEN TO USE:\n    - Prefer when the user specifically asks to find, search, or inspect notes, documents, files, research reports, background papers, or curated Wiki pages.\n    - Use when looking for specific authored content, structured tables, or uploaded document text.\n\n    EXAMPLES OF USER INTENT:\n    - 'Find my notes on J-Space.'\n    - 'What does the wiki say about OpenClaw?'\n    - 'Search my reports for the candidate form.'\n    - 'Look up the specification file for Interlock.'\n    - 'Do I have any PDFs or documents discussing EVCS regulations?'\n\n    DISTINCTIONS:\n    - Searches the local filesystem corpus (WIKI/, REPORTS/, OUTPUT/, RAW/, TO-RESEARCH/, etc.) using lexical matching with snippet extraction.\n    - Does NOT query the episodic memory graph (Graphiti / FalkorDB).\n\n    SIDE EFFECTS:\n    - Read-only. Does not modify any Wiki files.\n    ",
+    "input_schema": {
+      "properties": {
+        "force_rescan": {
+          "default": false,
+          "description": "Set to true to bypass the in-memory cache and re-scan the local filesystem (default: false).",
+          "title": "Force Rescan",
+          "type": "boolean"
+        },
+        "max_results": {
+          "default": 10,
+          "description": "Maximum number of wiki search results to return (default: 10).",
+          "title": "Max Results",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Keywords, filenames, or search terms to locate within durable notes, reports, PDFs, and documents in LLM_Wiki.",
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "search_wikiArguments",
+      "type": "object"
+    },
+    "name": "search_wiki",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "search_wikiOutput",
+      "type": "object"
+    },
+    "title": "Search Durable Knowledge Wiki"
+  }
+}
