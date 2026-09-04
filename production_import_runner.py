@@ -104,7 +104,7 @@ def probe_gemini_quota() -> dict[str, Any]:
         client = genai.Client(api_key=api_key)
         start_t = time.perf_counter()
         response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+            model="gemini-3.8-flash",
             contents="Respond with only the single word: OK",
         )
         elapsed_s = time.perf_counter() - start_t
@@ -112,7 +112,7 @@ def probe_gemini_quota() -> dict[str, Any]:
         logger.info(f"✓ Gemini quota probe succeeded in {elapsed_s:.2f}s: '{resp_text}'")
         return {
             "status": "AVAILABLE",
-            "model": "gemini-3.5-flash-lite",
+            "model": "gemini-3.8-flash",
             "latency_seconds": round(elapsed_s, 2),
             "response": resp_text,
         }
@@ -123,7 +123,7 @@ def probe_gemini_quota() -> dict[str, Any]:
         logger.error(f"✗ Gemini quota probe failed (rate_limited={is_429}): {clean_err[:200]}")
         return {
             "status": "RATE_LIMITED" if is_429 else "ERROR",
-            "model": "gemini-3.5-flash-lite",
+            "model": "gemini-3.8-flash",
             "error": clean_err[:300],
         }
 

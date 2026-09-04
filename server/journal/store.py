@@ -164,11 +164,27 @@ class SqliteEventStore:
             self._conn.execute("SELECT retention_class, COUNT(*) FROM events GROUP BY retention_class").fetchall()
         )
         date_range = self._conn.execute("SELECT MIN(observed_at), MAX(observed_at) FROM events").fetchone()
+        # Live-captured vs. reconstructed/backfilled, per harness — surfaces
+        # what fraction of a harness's total is genuine evidence journaled
+        # directly from an export vs. a retrospective reconstruction (see
+        # metadata.provenance_reconstructed in docs/schemas/source-event-1.0.json).
+        # Not a distinct storage class from `raw` retention_class above; this
+        # is about capture fidelity, not content redaction.
+        provenance_rows = self._conn.execute(
+            "SELECT harness, "
+            "  SUM(CASE WHEN json_extract(metadata_json, '$.provenance_reconstructed') = 1 THEN 1 ELSE 0 END) AS reconstructed, "
+            "  SUM(CASE WHEN json_extract(metadata_json, '$.provenance_reconstructed') IS NOT 1 THEN 1 ELSE 0 END) AS captured "
+            "FROM events GROUP BY harness"
+        ).fetchall()
+        by_provenance = {
+            row["harness"]: {"captured": row["captured"], "reconstructed": row["reconstructed"]} for row in provenance_rows
+        }
         return {
             "total_events": total,
             "by_harness": by_harness,
             "by_event_type": by_type,
             "by_retention_class": by_retention,
+            "by_provenance": by_provenance,
             "observed_at_range": {"min": date_range[0], "max": date_range[1]},
         }
 

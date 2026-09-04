@@ -37,6 +37,16 @@ when present, linked via parent_event_ids) rather than one merged event,
 for the same reason server.importers.chatgpt/claude keep user/assistant
 content separate: only actor_type='user' content may establish a personal
 fact during Milestone 3 consolidation.
+
+Google's own leading "Prompted " label on a prompt-type title is UI
+chrome, not user content — 90% of real records carry it (5,123 of 5,697,
+measured against the 2026-09-04 production journal before this fix). It
+is stripped from `content.text` before hashing/journaling so it doesn't
+pollute the evidence text or get mined as if the user had typed the word
+"Prompted"; the original, unstripped title is preserved verbatim in
+`metadata.raw_title` so nothing is lost. Only that literal leading label
+is removed — other activity-type titles ("Created a Gem", "Cleared
+conversation", ...) are left exactly as Google wrote them.
 """
 
 from datetime import datetime
@@ -53,6 +63,16 @@ from server.journal.store import SqliteEventStore
 
 _CONVERSATION_URL_ID_PATTERN = re.compile(r"gemini\.google\.com/app/([a-zA-Z0-9_-]+)")
 _TAG_PATTERN = re.compile(r"<[^>]+>")
+_PROMPTED_PREFIX_PATTERN = re.compile(r"^Prompted\s+", re.IGNORECASE)
+
+
+def _strip_prompted_prefix(title: str) -> str:
+    """Remove Google's leading "Prompted " activity-type label, if present.
+
+    Other activity-type titles ("Created a Gem", "Cleared conversation")
+    don't match and pass through unchanged.
+    """
+    return _PROMPTED_PREFIX_PATTERN.sub("", title, count=1)
 
 
 def journal_gemini_workspace_export(
@@ -166,7 +186,8 @@ def journal_gemini_apps_export(
 
         conv_id = _extract_conversation_id(record) or f"unlinked-{idx}"
 
-        prompt_content = {"text": title}
+        clean_title = _strip_prompted_prefix(title)
+        prompt_content = {"text": clean_title}
         prompt_event_content = policy.apply(prompt_content, content_class="default")
         prompt_event_id: Optional[str] = None
         if prompt_event_content is None:
@@ -185,7 +206,7 @@ def journal_gemini_apps_export(
                 date_precision=DatePrecision.EXACT,
                 content=prompt_event_content,
                 content_hash=prompt_hash,
-                metadata={"product": "gemini_apps", "activity_url": _first_url(record)},
+                metadata={"product": "gemini_apps", "activity_url": _first_url(record), "raw_title": title},
             )
             inserted = store.append(prompt_event)
             stats["prompt_events_journaled" if inserted else "prompt_events_deduped"] += 1
