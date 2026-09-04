@@ -1,8 +1,16 @@
-"""Claude evidence-emission: journal conversations.json + projects/*.json
-turns and snapshots as SourceEvents.
+"""Claude evidence-emission: journal conversations, projects, and Claude's
+own synthesized memory snapshots as SourceEvents.
 
 Scope matches server.importers.chatgpt: evidence only, no classification —
 see that module's docstring and docs/adr/0001-four-layer-model.md.
+
+Accepts either a Claude "Export data" .zip (as originally downloaded) or
+an already-extracted plain file/directory for each category — Todd's first
+Claude export arrived as four category zips (light_metadata, projects,
+memories, conversations), each with a single-use download link; a later
+full re-export landed pre-extracted (conversations.json, projects/*.json,
+memories/*.json directly). Both forms are genuinely the same data, so this
+module reads either without the caller needing to know which.
 
 Branch reconstruction: Claude's export encodes a full message tree via
 `parent_message_uuid` (root's parent is the sentinel
@@ -22,6 +30,16 @@ the project's `updated_at`, not just its stable uuid, because re-importing
 the *same* project after it was edited must produce a new distinct event
 (see docs/schemas/source-event-1.0-examples.md, example 3), not a
 dedup-skipped duplicate of stale content.
+
+Memory snapshots (conversations_memory / project_memories / memory_files)
+are Claude's OWN synthesized summary of the user, not the user's direct
+words — actor_type='assistant' is deliberate here, per ROADMAP.md
+principle 9: an assistant-authored inference about the user must not, on
+its own, establish a personal fact during Milestone 3 consolidation, even
+though its subject matter is the user. The export itself carries no
+per-snapshot timestamp, so event_id incorporates an externally-supplied
+`export_created_at` (the manifest's own created_at) rather than a
+timestamp the memory file doesn't have.
 """
 
 from datetime import datetime, timezone
@@ -40,19 +58,31 @@ SENDER_TO_ACTOR_TYPE = {"human": "user", "assistant": "assistant"}
 
 
 def journal_claude_export(
-    conversations_zip: Optional[Path],
-    projects_zip: Optional[Path],
-    store: SqliteEventStore,
+    conversations_path: Optional[Path] = None,
+    projects_path: Optional[Path] = None,
+    store: Optional[SqliteEventStore] = None,
+    memories_path: Optional[Path] = None,
+    export_created_at: Optional[str] = None,
     retention_policy: Optional[RetentionPolicy] = None,
+    # Back-compat aliases for the original zip-only signature.
+    conversations_zip: Optional[Path] = None,
+    projects_zip: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """Journal one SourceEvent per active-path Claude conversation turn
-    and one per project snapshot. Either zip may be omitted (None) to
-    journal just the other category.
+    """Journal one SourceEvent per active-path Claude conversation turn,
+    one per project snapshot, and one per memory snapshot. Any path may be
+    omitted (None) to skip that category. Each path may be a .zip (as
+    downloaded) or an already-extracted plain file/directory.
     """
+    conversations_path = conversations_path or conversations_zip
+    projects_path = projects_path or projects_zip
+    if store is None:
+        raise TypeError("journal_claude_export() requires store")
+
     policy = retention_policy or RetentionPolicy()
     stats = {
         "conversations_processed": 0,
         "projects_processed": 0,
+        "memory_snapshots_seen": 0,
         "messages_seen": 0,
         "messages_skipped_empty": 0,
         "events_journaled": 0,
@@ -60,22 +90,50 @@ def journal_claude_export(
         "events_excluded_by_retention": 0,
     }
 
-    if conversations_zip is not None:
-        _journal_conversations(Path(conversations_zip), store, policy, stats)
-    if projects_zip is not None:
-        _journal_projects(Path(projects_zip), store, policy, stats)
+    if conversations_path is not None:
+        _journal_conversations(Path(conversations_path), store, policy, stats)
+    if projects_path is not None:
+        _journal_projects(Path(projects_path), store, policy, stats)
+    if memories_path is not None:
+        _journal_memories(Path(memories_path), export_created_at, store, policy, stats)
 
     return stats
 
 
-def _journal_conversations(zip_path: Path, store: SqliteEventStore, policy: RetentionPolicy, stats: dict[str, Any]) -> None:
-    with zipfile.ZipFile(zip_path) as zf:
-        # Claude's export names the single member "conversations.json"; find
-        # it by suffix rather than hardcoding in case of a future rename.
-        member = next((n for n in zf.namelist() if n.endswith("conversations.json")), None)
-        if member is None:
-            return
-        conversations = json.loads(zf.read(member))
+def _load_single_json(path: Path, zip_member_suffix: str) -> Any:
+    """Load one JSON document from a .zip member, a plain file, or (for
+    the memories case) the first *.json file in a directory.
+    """
+    if path.is_file() and path.suffix == ".zip":
+        with zipfile.ZipFile(path) as zf:
+            member = next((n for n in zf.namelist() if n.endswith(zip_member_suffix)), None)
+            return json.loads(zf.read(member)) if member else None
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    if path.is_dir():
+        candidates = sorted(path.glob("*.json"))
+        return json.loads(candidates[0].read_text(encoding="utf-8")) if candidates else None
+    return None
+
+
+def _iter_project_documents(path: Path):
+    if path.is_file() and path.suffix == ".zip":
+        with zipfile.ZipFile(path) as zf:
+            for member in zf.namelist():
+                if member.endswith(".json") and "/projects/" in f"/{member}":
+                    yield json.loads(zf.read(member))
+    elif path.is_dir():
+        for p in sorted(path.glob("*.json")):
+            yield json.loads(p.read_text(encoding="utf-8"))
+    elif path.is_file():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        yield from data if isinstance(data, list) else [data]
+
+
+def _journal_conversations(source_path: Path, store: SqliteEventStore, policy: RetentionPolicy, stats: dict[str, Any]) -> None:
+    conversations = _load_single_json(source_path, "conversations.json")
+    if conversations is None:
+        return
 
     for conv in conversations:
         conv_id = conv.get("uuid")
@@ -129,46 +187,114 @@ def _journal_conversations(zip_path: Path, store: SqliteEventStore, policy: Rete
             journaled_ids.add(msg["uuid"])
 
 
-def _journal_projects(zip_path: Path, store: SqliteEventStore, policy: RetentionPolicy, stats: dict[str, Any]) -> None:
-    with zipfile.ZipFile(zip_path) as zf:
-        members = [n for n in zf.namelist() if n.endswith(".json") and "/projects/" in f"/{n}"]
-        for member in members:
-            project = json.loads(zf.read(member))
-            project_id = project.get("uuid")
-            updated_at = project.get("updated_at")
-            if not project_id or not updated_at:
-                continue
-            stats["projects_processed"] += 1
+def _journal_projects(source_path: Path, store: SqliteEventStore, policy: RetentionPolicy, stats: dict[str, Any]) -> None:
+    for project in _iter_project_documents(source_path):
+        project_id = project.get("uuid")
+        updated_at = project.get("updated_at")
+        if not project_id or not updated_at:
+            continue
+        stats["projects_processed"] += 1
 
-            content = {
-                "name": project.get("name"),
-                "description": project.get("description"),
-                "docs": [
-                    {"filename": d.get("filename"), "content": d.get("content")}
-                    for d in (project.get("docs") or [])
-                ],
-            }
-            event_content = policy.apply(content, content_class="default")
-            if event_content is None:
-                stats["events_excluded_by_retention"] += 1
-                continue
+        content = {
+            "name": project.get("name"),
+            "description": project.get("description"),
+            "docs": [
+                {"filename": d.get("filename"), "content": d.get("content")}
+                for d in (project.get("docs") or [])
+            ],
+        }
+        event_content = policy.apply(content, content_class="default")
+        if event_content is None:
+            stats["events_excluded_by_retention"] += 1
+            continue
 
-            observed_at = _parse_iso(updated_at) or datetime.now(timezone.utc)
-            event = SourceEvent(
-                schema_version="1.0",
-                event_id=f"claude:project:{project_id}:{updated_at}",
-                event_type="project.snapshot",
-                source=SourceProvenance(harness="claude"),
-                actor_type="user",
-                observed_at=observed_at,
-                event_date=observed_at,
-                date_precision=DatePrecision.EXACT,
-                content=event_content,
-                content_hash=compute_content_hash(content),
-                metadata={"is_starter_project": bool(project.get("is_starter_project"))},
-            )
-            inserted = store.append(event)
-            stats["events_journaled" if inserted else "events_deduped"] += 1
+        observed_at = _parse_iso(updated_at) or datetime.now(timezone.utc)
+        event = SourceEvent(
+            schema_version="1.0",
+            event_id=f"claude:project:{project_id}:{updated_at}",
+            event_type="project.snapshot",
+            source=SourceProvenance(harness="claude"),
+            actor_type="user",
+            observed_at=observed_at,
+            event_date=observed_at,
+            date_precision=DatePrecision.EXACT,
+            content=event_content,
+            content_hash=compute_content_hash(content),
+            metadata={"is_starter_project": bool(project.get("is_starter_project"))},
+        )
+        inserted = store.append(event)
+        stats["events_journaled" if inserted else "events_deduped"] += 1
+
+
+def _journal_memories(
+    source_path: Path,
+    export_created_at: Optional[str],
+    store: SqliteEventStore,
+    policy: RetentionPolicy,
+    stats: dict[str, Any],
+) -> None:
+    data = _load_single_json(source_path, ".json")
+    if data is None:
+        return
+
+    account_uuid = data.get("account_uuid")
+    snapshot_time = export_created_at or datetime.now(timezone.utc).isoformat()
+    observed_at = _parse_iso(snapshot_time) or datetime.now(timezone.utc)
+
+    def _emit(event_id: str, text: str, memory_kind: str, extra_metadata: dict[str, Any], conversation_id: Optional[str] = None) -> None:
+        text = (text or "").strip()
+        if not text:
+            return
+        stats["memory_snapshots_seen"] += 1
+        content = {"text": text, "memory_type": memory_kind}
+        event_content = policy.apply(content, content_class="default")
+        if event_content is None:
+            stats["events_excluded_by_retention"] += 1
+            return
+        event = SourceEvent(
+            schema_version="1.0",
+            event_id=event_id,
+            event_type="memory_snapshot" if memory_kind != "memory_file" else "memory_file.snapshot",
+            source=SourceProvenance(harness="claude", account_scope=account_uuid, conversation_id=conversation_id),
+            # Claude's own synthesized summary, not the user's direct words —
+            # see module docstring.
+            actor_type="assistant",
+            observed_at=observed_at,
+            event_date=observed_at,
+            date_precision=DatePrecision.EXACT,
+            content=event_content,
+            content_hash=compute_content_hash(content),
+            metadata={"memory_kind": memory_kind, **extra_metadata},
+        )
+        inserted = store.append(event)
+        stats["events_journaled" if inserted else "events_deduped"] += 1
+
+    _emit(
+        event_id=f"claude:memory:conversations_memory:{account_uuid}:{snapshot_time}",
+        text=data.get("conversations_memory", ""),
+        memory_kind="conversations_memory",
+        extra_metadata={},
+    )
+
+    for project_id, memory_text in (data.get("project_memories") or {}).items():
+        _emit(
+            event_id=f"claude:memory:project:{project_id}:{snapshot_time}",
+            text=memory_text,
+            memory_kind="project_memory",
+            extra_metadata={"project_id": project_id},
+            conversation_id=project_id,
+        )
+
+    for mf in data.get("memory_files") or []:
+        mf_path = mf.get("path")
+        if not mf_path:
+            continue
+        _emit(
+            event_id=f"claude:memory_file:{mf_path}:{snapshot_time}",
+            text=mf.get("content", ""),
+            memory_kind="memory_file",
+            extra_metadata={"file_path": mf_path},
+        )
 
 
 def _reconstruct_active_path(chat_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

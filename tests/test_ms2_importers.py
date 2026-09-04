@@ -15,13 +15,19 @@ import zipfile
 
 from server.importers.chatgpt import journal_chatgpt_export
 from server.importers.claude import journal_claude_export
-from server.importers.gemini import journal_gemini_workspace_export
+from server.importers.gemini import journal_gemini_apps_export, journal_gemini_workspace_export
 from server.journal.store import SqliteEventStore
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_EXPORT_DIR = PROJECT_ROOT / "imports" / "source" / "claude-export"
+CLAUDE_CONVERSATIONS_PATH = CLAUDE_EXPORT_DIR / "conversations.json"
+CLAUDE_PROJECTS_PATH = CLAUDE_EXPORT_DIR / "projects"
+CLAUDE_MEMORIES_PATH = CLAUDE_EXPORT_DIR / "memories"
 GEMINI_WORKSPACE_DIR = (
     PROJECT_ROOT / "imports" / "source" / "gemini-export" / "Takeout" / "Gemini in Workspace" / "Conversation History"
+)
+GEMINI_APPS_MY_ACTIVITY_PATH = (
+    PROJECT_ROOT / "imports" / "source" / "gemini-export" / "Takeout 3" / "My Activity" / "Gemini Apps" / "MyActivity.json"
 )
 
 
@@ -155,12 +161,14 @@ class TestChatGPTEvidenceEmission(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    (CLAUDE_EXPORT_DIR / "conversations-000.zip").exists() and (CLAUDE_EXPORT_DIR / "projects-000.zip").exists(),
+    CLAUDE_CONVERSATIONS_PATH.exists() and CLAUDE_PROJECTS_PATH.exists(),
     f"Real Claude export not found at {CLAUDE_EXPORT_DIR}",
 )
 class TestClaudeEvidenceEmissionAgainstRealExport(unittest.TestCase):
-    """Runs against Todd's real 2026-09-03 Claude export. Skips cleanly
-    when that export isn't present on disk (fresh clone, CI, etc.).
+    """Runs against Todd's real 2026-09-04 full Claude export (extracted
+    plain files, not the original per-category zips — journal_claude_export
+    accepts either). Skips cleanly when that export isn't present on disk
+    (fresh clone, CI, etc.).
     """
 
     def setUp(self):
@@ -170,32 +178,29 @@ class TestClaudeEvidenceEmissionAgainstRealExport(unittest.TestCase):
     def tearDown(self):
         self._tmpdir.cleanup()
 
+    def _run_import(self, store):
+        return journal_claude_export(
+            conversations_path=CLAUDE_CONVERSATIONS_PATH,
+            projects_path=CLAUDE_PROJECTS_PATH,
+            memories_path=CLAUDE_MEMORIES_PATH if CLAUDE_MEMORIES_PATH.exists() else None,
+            export_created_at="2026-09-04T00:36:13.660803+00:00",
+            store=store,
+        )
+
     def test_journals_real_export_idempotently(self):
         with SqliteEventStore(self.db_path) as store:
-            first = journal_claude_export(
-                conversations_zip=CLAUDE_EXPORT_DIR / "conversations-000.zip",
-                projects_zip=CLAUDE_EXPORT_DIR / "projects-000.zip",
-                store=store,
-            )
+            first = self._run_import(store)
             self.assertGreater(first["events_journaled"], 0)
             self.assertGreater(first["conversations_processed"], 0)
             self.assertGreater(first["projects_processed"], 0)
 
-            second = journal_claude_export(
-                conversations_zip=CLAUDE_EXPORT_DIR / "conversations-000.zip",
-                projects_zip=CLAUDE_EXPORT_DIR / "projects-000.zip",
-                store=store,
-            )
+            second = self._run_import(store)
             self.assertEqual(second["events_journaled"], 0, "Re-import must produce zero new events")
             self.assertEqual(second["events_deduped"], first["events_journaled"] + first["events_deduped"])
 
     def test_branching_conversation_journals_only_the_latest_leaf_path(self):
         with SqliteEventStore(self.db_path) as store:
-            journal_claude_export(
-                conversations_zip=CLAUDE_EXPORT_DIR / "conversations-000.zip",
-                projects_zip=CLAUDE_EXPORT_DIR / "projects-000.zip",
-                store=store,
-            )
+            self._run_import(store)
             # Every journaled turn event's parent (when set) must itself be
             # a journaled event in the same conversation, proving the walk
             # is a single connected path rather than every node in the tree.
@@ -205,13 +210,27 @@ class TestClaudeEvidenceEmissionAgainstRealExport(unittest.TestCase):
                 for parent_id in event.parent_event_ids:
                     self.assertIn(parent_id, journaled_ids, f"{event.event_id}'s parent {parent_id} was not journaled")
 
+    @unittest.skipUnless(CLAUDE_MEMORIES_PATH.exists(), f"Claude memories export not found at {CLAUDE_MEMORIES_PATH}")
+    def test_memory_snapshots_are_attributed_to_assistant(self):
+        """Claude's own synthesized summary of the user must be
+        actor_type='assistant', not 'user' — see server.importers.claude's
+        module docstring.
+        """
+        with SqliteEventStore(self.db_path) as store:
+            stats = self._run_import(store)
+            self.assertGreater(stats["memory_snapshots_seen"], 0)
+            memory_events = [e for e in store.query(harness="claude") if e.event_type in ("memory_snapshot", "memory_file.snapshot")]
+            self.assertTrue(memory_events)
+            for event in memory_events:
+                self.assertEqual(event.actor_type, "assistant")
+
 
 @unittest.skipUnless(GEMINI_WORKSPACE_DIR.exists(), f"Real Gemini Workspace export not found at {GEMINI_WORKSPACE_DIR}")
 class TestGeminiWorkspaceEvidenceEmissionAgainstRealExport(unittest.TestCase):
     """Runs against Todd's real 2026-09-03 Gemini-in-Workspace export
-    (Conversation History .txt files) — the main gemini.google.com app
-    history is not present in that export at all; see
-    IMPLEMENTATION-PLAN.md's Milestone 2 notes.
+    (Conversation History .txt files) — a distinct product from "Gemini
+    Apps" (see TestGeminiAppsEvidenceEmissionAgainstRealExport below),
+    both journaled from the same Takeout request family.
     """
 
     def setUp(self):
@@ -227,6 +246,44 @@ class TestGeminiWorkspaceEvidenceEmissionAgainstRealExport(unittest.TestCase):
             self.assertGreater(first["events_journaled"], 0)
             second = journal_gemini_workspace_export(GEMINI_WORKSPACE_DIR, store)
             self.assertEqual(second["events_journaled"], 0)
+
+
+@unittest.skipUnless(GEMINI_APPS_MY_ACTIVITY_PATH.exists(), f"Real Gemini Apps export not found at {GEMINI_APPS_MY_ACTIVITY_PATH}")
+class TestGeminiAppsEvidenceEmissionAgainstRealExport(unittest.TestCase):
+    """Runs against Todd's real 2026-09-04 "Gemini Apps" export — the main
+    gemini.google.com conversation history that the original 2026-09-03
+    Takeout request was missing entirely (see IMPLEMENTATION-PLAN.md's
+    Milestone 2 notes for both rounds).
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmpdir.name) / "journal.db"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_journals_real_apps_activity_idempotently(self):
+        with SqliteEventStore(self.db_path) as store:
+            first = journal_gemini_apps_export(GEMINI_APPS_MY_ACTIVITY_PATH, store)
+            self.assertGreater(first["prompt_events_journaled"], 0)
+            self.assertGreater(first["response_events_journaled"], 0)
+
+            second = journal_gemini_apps_export(GEMINI_APPS_MY_ACTIVITY_PATH, store)
+            self.assertEqual(second["prompt_events_journaled"], 0)
+            self.assertEqual(second["response_events_journaled"], 0)
+
+    def test_response_events_reference_their_prompt_as_parent(self):
+        with SqliteEventStore(self.db_path) as store:
+            journal_gemini_apps_export(GEMINI_APPS_MY_ACTIVITY_PATH, store)
+            events = store.query(harness="gemini")
+            gemini_apps_events = [e for e in events if e.metadata.get("product") == "gemini_apps"]
+            journaled_ids = {e.event_id for e in gemini_apps_events}
+            responses = [e for e in gemini_apps_events if e.actor_type == "assistant"]
+            self.assertTrue(responses)
+            for response in responses:
+                for parent_id in response.parent_event_ids:
+                    self.assertIn(parent_id, journaled_ids)
 
 
 if __name__ == "__main__":
