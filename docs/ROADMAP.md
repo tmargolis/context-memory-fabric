@@ -65,15 +65,17 @@ activity sources ──┘              │
                       extraction / consolidation
                                   │
                                   ▼
-                         derived memory providers
-                                  │
-knowledge providers ───> retrieval / context assembly
-                                  │
-                                  ▼
-                             MCP / HTTP
-
-review, correction, retention, and provenance span every layer
+       (FalkorDB) ── derived memory providers    knowledge providers ── (LLM_Wiki)
+                                 │                         │
+                                 └───────────┬─────────────┘
+                                             ▼
+                                 retrieval / context assembly
+                                             │
+                                             ▼
+                                        MCP / HTTP
 ```
+
+*Review, correction, retention, and provenance span every layer.*
 
 ## Proposed package boundaries
 
