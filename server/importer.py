@@ -133,6 +133,20 @@ RELATIVE_TEMPORAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# A date immediately preceded by one of these phrases marks a
+# validity/expiration/renewal boundary mentioned in the text, not the date
+# the described event (checking, deciding, filing, etc.) actually occurred.
+# Found via a real defect: "Checked Illinois registration and found it
+# valid through December 2026" was anchoring the *checking* event to
+# December 2026 — the registration's expiration month — rather than to
+# when the checking happened. See docs/adr/0003-graph-and-state-topology.md
+# and tests/test_regressions_baseline.py::TestTemporalExtractorValidityDateConfusion.
+VALIDITY_BOUNDARY_MARKER_PATTERN = re.compile(
+    r"\b(valid\s+(?:through|until|thru)|expir(?:es|ing|ed|ation)|renews?(?:\s+on)?|"
+    r"good\s+(?:through|until)|effective\s+(?:through|until)|active\s+(?:through|until))\b",
+    re.IGNORECASE,
+)
+
 # Episodic Action / Decision / Change verbs & indicators
 EPISODIC_VERBS_PATTERN = re.compile(
     r"\b(decided|decides|chose|chooses|selected|opted|agreed|approved|rejected|picked|determined|settled on|"
@@ -170,15 +184,30 @@ class TemporalExtractor:
     """Extracts explicit or conservative historical timestamps from text."""
 
     @staticmethod
+    def _is_validity_boundary(text: str, match_start: int, window: int = 30) -> bool:
+        """True if the text immediately preceding a matched date reads as a
+        validity/expiration/renewal boundary rather than an occurrence date.
+        """
+        preceding = text[max(0, match_start - window):match_start]
+        return bool(VALIDITY_BOUNDARY_MARKER_PATTERN.search(preceding))
+
+    @staticmethod
     def extract_date(text: str) -> tuple[Optional[datetime], DatePrecision]:
         """Extract historical reference date and its precision from text.
 
         Returns (None, DatePrecision.NONE) if no reliable absolute date is found.
-        Never fabricates an exact date or defaults to current time.
+        Never fabricates an exact date or defaults to current time. Skips a
+        date immediately preceded by a validity/expiration marker phrase
+        (e.g. "valid through December 2026") rather than treating a
+        mentioned boundary as the event's own occurrence date — see
+        VALIDITY_BOUNDARY_MARKER_PATTERN's docstring.
         """
+        is_boundary = TemporalExtractor._is_validity_boundary
+
         # 1. ISO format: 2026-08-31 or 2026-08-31T14:30:00Z
-        iso_match = ISO_DATE_PATTERN.search(text)
-        if iso_match:
+        for iso_match in ISO_DATE_PATTERN.finditer(text):
+            if is_boundary(text, iso_match.start()):
+                continue
             try:
                 year = int(iso_match.group("year"))
                 month = int(iso_match.group("month"))
@@ -189,11 +218,12 @@ class TemporalExtractor:
                 dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
                 return dt, DatePrecision.EXACT
             except ValueError:
-                pass
+                continue
 
         # 2. Month Day, Year: August 31, 2026
-        mdy_match = MONTH_DAY_YEAR_PATTERN.search(text)
-        if mdy_match:
+        for mdy_match in MONTH_DAY_YEAR_PATTERN.finditer(text):
+            if is_boundary(text, mdy_match.start()):
+                continue
             try:
                 month_str = mdy_match.group("month").lower()
                 month = MONTH_MAP.get(month_str)
@@ -203,11 +233,12 @@ class TemporalExtractor:
                     dt = datetime(year, month, day, 0, 0, 0, tzinfo=timezone.utc)
                     return dt, DatePrecision.EXACT
             except ValueError:
-                pass
+                continue
 
         # 3. Day Month Year: 31 August 2026
-        dmy_match = DAY_MONTH_YEAR_PATTERN.search(text)
-        if dmy_match:
+        for dmy_match in DAY_MONTH_YEAR_PATTERN.finditer(text):
+            if is_boundary(text, dmy_match.start()):
+                continue
             try:
                 day = int(dmy_match.group("day"))
                 month_str = dmy_match.group("month").lower()
@@ -217,11 +248,12 @@ class TemporalExtractor:
                     dt = datetime(year, month, day, 0, 0, 0, tzinfo=timezone.utc)
                     return dt, DatePrecision.EXACT
             except ValueError:
-                pass
+                continue
 
         # 4. Month Year: March 2024
-        my_match = MONTH_YEAR_PATTERN.search(text)
-        if my_match:
+        for my_match in MONTH_YEAR_PATTERN.finditer(text):
+            if is_boundary(text, my_match.start()):
+                continue
             try:
                 month_str = my_match.group("month").lower()
                 month = MONTH_MAP.get(month_str)
@@ -230,11 +262,12 @@ class TemporalExtractor:
                     dt = datetime(year, month, 1, 0, 0, 0, tzinfo=timezone.utc)
                     return dt, DatePrecision.MONTH
             except ValueError:
-                pass
+                continue
 
         # 5. Year with marker: in 2024, (2023)
-        ym_match = YEAR_WITH_MARKER_PATTERN.search(text)
-        if ym_match:
+        for ym_match in YEAR_WITH_MARKER_PATTERN.finditer(text):
+            if is_boundary(text, ym_match.start()):
+                continue
             try:
                 year_str = ym_match.group("year") or ym_match.group("year_paren")
                 if year_str:
@@ -243,7 +276,7 @@ class TemporalExtractor:
                         dt = datetime(year, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
                         return dt, DatePrecision.YEAR
             except ValueError:
-                pass
+                continue
 
         return None, DatePrecision.NONE
 

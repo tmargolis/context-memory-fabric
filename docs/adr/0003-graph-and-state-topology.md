@@ -34,6 +34,15 @@ During verification, `default_db` reappeared in `GRAPH.LIST` after a test run, w
 - Milestone 2's backfill task gained a concrete, non-speculative input: the 86 `default_db` episodes are re-derived from `imports/results/*_committed.json`, not from the graph (which no longer exists).
 - Any future graph-name fallback default reintroduced in `server/memory.py` should be treated as a regression of this ADR, not a convenience.
 
+## Update (2026-09-03, during Milestone 2): the 86/pollution split above was wrong
+
+Milestone 2's backfill work (`server/importers/backfill.py`) reconstructed `default_db`'s content from the pre-deletion snapshot (`imports/state/graph_snapshot_default_db_20260903_200241.json`) to re-derive it through the journal, and found the composition described in this ADR's Context section was incomplete. Of the 86 episodes:
+
+- **38 were real content** — 20 from the markdown-summary importer, and **18 from `reconcile_memories` calls**, a source this ADR never accounted for at all.
+- **48 were test pollution**, not the "two known offenders, six duplicate episodes" implied by paragraph 2 above. A **third offender**, `tests/test_step7_import_memories.py` (writing synthetic content like "Selected DuckDB for local analytics on 2026-08-30" directly to whatever graph `FALKORDB_DATABASE` resolved to, under episode names like `import_claude_20260830_*`), accounted for the other 48.
+
+No code change follows from this: decision 3 above (the `cmf_test` isolation fix) already prevents this regardless of which test file writes to the graph, so the gap was in this ADR's *diagnosis*, not in what MS0.5 *fixed*. Recorded here so the historical record matches what was actually found, rather than leaving the original undercount standing. See `server/importers/backfill.py`'s module docstring and IMPLEMENTATION-PLAN.md's Milestone 2 section for the full account.
+
 ## Alternatives considered
 
 - **Merge `default_db`'s content into `memory-fabric` immediately** (plan option B). Rejected: merges pre-journal data carrying a known parser defect (see the validity/expiration-date regression in `tests/test_regressions_baseline.py`) directly into production, and `cmf_chatgpt_000`'s 20 episodes overlap `memory-fabric`'s 57, creating dedup risk with no journal-level dedup mechanism yet to resolve it safely.

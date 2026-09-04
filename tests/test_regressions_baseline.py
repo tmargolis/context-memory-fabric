@@ -1,12 +1,12 @@
 """Milestone 0.5 regression fixtures.
 
 Captures known failure modes found while stabilizing the Phase 1 baseline on
-2026-09-03 (see IMPLEMENTATION-PLAN.md, Milestone 0.5). Two are confirmed,
-currently-unfixed defects, marked `expectedFailure` so the suite documents
-them without blocking on a fix that belongs to a later milestone; when the
-fix lands the marker should be removed so the test starts enforcing the
-correct behavior. The rest assert behavior that already works correctly and
-must not regress.
+2026-09-03 (see IMPLEMENTATION-PLAN.md, Milestone 0.5). One was a confirmed,
+initially-unfixed defect (TestTemporalExtractorValidityDateConfusion),
+originally marked `expectedFailure` pending a fix scheduled for a later
+milestone; the fix landed in Milestone 2 (see that class's docstring) and
+the marker was removed, so it now enforces the corrected behavior like the
+rest of this file's tests.
 """
 
 from datetime import datetime, timezone
@@ -49,9 +49,14 @@ class TestTemporalExtractorValidityDateConfusion(unittest.TestCase):
     Whether a future-scheduled event belongs in "episodic" alongside things
     that already happened is a modeling question for Milestone 3
     (consolidation policy), not a date-extraction bug.
+
+    FIXED in Milestone 2: TemporalExtractor now skips a date immediately
+    preceded by a validity/expiration/renewal marker phrase ("valid
+    through", "expires", "renews", etc. — see
+    VALIDITY_BOUNDARY_MARKER_PATTERN in server/importer.py) rather than
+    treating the mentioned boundary as the event's own occurrence date.
     """
 
-    @unittest.expectedFailure
     def test_validity_through_date_is_not_treated_as_event_date(self):
         text = "Checked Illinois registration and found it valid through December 2026."
         ref_time, precision = TemporalExtractor.extract_date(text)
