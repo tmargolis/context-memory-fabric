@@ -32,11 +32,40 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
+from server.core.rate_limiter import GeminiQuotaExhaustedError, get_default_rate_limiter
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Cached Graphiti instances per (event_loop_id, graph_name)
+# Cached Graphiti instances per (event_loop_id, graph_name, model)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
+
+# Transient-error classification for remember()/recall()'s retry loops.
+# "429"/"resource_exhausted"/"quota"/"rate limit" catch real quota errors
+# (which get_graphiti_for_operation()'s rate-limit reservation should mostly
+# prevent from happening at all, but a call outside this process's own
+# ledger — e.g. concurrent AI Studio usage — can still trigger one).
+# "503"/"unavailable"/"high demand" catch transient server-side capacity
+# errors, unrelated to quota, observed independently on more than one
+# Gemini model during this milestone's own testing — see the MS4a section
+# of IMPLEMENTATION-PLAN.md for the specifics. Neither category implies a
+# specific model is permanently broken; both are worth a backoff retry.
+_TRANSIENT_ERROR_MARKERS = {
+    "quota": ("429", "resource_exhausted", "quota", "rate limit"),
+    "unavailable": ("503", "unavailable", "high demand", "overloaded"),
+}
+
+
+def _classify_transient_error(exc: Exception) -> Optional[str]:
+    err_msg = str(exc).lower()
+    for label, markers in _TRANSIENT_ERROR_MARKERS.items():
+        if any(marker in err_msg for marker in markers):
+            return label
+    return None
+
+
+def _is_transient_gemini_error(exc: Exception) -> bool:
+    return _classify_transient_error(exc) is not None
 
 
 class MissingGraphConfigurationError(RuntimeError):
@@ -79,8 +108,19 @@ def resolve_target_database(graph_name: Optional[str] = None) -> str:
     )
 
 
-def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
-    """Instantiate a Graphiti client configured with FalkorDB and Gemini."""
+def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+    """Instantiate a Graphiti client configured with FalkorDB and Gemini.
+
+    `model` selects the LLM used for entity/fact extraction and reranking
+    (the embedder always uses gemini-embedding-001, which has ample
+    free-tier headroom and isn't part of the rate-limited fallback chain).
+    Defaults to the first model in the configured chain when omitted — used
+    for construction paths (edit_memory, reconcile_memories' Cypher access)
+    that need a Graphiti instance but never actually invoke the LLM client,
+    so no rate-limit reservation applies there. Callers that DO invoke the
+    LLM (remember/recall) must go through get_graphiti_for_operation()
+    instead, which reserves a model from the rate limiter first.
+    """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set. Add it to the project-root .env file.")
@@ -89,6 +129,7 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
     falkor_password = os.getenv("FALKORDB_PASSWORD") or None
     target_database = resolve_target_database(graph_name)
+    resolved_model = model or get_default_rate_limiter().chain[0]
 
     driver = FalkorDriver(
         host=falkor_host,
@@ -100,8 +141,8 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     llm_client = GeminiClient(
         config=LLMConfig(
             api_key=api_key,
-            model="gemini-3.8-flash",
-            small_model="gemini-3.8-flash",
+            model=resolved_model,
+            small_model=resolved_model,
         )
     )
 
@@ -115,7 +156,7 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     cross_encoder = GeminiRerankerClient(
         config=LLMConfig(
             api_key=api_key,
-            model="gemini-3.8-flash",
+            model=resolved_model,
         )
     )
 
@@ -127,8 +168,15 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     )
 
 
-def get_graphiti(graph_name: Optional[str] = None) -> Graphiti:
-    """Retrieve or initialize the Graphiti instance for the active event loop and target graph database."""
+def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+    """Retrieve or initialize the Graphiti instance for the active event loop, target graph database, and model.
+
+    `model` defaults to the rate limiter's first chain preference when
+    omitted (see create_graphiti's docstring) — this default does NOT
+    reserve rate-limit headroom, since most callers of get_graphiti() never
+    invoke the LLM client at all. Use get_graphiti_for_operation() for calls
+    that do.
+    """
     global _GRAPHITI_INSTANCES
 
     try:
@@ -138,12 +186,28 @@ def get_graphiti(graph_name: Optional[str] = None) -> Graphiti:
         current_loop_id = None
 
     target_database = resolve_target_database(graph_name)
-    cache_key = (current_loop_id, target_database)
+    resolved_model = model or get_default_rate_limiter().chain[0]
+    cache_key = (current_loop_id, target_database, resolved_model)
 
     if cache_key not in _GRAPHITI_INSTANCES:
-        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(graph_name=target_database)
+        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(graph_name=target_database, model=resolved_model)
 
     return _GRAPHITI_INSTANCES[cache_key]
+
+
+def get_graphiti_for_operation(graph_name: Optional[str] = None) -> tuple[Graphiti, str]:
+    """Reserve a model from the free-tier rate limiter, then return the matching Graphiti instance.
+
+    This is the entry point for any code path that actually calls into
+    Gemini (remember() via add_episode, recall() via search()) — it commits
+    a reservation against the local ledger before construction/reuse of the
+    Graphiti client, so a caller that gets GeminiQuotaExhaustedError from
+    this function has made zero Gemini calls and can safely defer the
+    operation rather than having partially spent quota on a call that then
+    also failed.
+    """
+    chosen_model = get_default_rate_limiter().reserve()
+    return get_graphiti(graph_name=graph_name, model=chosen_model), chosen_model
 
 
 async def close_graphiti() -> None:
@@ -193,12 +257,18 @@ async def remember(
         source_description: Description of the memory origin.
         reference_time: Time when the event occurred (defaults to now UTC).
         max_retries: Number of retries on transient rate limits (429).
+
+    Raises:
+        GeminiQuotaExhaustedError: if every model in the configured free-tier
+            chain lacks headroom right now. No Gemini call is made in this
+            case — safe to retry later (e.g. next RPM window or day
+            boundary) without having burned any quota on a failed attempt.
     """
-    graphiti = get_graphiti()
+    graphiti, chosen_model = get_graphiti_for_operation()
     ref_time = reference_time or datetime.now(timezone.utc)
     episode_name = name or f"memory_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
-    logger.info(f"Ingesting memory episode: '{episode_name}'")
+    logger.info(f"Ingesting memory episode: '{episode_name}' (model: {chosen_model})")
 
     for attempt in range(max_retries):
         try:
@@ -211,10 +281,12 @@ async def remember(
             )
             break
         except Exception as e:
-            err_msg = str(e).lower()
-            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg or "rate limit" in err_msg) and attempt < max_retries - 1:
+            if _is_transient_gemini_error(e) and attempt < max_retries - 1:
                 backoff = 25.0 * (attempt + 1)
-                logger.warning(f"Rate limit encountered in remember(). Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                logger.warning(
+                    f"Transient Gemini error in remember() ({_classify_transient_error(e)}). "
+                    f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
+                )
                 await asyncio.sleep(backoff)
             else:
                 raise
@@ -297,8 +369,13 @@ async def recall(
         max_results: Maximum facts to return.
         format_for_mcp: If True, return formatted Markdown string.
         max_retries: Number of retries on transient rate limits (429).
+
+    Raises:
+        GeminiQuotaExhaustedError: if every model in the configured free-tier
+            chain lacks headroom right now (search() also calls the LLM for
+            reranking). No Gemini call is made in this case.
     """
-    graphiti = get_graphiti()
+    graphiti, _chosen_model = get_graphiti_for_operation()
 
     results = []
     for attempt in range(max_retries):
@@ -306,10 +383,12 @@ async def recall(
             results = await graphiti.search(query)
             break
         except Exception as e:
-            err_msg = str(e).lower()
-            if ("429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg) and attempt < max_retries - 1:
+            if _is_transient_gemini_error(e) and attempt < max_retries - 1:
                 backoff = 5.0 * (attempt + 1)
-                logger.warning(f"Rate limit encountered in recall(). Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})...")
+                logger.warning(
+                    f"Transient Gemini error in recall() ({_classify_transient_error(e)}). "
+                    f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
+                )
                 await asyncio.sleep(backoff)
             else:
                 raise

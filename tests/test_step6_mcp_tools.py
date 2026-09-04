@@ -50,7 +50,11 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         # 2. Tool Listing
         tools = await app.list_tools()
         tool_dict = {t.name: t for t in tools}
-        expected_tools = {"remember", "recall", "search_wiki", "get_context", "propose_wiki_update", "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories"}
+        expected_tools = {
+            "remember", "recall", "search_wiki", "get_context", "propose_wiki_update",
+            "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
+            "capture_note", "capture_health",  # MS4a MCP-boundary capture
+        }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 
         # 3. Titles & Annotations
@@ -88,9 +92,15 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DOES NOT modify LLM_Wiki", tool_dict["propose_wiki_update"].description)
         self.assertIn("wiki-proposals/", tool_dict["propose_wiki_update"].description)
 
-        # 6. Parameter descriptions
+        # 6. Parameter descriptions. capture_health is a legitimate zero-argument
+        # status tool (MS4a) — every other tool here takes at least one
+        # parameter, but that was never a general requirement, just true of
+        # every tool that happened to exist before it.
+        zero_arg_tools = {"capture_health"}
         for name, tool in tool_dict.items():
             props = tool.input_schema.get("properties", {})
+            if name in zero_arg_tools:
+                continue
             self.assertTrue(len(props) > 0, f"Tool {name} should have input properties")
             for prop_name, prop_data in props.items():
                 self.assertIn("description", prop_data, f"Param '{prop_name}' on tool '{name}' must have a description")

@@ -43,6 +43,8 @@ from server.chatgpt_export_parser import (
     ChatGPTConversationParser,
     import_chatgpt_exports,
 )
+from server.core.rate_limiter import GeminiQuotaExhaustedError, get_default_rate_limiter
+from server.providers.memory_graphiti import _classify_transient_error
 
 EXPORT_DIR = Path("/Users/todd/Documents/export-chatgpt/full_export-2026-09-01")
 RESULTS_DIR = PROJECT_ROOT / "imports" / "results"
@@ -94,36 +96,52 @@ def backup_registry(prefix: str = "backup") -> Optional[Path]:
 
 
 def probe_gemini_quota() -> dict[str, Any]:
-    """Probe Gemini API to verify whether quota is currently available."""
+    """Probe Gemini API to verify whether quota is currently available.
+
+    Probes whichever model the rate limiter's configured chain would
+    actually reserve right now (server.core.rate_limiter), not a hardcoded
+    model string — a probe against a model the rest of the pipeline no
+    longer uses would give a falsely-rosy (or falsely-alarming) read on
+    real availability. The probe call itself is reserved against the same
+    ledger remember()/recall() use, so it counts against real quota rather
+    than looking "free" to later calls that check the ledger.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return {"status": "ERROR", "error": "GEMINI_API_KEY environment variable not set"}
+
+    try:
+        model = get_default_rate_limiter().reserve(estimated_calls=1)
+    except GeminiQuotaExhaustedError as e:
+        logger.error(f"✗ Gemini quota probe skipped: rate limiter reports no headroom in the configured chain: {e}")
+        return {"status": "RATE_LIMITED", "model": None, "error": str(e)}
 
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
         start_t = time.perf_counter()
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model=model,
             contents="Respond with only the single word: OK",
         )
         elapsed_s = time.perf_counter() - start_t
         resp_text = (response.text or "").strip()
-        logger.info(f"✓ Gemini quota probe succeeded in {elapsed_s:.2f}s: '{resp_text}'")
+        logger.info(f"✓ Gemini quota probe succeeded in {elapsed_s:.2f}s on {model}: '{resp_text}'")
         return {
             "status": "AVAILABLE",
-            "model": "gemini-3.8-flash",
+            "model": model,
             "latency_seconds": round(elapsed_s, 2),
             "response": resp_text,
         }
     except Exception as e:
         err_msg = str(e)
         clean_err = re.sub(r"key=[A-Za-z0-9_-]+", "key=[REDACTED]", err_msg)
-        is_429 = "429" in clean_err or "resource_exhausted" in clean_err.lower() or "quota" in clean_err.lower()
-        logger.error(f"✗ Gemini quota probe failed (rate_limited={is_429}): {clean_err[:200]}")
+        error_class = _classify_transient_error(e)
+        logger.error(f"✗ Gemini quota probe failed on {model} (class={error_class}): {clean_err[:200]}")
         return {
-            "status": "RATE_LIMITED" if is_429 else "ERROR",
-            "model": "gemini-3.8-flash",
+            "status": "RATE_LIMITED" if error_class == "quota" else "ERROR",
+            "model": model,
+            "error_class": error_class,
             "error": clean_err[:300],
         }
 

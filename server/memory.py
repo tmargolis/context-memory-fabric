@@ -11,6 +11,7 @@ server.providers.memory_graphiti directly, or depend on the
 server.core.protocols.MemoryProvider protocol instead of this module.
 """
 
+from server.core.rate_limiter import GeminiQuotaExhaustedError
 from server.providers.memory_graphiti import (
     GraphitiMemoryProvider,
     MissingGraphConfigurationError,
@@ -21,6 +22,7 @@ from server.providers.memory_graphiti import (
     format_memory_results_for_mcp,
     format_reconcile_results_for_mcp,
     get_graphiti,
+    get_graphiti_for_operation,
     parse_iso_datetime,
     reconcile_memories,
     recall,
@@ -29,6 +31,7 @@ from server.providers.memory_graphiti import (
 )
 
 __all__ = [
+    "GeminiQuotaExhaustedError",
     "GraphitiMemoryProvider",
     "MissingGraphConfigurationError",
     "close_graphiti",
@@ -38,6 +41,7 @@ __all__ = [
     "format_memory_results_for_mcp",
     "format_reconcile_results_for_mcp",
     "get_graphiti",
+    "get_graphiti_for_operation",
     "parse_iso_datetime",
     "reconcile_memories",
     "recall",

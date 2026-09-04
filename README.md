@@ -37,6 +37,9 @@ episodic       factual      mutation /       durable          context        pro
 3. **Unified Context Assembly (`get_context`):**
    - Assembles both durable knowledge and episodic memory into clean Markdown with clear provenance tags and conflict interpretation guidance.
 
+4. **MCP-Boundary Capture (Milestone 4a):**
+   - Every tool call from any connected MCP client is journaled as evidence in the background — one implementation covering Claude Desktop, Claude Code, Cursor, and any other MCP client, with harness identity, redacted arguments, and a bounded, drop-counted queue so capture never blocks a tool call. See [docs/CLIENTS.md](docs/CLIENTS.md#mcp-boundary-capture-milestone-4a) for the full capture model and its per-client limits.
+
 ---
 
 ## Documentation & Guides
@@ -66,6 +69,8 @@ All project documentation beyond this README lives under [`docs/`](docs/).
 | **`propose_wiki_update(target_path, proposed_content, rationale)`** | Proposal Write | Creates a persistent staging proposal under `wiki-proposals/` with SHA-256 hashes and a unified diff. **Never modifies the Wiki directly.** |
 | **`import_memories(content, source, source_description, dry_run)`** | Admin / Bulk Ingest | Parses historical memory exports passed directly by AI clients, conservatively classifies them, and ingests dated episodic entries into Graphiti. |
 | **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** | Admin / Bulk Ingest | Parses native ChatGPT `conversations-*.json` export files by explicit file path, reconstructs active conversation branches, and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Refuses to write into the protected `default_db` graph. |
+| **`capture_note(content, kind)`** | Evidence Write | Milestone 4a: explicit checkpoint captured to the append-only evidence journal — not episodic memory (`remember` is for that). Fire-and-forget. |
+| **`capture_health()`** | Read-Only | Milestone 4a: in-process MCP-boundary capture status — events captured, dropped, redacted, current queue depth. |
 
 ### Historical memory imports
 

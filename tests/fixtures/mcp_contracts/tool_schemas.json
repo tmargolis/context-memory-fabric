@@ -1,4 +1,79 @@
 {
+  "capture_health": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.\n\n    WHEN TO USE:\n    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture\n      queue currently is.\n\n    SIDE EFFECTS:\n    - Read-only. In-process counters only (reset on server restart) \u2014 durable counts live in the journal\n      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).\n    ",
+    "input_schema": {
+      "properties": {},
+      "title": "capture_healthArguments",
+      "type": "object"
+    },
+    "name": "capture_health",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "capture_healthOutput",
+      "type": "object"
+    },
+    "title": "Capture Health Status"
+  },
+  "capture_note": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Explicit evidence checkpoint for MS4a MCP-boundary capture.\n\n    WHEN TO USE:\n    - Call at natural checkpoints during a session \u2014 a decision reached, a milestone completed, a session\n      wrapping up \u2014 to leave an explicit marker in the evidence trail beyond what automatic tool-call capture\n      already records.\n\n    DISTINCTIONS:\n    - This is evidence capture (server.journal, Milestone 2's append-only journal), NOT a memory write.\n      It does not create episodic memory in Graphiti/FalkorDB \u2014 use `remember` for that. The two are\n      complementary: capture_note records that a checkpoint happened; remember records a durable fact.\n\n    SIDE EFFECTS:\n    - Enqueues a source event for background journaling. Fire-and-forget: this tool returns immediately and\n      does not wait for the journal write to complete.\n    ",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "The checkpoint note to capture as evidence (e.g. a decision reached, a milestone hit, a session summary).",
+          "title": "Content",
+          "type": "string"
+        },
+        "kind": {
+          "default": "note",
+          "description": "A short label for the kind of checkpoint (e.g. 'decision', 'milestone', 'session_summary'). Free text.",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "capture_noteArguments",
+      "type": "object"
+    },
+    "name": "capture_note",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "capture_noteOutput",
+      "type": "object"
+    },
+    "title": "Capture Explicit Checkpoint Note"
+  },
   "edit_memory": {
     "annotations": {
       "destructive_hint": false,

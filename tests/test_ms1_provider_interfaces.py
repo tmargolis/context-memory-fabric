@@ -124,7 +124,8 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         names = {t.name for t in tools}
         self.assertIn("search_wiki", names)
         self.assertIn("propose_wiki_update", names)
-        self.assertEqual(len(names), 9)
+        # 9 pre-MS4a tools + capture_note + capture_health (MS4a MCP-boundary capture).
+        self.assertEqual(len(names), 11)
 
 
 if __name__ == "__main__":

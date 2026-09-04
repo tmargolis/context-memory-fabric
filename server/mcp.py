@@ -13,10 +13,12 @@ from pathlib import Path
 import sys
 from typing import Annotated, Optional, cast
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 import mcp.types as types
 from pydantic import Field
 
+from server.capture.health import format_health_report, get_default_health
+from server.capture.middleware import capture_manual_note, get_default_capture_middleware
 from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
 from server.context import get_context as assemble_context
 from server.core.config import load_config
@@ -48,7 +50,12 @@ SERVER_INSTRUCTIONS = (
     "reconcile_memories reconciles and upserts episodic memories with real upsert and reject semantics. "
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
     "import_memories is an explicit administrative bulk-import tool for AI memory exports. "
-    "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files."
+    "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files. "
+    "Every tool call you make is automatically journaled as evidence in the background (MS4a MCP-boundary "
+    "capture) — this does not replace remember, which is still the tool for explicit, substantive episodic "
+    "writes. Call capture_note at natural checkpoints (a decision reached, a milestone hit, a session wrapping "
+    "up) to leave an explicit marker in that evidence trail beyond what tool-call capture alone records — this "
+    "is evidence capture, not a memory write, and is complementary to remember rather than a substitute for it."
 ) + (
     ""
     if _config.knowledge_enabled
@@ -62,6 +69,11 @@ app = MCPServer(
     version="0.1.0",
     instructions=SERVER_INSTRUCTIONS,
 )
+
+# MS4a MCP-boundary capture: journal a source event for every tool call this
+# server handles, regardless of which MCP client is connected. See
+# server/capture/middleware.py's module docstring and docs/adapters/mcp-boundary.md.
+app.middleware.append(get_default_capture_middleware())
 
 
 @app.tool(
@@ -273,6 +285,76 @@ async def remember(
     desc = source_description or "MCP remember tool"
     res = await remember_memory(content=content, name=name, source_description=desc)
     return f"Memory stored successfully.\n- Episode: `{res['name']}`\n- Timestamp: `{res['reference_time']}`\n- Message: {res['message']}"
+
+
+@app.tool(
+    title="Capture Explicit Checkpoint Note",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def capture_note(
+    content: Annotated[
+        str,
+        Field(
+            description="The checkpoint note to capture as evidence (e.g. a decision reached, a milestone hit, a session summary)."
+        ),
+    ],
+    kind: Annotated[
+        str,
+        Field(
+            description="A short label for the kind of checkpoint (e.g. 'decision', 'milestone', 'session_summary'). Free text."
+        ),
+    ] = "note",
+    ctx: Context = None,  # type: ignore[assignment]
+) -> str:
+    """Explicit evidence checkpoint for MS4a MCP-boundary capture.
+
+    WHEN TO USE:
+    - Call at natural checkpoints during a session — a decision reached, a milestone completed, a session
+      wrapping up — to leave an explicit marker in the evidence trail beyond what automatic tool-call capture
+      already records.
+
+    DISTINCTIONS:
+    - This is evidence capture (server.journal, Milestone 2's append-only journal), NOT a memory write.
+      It does not create episodic memory in Graphiti/FalkorDB — use `remember` for that. The two are
+      complementary: capture_note records that a checkpoint happened; remember records a durable fact.
+
+    SIDE EFFECTS:
+    - Enqueues a source event for background journaling. Fire-and-forget: this tool returns immediately and
+      does not wait for the journal write to complete.
+    """
+    if ctx is None:
+        return "capture_note requires MCP request context and cannot be called outside a live session."
+    request_ctx = ctx.request_context
+    event = await capture_manual_note(content, kind, request_ctx.session, request_ctx.request_id)
+    return f"Checkpoint captured.\n- Kind: `{kind}`\n- Event: `{event.event_id}`"
+
+
+@app.tool(
+    title="Capture Health Status",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def capture_health() -> str:
+    """Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.
+
+    WHEN TO USE:
+    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture
+      queue currently is.
+
+    SIDE EFFECTS:
+    - Read-only. In-process counters only (reset on server restart) — durable counts live in the journal
+      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).
+    """
+    return format_health_report(get_default_health().snapshot())
 
 
 async def propose_wiki_update(

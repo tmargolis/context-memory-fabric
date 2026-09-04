@@ -71,7 +71,8 @@ class TestMCPContractFixtures(unittest.TestCase):
         # Documents the current tool count so an accidental addition/removal
         # is visible in the diff even if test_no_tools_added_or_removed's
         # message is missed. Update deliberately alongside README.md/CLIENTS.md.
-        self.assertEqual(len(self.expected), 9)
+        # 11 as of Milestone 4a (added capture_note, capture_health).
+        self.assertEqual(len(self.expected), 11)
 
 
 if __name__ == "__main__":

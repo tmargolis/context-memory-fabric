@@ -400,6 +400,8 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "import_chatgpt_exports",
             "edit_memory",
             "reconcile_memories",
+            "capture_note",  # MS4a MCP-boundary capture
+            "capture_health",  # MS4a MCP-boundary capture
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

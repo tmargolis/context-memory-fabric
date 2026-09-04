@@ -81,6 +81,18 @@ class RetentionPolicy:
         return content
 
 
+def redact_secret_patterns(content: Any) -> Any:
+    """Public entry point for the regex-based secret scrub, independent of
+    content_class/RetentionPolicy. server.capture.filters (MS4a) uses this
+    directly: capture middleware has no content_class signal for arbitrary
+    MCP tool arguments, so it always applies this scrub rather than going
+    through RetentionPolicy.apply()'s class-gated RAW/REDACTED/EXCLUDED
+    decision. Keeping one pattern list here (rather than a second one in
+    server.capture.filters) is deliberate — see that module's docstring.
+    """
+    return _redact(content)
+
+
 def _redact(content: Any) -> Any:
     if isinstance(content, str):
         redacted = content
