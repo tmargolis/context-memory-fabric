@@ -41,9 +41,15 @@ episodic       factual      mutation /       durable          context        pro
 
 ## Documentation & Guides
 
-- 🛠️ **[Installation, Configuration & Setup Guide](SETUP.md):** Prerequisites, Docker, `.env`, testing, graph reset, and historical-memory import.
-- 🔌 **[Client Integration & Harness Guide](CLIENTS.md):** Claude Desktop, Antigravity IDE, Cursor, and other MCP clients.
-- 📊 **[FalkorDB / Cypher Query Reference](FALKORDB-QUERIES.md):** Operator and developer Cypher query reference for inspecting, auditing, and validating the Graphiti graph.
+All project documentation beyond this README lives under [`docs/`](docs/).
+
+- 🛠️ **[Installation, Configuration & Setup Guide](docs/SETUP.md):** Prerequisites, Docker, `.env`, testing, graph reset, and historical-memory import.
+- 🔌 **[Client Integration & Harness Guide](docs/CLIENTS.md):** Claude Desktop, Antigravity IDE, Cursor, and other MCP clients.
+- 📊 **[FalkorDB / Cypher Query Reference](docs/FALKORDB-QUERIES.md):** Operator and developer Cypher query reference for inspecting, auditing, and validating the Graphiti graph.
+- 📓 **[Journal Query Guide](docs/JOURNAL-QUERIES.md):** How to inspect the evidence layer (the append-only source-event journal) directly — CLI and raw SQL.
+- 🗺️ **[Roadmap](docs/ROADMAP.md):** Architectural principles and the target logical architecture — the *what and why*.
+- ✅ **[Implementation Plan](docs/IMPLEMENTATION-PLAN.md):** Milestone-by-milestone execution log, exit gates, and acceptance tests — the *how, in what order, and how we know it worked*.
+- 📐 **[Architecture Decision Records](docs/adr/):** ADR 0001 (four-layer model), 0002 (provider boundaries), 0003 (graph/state topology).
 
 ---
 

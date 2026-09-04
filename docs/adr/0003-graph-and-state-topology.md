@@ -1,6 +1,7 @@
 # ADR 0003: FalkorDB graph topology and configuration
 
-**Status:** Accepted and implemented (2026-09-03)
+**Status:** Accepted
+**Implemented:** Yes (2026-09-03) — `FALKORDB_DATABASE` set explicitly across `.env`, `.env.example`, `docs/SETUP.md`, and `claude_desktop_config.json`; `cmf_test` graph isolation in place for the test suite.
 **Date:** 2026-09-03
 
 ## Context

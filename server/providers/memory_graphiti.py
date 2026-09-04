@@ -100,8 +100,8 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     llm_client = GeminiClient(
         config=LLMConfig(
             api_key=api_key,
-            model="gemini-3.5-flash-lite",
-            small_model="gemini-3.5-flash-lite",
+            model="gemini-3.8-flash",
+            small_model="gemini-3.8-flash",
         )
     )
 
@@ -115,7 +115,7 @@ def create_graphiti(graph_name: Optional[str] = None) -> Graphiti:
     cross_encoder = GeminiRerankerClient(
         config=LLMConfig(
             api_key=api_key,
-            model="gemini-3.5-flash-lite",
+            model="gemini-3.8-flash",
         )
     )
 

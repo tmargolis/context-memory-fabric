@@ -1,6 +1,7 @@
 # ADR 0002: Provider protocols for memory, knowledge, and event storage
 
-**Status:** Accepted; implementation scheduled for Milestone 1 (not yet done)
+**Status:** Accepted
+**Implemented:** Yes (Milestone 1, 2026-09-03) — `MemoryProvider`/`KnowledgeProvider`/`EventStore`/`Importer`/`ContextAssembler`/`ProposalProvider` protocols exist under `server/core/`; the existing Graphiti and filesystem-Wiki code now sits behind `GraphitiMemoryProvider`/`FileKnowledgeProvider`. Exit gate passed: `tests/fakes/fake_memory_provider.py` and `fake_knowledge_provider.py` satisfy the protocols (`isinstance()`-verified) and `get_context()` runs end-to-end against both fakes with no live FalkorDB/Gemini/filesystem dependency.
 **Date:** 2026-09-03
 
 ## Context

@@ -4,32 +4,32 @@ Companion to [source-event-1.0.json](source-event-1.0.json). Each example is a r
 
 ## 1. A ChatGPT conversation turn (native export)
 
-A user message from a real ChatGPT `conversations-*.json` export, journaled by `server/importers/chatgpt.py`.
+An assistant message from Todd's real ChatGPT `conversations-*.json` export (`imports/source/chatgpt-export/full_export-2026-09-01/`), journaled by `server/importers/chatgpt.py` on 2026-09-04 — 577 conversations, 6,343 events. This is a genuine journaled row, not an illustrative shape; content is otherwise redacted-by-selection for a low-sensitivity example.
 
 ```json
 {
   "schema_version": "1.0",
-  "event_id": "chatgpt:67abc123-conv:msg-9f2e1a",
+  "event_id": "chatgpt:69c92f60-5fe4-8328-9249-4ad4f3c332f2:1953954a-0478-4033-9cfc-a8d43f5d50d2",
   "event_type": "turn.completed",
   "source": {
     "harness": "chatgpt",
-    "conversation_id": "67abc123-conv",
-    "turn_id": "msg-9f2e1a",
+    "conversation_id": "69c92f60-5fe4-8328-9249-4ad4f3c332f2",
+    "turn_id": "1953954a-0478-4033-9cfc-a8d43f5d50d2",
     "model": null
   },
-  "actor_type": "user",
+  "actor_type": "assistant",
   "actor_id": null,
-  "observed_at": "2026-04-08T12:10:07.976705Z",
-  "event_date": "2026-04-08T12:10:07.976705Z",
+  "observed_at": "2026-03-29T13:55:48.143670Z",
+  "event_date": "2026-03-29T13:55:48.143670Z",
   "date_precision": "exact",
-  "content": {"text": "Got an MRI scheduled for the neck injury next week."},
+  "content": {"text": "Hello—good to see you. How can I help today?", "role": "assistant"},
   "content_hash": "sha256:...",
   "parent_event_ids": [],
-  "metadata": {"sender": "user"}
+  "metadata": {"conversation_title": "Hello response"}
 }
 ```
 
-**Why `observed_at` equals `event_date` here:** ChatGPT's export gives an exact message timestamp that is simultaneously "when CMF received this evidence" (during the 2026-09-01 import run) — no, wait: `observed_at` is not the import time. Read on to example 4, which is where these two genuinely diverge; here they coincide because the message's own `created_at` **is** both the best-available occurrence time and is treated as the observation anchor for an event journaled from a direct, high-fidelity export. The two fields are logically distinct even when numerically equal.
+**Why `observed_at` equals `event_date` here:** the message's own `create_time` from the export is both the best-available occurrence time and the anchor `journal_chatgpt_export` uses for `observed_at` — for a direct, high-fidelity export (as opposed to a backfilled/reconstructed one), the two are the same real timestamp read twice, not two different measurements that happen to agree. Example 4 is where they genuinely diverge, because there `observed_at` is a backfill-run artifact rather than a captured timestamp at all.
 
 ## 2. A Claude conversation turn, mid-branch
 
@@ -88,7 +88,7 @@ Unlike a conversation turn, a Claude project can be edited after creation. `even
 
 ## 4. A backfilled event — where `observed_at` and `event_date` genuinely diverge
 
-The 57 episodes already in `memory-fabric` were imported before the journal existed (see Milestone 2's backfill task). Their source events are reconstructed after the fact from `imports/results/*.json` and `imports/state/import_registry_memory-fabric.json`, not journaled at capture time.
+57 episodes already in `memory-fabric` were imported before the journal existed (see Milestone 2's backfill task) and were reconstructed after the fact from `imports/results/*.json` and `imports/state/import_registry_memory-fabric.json`, not journaled at capture time. (A further 18 were separately recovered from a pre-deletion `default_db` graph snapshot — see IMPLEMENTATION-PLAN.md's Milestone 2 notes; both sets carry `metadata.provenance_reconstructed: true`, distinguishing them from the 6,343 native turns journaled directly from the export in example 1.)
 
 ```json
 {
@@ -140,3 +140,7 @@ The original (pre-journal) `import_memories` tool has no per-item identifier at 
 | When did the thing described actually happen in the world? | `event_date` (nullable — null means unknown, never "now") |
 | How precisely is `event_date` known? | `date_precision` |
 | Is this event a live capture or a later reconstruction? | `metadata.provenance_reconstructed` (absent/false = live) |
+
+## Storage note: `source` is flattened in SQLite, not dropped
+
+Every example above shows `source` as a nested object because that's the wire/schema shape (`SourceProvenance` in `server/core/models.py`, and the `source` object in `source-event-1.0.json`). `server/journal/store.py`'s `events` table has no nested-object column type, so `SqliteEventStore` stores `source.harness` / `.account_scope` / `.conversation_id` / `.session_id` / `.turn_id` / `.model` as six top-level columns (indexed individually — that's what makes querying by harness or conversation cheap) and reconstructs the nested `SourceProvenance` object on every read (`_row_to_event`). The journal CLI's `inspect`/`export`/`replay` commands all emit the nested form shown here, never the flattened column layout — so nothing about `source` is actually lossy or inconsistent between the schema and the code, but if you query `journal.db` directly with `sqlite3`, expect flat `harness`/`conversation_id`/... columns rather than a `source` blob.

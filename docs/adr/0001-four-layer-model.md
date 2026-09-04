@@ -1,6 +1,7 @@
 # ADR 0001: Evidence, memory, knowledge, and context as four distinct layers
 
 **Status:** Accepted
+**Implemented:** Partially, as of 2026-09-04 — Evidence layer real and populated (Milestone 2, `imports/journal/journal.db`); Memory-derivation staging real (Milestone 3, `derived_memories`); the four canonical dataclasses (`SourceEvent`/`DerivedMemory`/`KnowledgeResult`/`AssembledContext`) exist in `server/core/models.py` (Milestone 1). Knowledge layer is still only the pre-existing `FileKnowledgeProvider`. Context layer is not yet wired to `AssembledContext` — `get_context()` still returns a formatted Markdown string directly; that migration is Milestone 7's job, not this ADR's.
 **Date:** 2026-09-03
 
 ## Context
