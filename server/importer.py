@@ -499,13 +499,53 @@ class CandidateClassifier:
 
         # Case C: Ambiguous / Fallback
         else:
-            if has_date and len(text.split()) >= 4:
-                # Dated statement with sufficient substance
-                candidate.category = CandidateCategory.EPISODIC
-                candidate.reason = f"Dated historical statement ({precision.value})."
+            # A date alone is not a positive episodic signal — text with no
+            # durable or episodic language at all must not default to
+            # EPISODIC just because it happens to contain a parseable date
+            # and isn't extremely short. That was the previous rule here,
+            # and it silently promoted raw pasted technical output (log
+            # lines, API responses) with an incidental embedded timestamp —
+            # see tests/test_regressions_baseline.py's
+            # TestClassifierDatedTextWithoutSignalIsAmbiguous for a real
+            # example (Android logcat lines auto-accepted as episodic
+            # memory purely because "2025-12-23 14:33:16.740 ..." parses as
+            # an exact date). Symmetric with the existing rule just above
+            # ("undated episodic items MUST be ambiguous, never assigned
+            # today's date"): a date with no episodic/durable language is
+            # equally untrustworthy as a signal on its own.
+            candidate.category = CandidateCategory.AMBIGUOUS
+            if has_date:
+                candidate.reason = f"Contains a date ({precision.value}) but no episodic or durable language — ambiguous, not assumed episodic."
             else:
-                candidate.category = CandidateCategory.AMBIGUOUS
                 candidate.reason = "Undated statement with unclear episodic-vs-durable semantics."
+
+        # Length guard: a genuine personal decision/event statement is a
+        # sentence or two. Found while inspecting the first 119 real
+        # auto-accepted candidates (2026-09-04): technical debugging turns
+        # routinely contain an episodic-shaped verb ("fixed", "started",
+        # "resolved" — ordinary troubleshooting narration, not personal
+        # decision language) alongside a date pulled from an embedded log
+        # timestamp, which the Case A/B logic above has no way to tell
+        # apart from a real dated decision. The result was pasted shell
+        # sessions, git output, and API responses — up to 1,000,000
+        # characters in one case — auto-accepted as "episodic memory"
+        # verbatim. This is deliberately a hard override applied AFTER the
+        # category logic above, not a rewrite of it: it does not attempt to
+        # distinguish genuine long-form episodic content from pasted noise
+        # (that needs real content understanding — see
+        # IMPLEMENTATION-PLAN.md's note on deriving work-session summaries
+        # from this content instead of only suppressing it); it only stops
+        # long text from being trusted as a *concise* one, which nothing
+        # genuinely episodic in the labeled fixture or the queued/rejected
+        # sample ever needed to be.
+        MAX_EPISODIC_STATEMENT_LENGTH = 500
+        if candidate.category == CandidateCategory.EPISODIC and len(text) > MAX_EPISODIC_STATEMENT_LENGTH:
+            candidate.category = CandidateCategory.AMBIGUOUS
+            candidate.reason = (
+                f"Would otherwise be episodic ({candidate.reason}) but exceeds "
+                f"{MAX_EPISODIC_STATEMENT_LENGTH} characters ({len(text)}) — too long to trust as a "
+                "concise personal statement rather than pasted technical output."
+            )
 
         # Compute deterministic fingerprint for idempotency
         # origin_id + reference_time_iso

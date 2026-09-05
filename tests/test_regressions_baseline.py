@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import unittest
 
-from server.importer import DatePrecision, TemporalExtractor
+from server.importer import CandidateClassifier, CandidateCategory, DatePrecision, MemoryCandidate, TemporalExtractor
 
 REGISTRY_PATH = (
     Path(__file__).resolve().parent.parent / "imports" / "state" / "import_registry_memory-fabric.json"
@@ -72,6 +72,109 @@ class TestTemporalExtractorValidityDateConfusion(unittest.TestCase):
                 "TemporalExtractor anchored the event date to the mentioned "
                 "validity/expiration month instead of the occurrence date.",
             )
+
+
+class TestClassifierDatedTextWithoutSignalIsAmbiguous(unittest.TestCase):
+    """Confirmed defect found while running the first live promotion pass
+    (2026-09-04, post-MS4a): CandidateClassifier's fallback branch (Case C
+    in classify()) auto-categorized any text containing a parseable date
+    and 4+ words as EPISODIC, with no requirement for actual episodic or
+    durable language. Real Android logcat lines pasted into Claude Code
+    debugging sessions — which always carry an embedded exact timestamp —
+    cleared this bar, were auto-accepted by HeuristicPatternPolicyV1 (date
+    precision bonus pushed confidence to 0.9, above the 0.75 threshold),
+    and were promoted into production episodic memory as three separate
+    "memories" that were, verbatim, raw system log output with zero
+    semantic content:
+
+        "now i see this error:\n2025-12-23 14:33:16.740  1967-2092
+        AppsFilter  system_server  I  interaction: PackageSetting..."
+
+    FIXED: Case C now requires an actual positive signal (durable or
+    episodic language, from the same lexical/heading checks used
+    elsewhere in classify()) — a bare date is no longer sufficient on its
+    own, symmetric with the existing rule that an undated episodic
+    statement must not be assigned today's date. The three promoted
+    episodes were removed from the production graph and their promotion
+    ledger entries reverted (see server/consolidation/promotion.py) once
+    this was caught; the consolidation pipeline was re-run under a bumped
+    policy version so already-classified journal events pick up the fix.
+    """
+
+    def test_logcat_line_with_embedded_timestamp_is_not_episodic(self):
+        text = (
+            "now i see this error:\n"
+            "2025-12-23 14:33:16.740  1967-2092  AppsFilter              system_server"
+            "                        I  interaction: PackageSetting{8a32cb2 com.example.app/10603}"
+        )
+        candidate = MemoryCandidate(candidate_id="x", origin_id="x", text=text, section_heading=None)
+        CandidateClassifier.classify(candidate, source="claude")
+
+        self.assertNotEqual(
+            candidate.category,
+            CandidateCategory.EPISODIC,
+            "Raw log output with an incidental embedded timestamp and no episodic "
+            "language must not be classified as episodic memory.",
+        )
+
+    def test_dated_text_with_no_episodic_or_durable_signal_is_ambiguous(self):
+        text = "2026-03-14 the quarterly report totals were recalculated across every region."
+        candidate = MemoryCandidate(candidate_id="y", origin_id="y", text=text, section_heading=None)
+        CandidateClassifier.classify(candidate, source="test")
+
+        self.assertEqual(candidate.category, CandidateCategory.AMBIGUOUS)
+
+
+class TestClassifierLongPastedContentIsNotEpisodic(unittest.TestCase):
+    """Confirmed defect found by manually inspecting all 119 real
+    auto-accepted candidates in the production journal (2026-09-04, post
+    Case-C fix): a technical debugging turn routinely contains an
+    episodic-shaped verb ("fixed", "started", "resolved" — ordinary
+    troubleshooting narration, not personal decision language) alongside a
+    date pulled from an embedded log timestamp. That combination clears
+    Case B's bar regardless of length, so pasted shell sessions, git
+    output, and raw API responses — several in the tens of thousands of
+    characters, one exactly 1,000,000 characters (a `log show` terminal
+    dump) — were auto-accepted verbatim as "episodic memory."
+
+    FIXED: CandidateClassifier now applies a 500-character length guard as
+    a hard override on top of the existing category logic — a candidate
+    that would otherwise be EPISODIC is downgraded to AMBIGUOUS if its text
+    exceeds 500 characters, since a genuine personal decision/event
+    statement is a sentence or two, not a multi-page paste. This is
+    deliberately blunt (see importer.py's comment): it does not attempt to
+    distinguish genuinely long episodic content from pasted noise, only
+    stops long text from being trusted as concise.
+    """
+
+    def test_long_pasted_shell_session_with_episodic_verb_is_not_episodic(self):
+        # Real shape from production: a short user question followed by a
+        # long pasted terminal session containing "fixed" (an episodic verb)
+        # and an exact embedded date/timestamp.
+        text = (
+            "ok i fixed the .git folder issue, but now it's complaining about files not currently in the repo:\n"
+            + "todd@Todds-Air pictures % cd /Users/todd/LLM_Wiki\n"
+            + "2026-08-24 09:12:03.184 some.process[1234]: repeated log line filler to push this well past five hundred characters "
+            * 6
+        )
+        self.assertGreater(len(text), 500)
+        candidate = MemoryCandidate(candidate_id="z", origin_id="z", text=text, section_heading=None)
+        CandidateClassifier.classify(candidate, source="claude")
+
+        self.assertNotEqual(
+            candidate.category,
+            CandidateCategory.EPISODIC,
+            "Long pasted technical output must not be trusted as a concise episodic statement "
+            "just because it happens to contain an episodic verb and a date.",
+        )
+
+    def test_short_genuinely_episodic_statement_is_unaffected(self):
+        text = "On 2026-03-14, decided to migrate the task queue from SQLite to PostgreSQL."
+        self.assertLessEqual(len(text), 500)
+        candidate = MemoryCandidate(candidate_id="w", origin_id="w", text=text, section_heading=None)
+        CandidateClassifier.classify(candidate, source="test")
+
+        self.assertEqual(candidate.category, CandidateCategory.EPISODIC)
 
 
 class TestAssistantInferenceNotPersonalFact(unittest.TestCase):

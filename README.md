@@ -71,6 +71,7 @@ All project documentation beyond this README lives under [`docs/`](docs/).
 | **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** | Admin / Bulk Ingest | Parses native ChatGPT `conversations-*.json` export files by explicit file path, reconstructs active conversation branches, and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Refuses to write into the protected `default_db` graph. |
 | **`capture_note(content, kind)`** | Evidence Write | Milestone 4a: explicit checkpoint captured to the append-only evidence journal — not episodic memory (`remember` is for that). Fire-and-forget. |
 | **`capture_health()`** | Read-Only | Milestone 4a: in-process MCP-boundary capture status — events captured, dropped, redacted, current queue depth. |
+| **`promote_auto_accepted_memories(dry_run, limit)`** | Memory Write | Promotes consolidation candidates already classified `auto_accepted` (Milestone 3) into episodic memory in FalkorDB. Idempotent — a candidate promoted once is never promoted twice. |
 
 ### Historical memory imports
 

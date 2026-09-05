@@ -145,7 +145,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 11 Context Memory Fabric tools (9 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` are only registered when a knowledge provider is configured):
+All connected clients receive access to the full suite of 12 Context Memory Fabric tools (10 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` are only registered when a knowledge provider is configured):
 
 1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
 2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
@@ -158,3 +158,4 @@ All connected clients receive access to the full suite of 11 Context Memory Fabr
 9. **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** *(Admin Ingest)* — Parses native ChatGPT `conversations-*.json` export files by explicit file path and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Requires an explicit non-default `graph_name` when committing.
 10. **`capture_note(content, kind)`** *(Evidence Write)* — Milestone 4a: explicit checkpoint captured to the evidence journal (not episodic memory — see `remember` for that). Fire-and-forget.
 11. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth.
+12. **`promote_auto_accepted_memories(dry_run, limit)`** *(Memory Write)* — Promotes consolidation candidates already classified `auto_accepted` into episodic memory (Graphiti/FalkorDB). Idempotent; only `auto_accepted` candidates are eligible — everything else needs Milestone 6 review tooling.

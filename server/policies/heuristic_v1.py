@@ -69,7 +69,24 @@ class HeuristicPatternPolicyV1:
     """Structurally satisfies server.policies.protocols.ExtractionPolicy."""
 
     name = "heuristic-pattern"
-    version = "1.0"
+    # 1.1 (2026-09-04): CandidateClassifier's Case C fallback no longer
+    # classifies a bare dated statement as episodic with no positive
+    # signal — see tests/test_regressions_baseline.py's
+    # TestClassifierDatedTextWithoutSignalIsAmbiguous.
+    # 1.2 (2026-09-04): added a 500-character length guard — a candidate
+    # that would otherwise be EPISODIC is downgraded to AMBIGUOUS past that
+    # length, since genuine personal statements are concise and technical
+    # debugging pastes (which routinely contain an incidental episodic verb
+    # plus an embedded log timestamp) are not — see
+    # TestClassifierLongPastedContentIsNotEpisodic. Manual inspection of
+    # all 119 real auto-accepted candidates found this affected the large
+    # majority of them, not just an edge case.
+    # Every already-scored journal event needs reprocessing under the
+    # current version to pick up each fix (reprocessing is local/free —
+    # HeuristicPatternPolicyV1 makes zero model calls — and creates a new
+    # derivation linked via `supersedes` rather than overwriting the prior
+    # one, per Milestone 3's design).
+    version = "1.2"
 
     def evaluate(self, event, context: PolicyContext) -> ExtractionResult:
         text = (event.content.get("text") or "").strip()

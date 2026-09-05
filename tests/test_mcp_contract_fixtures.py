@@ -72,7 +72,8 @@ class TestMCPContractFixtures(unittest.TestCase):
         # is visible in the diff even if test_no_tools_added_or_removed's
         # message is missed. Update deliberately alongside README.md/CLIENTS.md.
         # 11 as of Milestone 4a (added capture_note, capture_health).
-        self.assertEqual(len(self.expected), 11)
+        # 12 as of the auto_accepted promotion tool (promote_auto_accepted_memories).
+        self.assertEqual(len(self.expected), 12)
 
 
 if __name__ == "__main__":

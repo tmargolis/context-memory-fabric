@@ -402,6 +402,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "reconcile_memories",
             "capture_note",  # MS4a MCP-boundary capture
             "capture_health",  # MS4a MCP-boundary capture
+            "promote_auto_accepted_memories",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

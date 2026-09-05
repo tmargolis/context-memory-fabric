@@ -192,6 +192,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             "remember", "recall", "search_wiki", "get_context", "propose_wiki_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_note", "capture_health",  # MS4a MCP-boundary capture
+            "promote_auto_accepted_memories",
         }
         self.assertEqual(tool_names, expected_tools, f"Expected exactly {expected_tools}, got {tool_names}")
 

@@ -128,15 +128,17 @@ class TestCrashRecoveryLosesNothing(unittest.TestCase):
 
     def test_simulated_crash_leaves_no_partial_derived_memory(self):
         policy = HeuristicPatternPolicyV1()
+        memory_id = f"crash-event::{policy.name}@{policy.version}"
+        job_id = f"job:{memory_id}"
         with ConsolidationStore(self.consolidation_path) as cstore:
             # Simulate a crash: mark the job running, then stop — exactly
             # what happens if the process dies between mark_running() and
             # record_consolidation() (see store.py's module docstring).
-            cstore.mark_running("job:crash-event::heuristic-pattern@1.0", "crash-event", policy.name, policy.version)
+            cstore.mark_running(job_id, "crash-event", policy.name, policy.version)
 
             # No derived_memory should exist yet.
-            self.assertIsNone(cstore.get_derived_memory("crash-event::heuristic-pattern@1.0"))
-            job = cstore.get_job("job:crash-event::heuristic-pattern@1.0")
+            self.assertIsNone(cstore.get_derived_memory(memory_id))
+            job = cstore.get_job(job_id)
             self.assertEqual(job["status"], "running")
 
         # The source event itself is untouched regardless.
@@ -147,16 +149,18 @@ class TestCrashRecoveryLosesNothing(unittest.TestCase):
 
     def test_a_run_found_running_is_retried_not_skipped(self):
         policy = HeuristicPatternPolicyV1()
+        memory_id = f"crash-event::{policy.name}@{policy.version}"
+        job_id = f"job:{memory_id}"
         with ConsolidationStore(self.consolidation_path) as cstore:
-            cstore.mark_running("job:crash-event::heuristic-pattern@1.0", "crash-event", policy.name, policy.version)
+            cstore.mark_running(job_id, "crash-event", policy.name, policy.version)
 
         with SqliteEventStore(self.journal_path) as jstore, ConsolidationStore(self.consolidation_path) as cstore:
             stats = run_consolidation(jstore, cstore, policy)
             self.assertEqual(stats["events_seen"], 1)
             self.assertEqual(stats["already_processed_skipped"], 0, "A 'running' job must be retried, not skipped")
-            row = cstore.get_derived_memory("crash-event::heuristic-pattern@1.0")
+            row = cstore.get_derived_memory(memory_id)
             self.assertIsNotNone(row)
-            job = cstore.get_job("job:crash-event::heuristic-pattern@1.0")
+            job = cstore.get_job(job_id)
             self.assertEqual(job["status"], "succeeded")
 
 
@@ -179,41 +183,51 @@ class TestReprocessingUnderNewPolicyVersion(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_new_policy_version_creates_a_linked_new_derivation(self):
-        class PolicyV1_1:
-            name = "heuristic-pattern"
-            version = "1.1"
+        base_policy = HeuristicPatternPolicyV1()
+        # Next-version stand-in, one version past whatever the real policy
+        # currently is — not hardcoded to "1.1", since that now belongs to
+        # the real HeuristicPatternPolicyV1 (bumped 2026-09-04; see that
+        # class's docstring). Deriving it avoids this test silently
+        # colliding with the real class's version again next time it bumps.
+        next_version = f"{float(base_policy.version) + 0.1:.1f}"
+
+        class NextVersionPolicy:
+            name = base_policy.name
+            version = next_version
 
             def __init__(self):
-                self._v1 = HeuristicPatternPolicyV1()
+                self._base = HeuristicPatternPolicyV1()
 
             def evaluate(self, event, context):
-                result = self._v1.evaluate(event, context)
+                result = self._base.evaluate(event, context)
                 # Trivial, clearly-different behavior to prove versioning
                 # works — not a real policy improvement.
                 return ExtractionResult(
                     category=result.category,
                     statement=result.statement,
-                    reason=result.reason + " (v1.1 re-evaluation)",
+                    reason=result.reason + f" (v{next_version} re-evaluation)",
                     confidence=result.confidence,
                     event_date=result.event_date,
                     date_precision=result.date_precision,
                 )
 
         with SqliteEventStore(self.journal_path) as jstore, ConsolidationStore(self.consolidation_path) as cstore:
-            run_consolidation(jstore, cstore, HeuristicPatternPolicyV1())
-            v1_row = cstore.get_derived_memory("versioned-event::heuristic-pattern@1.0")
+            run_consolidation(jstore, cstore, base_policy)
+            v1_memory_id = f"versioned-event::{base_policy.name}@{base_policy.version}"
+            v1_row = cstore.get_derived_memory(v1_memory_id)
             self.assertIsNotNone(v1_row)
 
-            stats = run_consolidation(jstore, cstore, PolicyV1_1())
+            stats = run_consolidation(jstore, cstore, NextVersionPolicy())
             self.assertEqual(stats["re_derivations"], 1)
 
-            v1_1_row = cstore.get_derived_memory("versioned-event::heuristic-pattern@1.1")
-            self.assertIsNotNone(v1_1_row)
-            self.assertEqual(v1_1_row["supersedes"], v1_row["memory_id"])
-            self.assertIn("v1.1 re-evaluation", v1_1_row["reason"])
+            v_next_memory_id = f"versioned-event::{base_policy.name}@{next_version}"
+            v_next_row = cstore.get_derived_memory(v_next_memory_id)
+            self.assertIsNotNone(v_next_row)
+            self.assertEqual(v_next_row["supersedes"], v1_row["memory_id"])
+            self.assertIn(f"v{next_version} re-evaluation", v_next_row["reason"])
 
-            # The original v1.0 derivation is untouched — lineage intact.
-            v1_row_after = cstore.get_derived_memory("versioned-event::heuristic-pattern@1.0")
+            # The original derivation is untouched — lineage intact.
+            v1_row_after = cstore.get_derived_memory(v1_memory_id)
             self.assertEqual(v1_row_after["reason"], v1_row["reason"])
 
 

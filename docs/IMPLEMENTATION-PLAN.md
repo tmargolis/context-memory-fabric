@@ -346,6 +346,60 @@ Plus:
 
 ---
 
+## Unnumbered — Promote auto-accepted memories (closes the MS3 → MS6 gap)
+
+**Goal:** Give Milestone 3's `auto_accepted` classification somewhere to actually go. Not in the original milestone sequence — MS3's `pipeline.py` explicitly deferred this ("deriving new episodic memories from the full journal is explicitly out of scope until the Milestone 4a privacy/cost gate is answered"), and it never got its own milestone number. Sits between MS3 (classification) and MS6 (review/governance for everything that isn't auto-accepted).
+
+**Why now:** Directly motivated by a live gap check (2026-09-04): the production Graphiti graph still held exactly 57 episodes — the original MS0.5 backfill — while the journal held 19,012 events, 182 of them `auto_accepted` and sitting unpromoted. Wiring MS4a's capture into Claude Desktop before this existed would have added more unconsolidated volume on top of a backlog nothing was draining.
+
+### Tasks
+
+- [x] `server/consolidation/promotion.py`: `PromotionStore` (idempotency ledger — a `promotions` table in the same SQLite file as the journal/consolidation store, `succeeded`/`failed` per `memory_id`, same "one file, no cross-database consistency problem" precedent as `ConsolidationStore`) and `promote_auto_accepted()` (reads `derived_memories` rows with `approval_state='auto_accepted'` not yet promoted, calls `remember()` — through the MS4a rate limiter — for each, isolating per-row failures rather than aborting the batch). `remember_fn` is injected, not imported directly, so tests exercise real bookkeeping logic with zero Gemini/FalkorDB dependency.
+- [x] `GeminiQuotaExhaustedError` mid-batch stops the run cleanly — remaining candidates are left untouched (no partial/terminal record), safe to retry in a later call, not silently dropped or double-attempted.
+- [x] `promote_auto_accepted_memories(dry_run=True, limit=None)` MCP tool (12 tools total). `dry_run` defaults `True`, matching `import_memories`/`import_chatgpt_exports`'s convention. `limit` exists because a full run is a real, minutes-long operation — each `remember()` call gets the same polite inter-call delay `reconcile_memories` already uses.
+- [x] Explicitly scoped to `auto_accepted` only. `queued_for_review` (9,658 of 19,012 events — the overwhelming majority) and `rejected` (9,172) are untouched; they need Milestone 6's actual review/correction tooling, not a path that bypasses it.
+- [x] 7 tests (`tests/test_promotion.py`): dry-run preview, commit + idempotency on a second run, only-auto_accepted-rows-considered, one row's failure doesn't block another's success, rate-limit exhaustion stops early without losing or double-recording remaining candidates, `limit` caps a run.
+
+### Files touched
+
+New: `server/consolidation/promotion.py`, `tests/test_promotion.py`. Modified: `server/mcp.py` (new tool), `docs/CLIENTS.md`, `README.md`, `tests/fixtures/mcp_contracts/tool_schemas.json` (regenerated) plus the same five tool-count/name-set tests updated for MS4a's two tools now updated again for this one.
+
+### Live run and a real defect it caught (2026-09-04)
+
+Ran for real: `limit=5`, `dry_run=False`. Client-side MCP timeout hit mid-batch (4 of 5 candidates had already completed server-side by then — the timeout was the tool-call round-trip, not the underlying work, which kept running). Checking the 4 that landed found **3 of 4 were junk**: raw Android logcat lines pasted into a Claude Code debugging session (AstroAlert project), promoted verbatim as episodic memory.
+
+**Root cause, traced to `server/importer.py`'s `CandidateClassifier.classify()`, Case C (the fallback branch):** it classified *any* text containing a parseable date and 4+ words as `EPISODIC` — no requirement for actual episodic or durable language. A logcat line always carries an exact embedded timestamp, so it trivially cleared the bar; combined with the exact-date confidence bonus (0.6 + 0.3 = 0.9), it sailed past the 0.75 auto-accept threshold. MS3's labeled fixture (down to 9 rows after the other session's ChatGPT-event deletion) never contained this shape of content — raw technical output is characteristic of Claude-harness coding sessions, essentially absent from the original ChatGPT corpus the classifier was tuned against.
+
+**Fixed:** Case C now requires an actual positive signal (durable or episodic language) — a bare date is no longer sufficient on its own, symmetric with the pre-existing rule that an undated episodic statement must not be assigned today's date. Regression tests: `tests/test_regressions_baseline.py::TestClassifierDatedTextWithoutSignalIsAmbiguous`. Bumped `HeuristicPatternPolicyV1.version` to `1.1` and reprocessed the full 19,012-event journal (local/free — zero model calls) so every already-computed classification picks up the fix: `auto_accepted` dropped from 182 to **119** (63 false positives corrected to `ambiguous`/`queued_for_review`), `rejected`/`non_memory` unchanged (9,172 — confirms the fix didn't touch the actor-type guard at all, only the dateonly-fallback path).
+
+**Cleanup:** the 4 promoted episodes were removed from `memory-fabric` (`graphiti.remove_episode`, which correctly cleans up entities/edges solely mentioned by that episode and leaves shared ones alone) and their `PromotionStore` rows reverted to `failed` with a clear reason, so they're eligible for a corrected re-run. Verified the 3 logcat candidates now classify `ambiguous` under 1.1.
+
+**One remaining, narrower, un-fixed issue:** the 4th promoted candidate ("ok, i'm gettin recommended targets now that i fixed showing the targetlist...") is *correctly* `episodic` under the fix — it has a real episodic verb ("fixed") — but its `event_date` was still extracted from an unrelated pasted API/log timestamp later in the same message, not from anything about when the statement was made. `TemporalExtractor.extract_date()` takes the first matching date pattern anywhere in the text with no awareness that a later paste boundary makes a subsequent date untrustworthy. Content-wise this candidate is legitimate; its claimed date precision (`exact`) is not earned. Left unfixed deliberately rather than attempting a same-day heuristic with no fixture to validate it against — flagged for a dedicated pass before promoting this specific candidate (or others like it) again.
+
+### Full manual inspection (2026-09-04) — the 4-item spot check undersold the problem
+
+Prompted by Todd asking for an actual quality inspection rather than trusting the spot check above: read essentially the entire 119-item `auto_accepted` set (not a sample), plus a random 100 from `queued_for_review` and 30 from `rejected`.
+
+**`auto_accepted` was still badly compromised.** An estimated 90%+ of the 119 were not genuine personal memories — technical troubleshooting excerpts (shell commands, git output, error logs, JSON API responses) or entire pasted documents (legal letters, insurance forms, job application drafts), several tens of thousands of characters long, one **exactly 1,000,000 characters** (a `log show` terminal dump). The Case C fix only addressed candidates with *no* episodic signal; the dominant remaining driver was Case B: ordinary troubleshooting narration incidentally contains words from the episodic-verb list ("fixed", "started", "resolved", "updated") that were meant to recognize real decision language ("decided to switch databases"), combined with a date pulled from an embedded log timestamp.
+
+**`queued_for_review` (random 100) and `rejected` (random 30) both looked correct** — no clear false negatives found in the sample, `rejected` is 100% assistant-authored as the actor-type guard requires structurally.
+
+**Fix: a 500-character length guard**, applied as a hard override on top of the existing category logic (not a rewrite of it) — a candidate that would otherwise be `EPISODIC` is downgraded to `AMBIGUOUS` past 500 characters, since a genuine personal statement is concise and none of the good examples found in the queued/rejected samples ever needed to be longer. Bumped `HeuristicPatternPolicyV1` to `1.2`, reprocessed the full journal again: **`auto_accepted` dropped from 119 to 7.** Regression tests: `tests/test_regressions_baseline.py::TestClassifierLongPastedContentIsNotEpisodic`.
+
+**Inspected the final 7 individually — 4 genuinely good, 3 still wrong.** The 4 good ones are real personal state: a glasses-prescription change, an HSA/marital-status tax timing question, a Claude Pro subscription access issue, a payment confirmation email. The 3 still wrong are the *same* log-narration pattern as before, just short enough (under 500 characters) to clear the new guard — e.g. `"i'm still getting this error loop in the log\n[2026-06-02 11:11:01] watcher started\n..."`. **The length guard was necessary but not sufficient**: a short log snippet with an incidental episodic verb and an embedded timestamp is structurally indistinguishable from a short genuine episodic statement using only regex — telling them apart needs to understand *what the text is about*, not just its shape or length. See the discussion below on deriving work-session summaries instead of only suppressing this content, which is the more promising direction for the residual gap than another regex patch.
+
+### Not done / explicitly out of scope here
+
+Promoting the (now) 7 `auto_accepted` candidates — paused pending Todd's direction on the work-session summarization idea below, since building that first could change which of these are worth promoting as-is versus superseding with a derived summary.
+
+### Idea under discussion: deriving "work session" memories instead of only suppressing pasted technical content
+
+Todd's question after seeing the inspection: rather than only filtering out debugging/log-paste turns, can some of them become a genuinely useful memory like "worked on debugging the AstroAlert target-list altitude bug" or "investigated the OpenClaw gateway connection issue on the Mac Pro" — a real summary of what was being worked on, distinct from a personal decision/event and distinct from storing the raw paste?
+
+This is not achievable with `CandidateClassifier`'s pattern matching — recognizing "this is a debugging session about X" from a pasted log dump requires actually understanding the content, not just detecting its shape. It's exactly the kind of thing a model-based policy (anticipated since MS3's `policy_name`/`policy_version` design, previously not cost-justified) could do, and MS4a's rate limiter now makes that a real, boundable option rather than an open-ended cost risk. Sketch, not yet built or approved: detect candidates that look technical/log-shaped (the same signal currently causing false positives) and route only those through a lightweight Gemini call asking for a one-line work-session summary; land the result as a new, distinctly-tagged memory type (not `episodic`, so it doesn't inherit the auto-accept threshold built for personal decisions) that queues for review rather than auto-accepting until this new path has its own precision track record. Needs Todd's sign-off before building — it's a real cost and design decision, not a bug fix.
+
+---
+
 ## MS4b — Claude Code adapter
 
 **Goal:** Highest-fidelity capture available in your stack.

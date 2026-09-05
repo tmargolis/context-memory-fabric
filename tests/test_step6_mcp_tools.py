@@ -54,6 +54,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "remember", "recall", "search_wiki", "get_context", "propose_wiki_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_note", "capture_health",  # MS4a MCP-boundary capture
+            "promote_auto_accepted_memories",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

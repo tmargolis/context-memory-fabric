@@ -377,6 +377,56 @@
     },
     "title": "Import Historical Memories"
   },
+  "promote_auto_accepted_memories": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Promote consolidation candidates already classified 'auto_accepted' into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between the evidence journal's consolidation pipeline (which only classifies and stages\n      candidates locally) and actual episodic memory. Only `approval_state='auto_accepted'` candidates are eligible \u2014\n      queued-for-review and rejected candidates are untouched; they require Milestone 6 review tooling, not this tool.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one explicit statement directly. This tool operates on already-classified\n      candidates from `server.consolidation.pipeline`'s local `derived_memories` table.\n    - Idempotent: a candidate already promoted in a prior call is skipped, never promoted twice.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter) for each eligible\n      candidate and records the outcome. A rate-limiter exhaustion stops the run early without losing or\n      double-processing any candidate \u2014 safe to re-run later.\n    ",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "description": "If true (default), previews which auto-accepted candidates would be promoted without writing to Graphiti.",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum number of candidates to promote in this call (omit for no cap). A full run is a real, minutes-long operation \u2014 start with a small limit.",
+          "title": "Limit"
+        }
+      },
+      "title": "promote_auto_accepted_memoriesArguments",
+      "type": "object"
+    },
+    "name": "promote_auto_accepted_memories",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "promote_auto_accepted_memoriesOutput",
+      "type": "object"
+    },
+    "title": "Promote Auto-Accepted Memories"
+  },
   "propose_wiki_update": {
     "annotations": {
       "destructive_hint": false,

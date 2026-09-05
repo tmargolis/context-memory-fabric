@@ -20,9 +20,12 @@ from pydantic import Field
 from server.capture.health import format_health_report, get_default_health
 from server.capture.middleware import capture_manual_note, get_default_capture_middleware
 from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
+from server.consolidation.promotion import PromotionStore, format_promotion_report, promote_auto_accepted
+from server.consolidation.store import ConsolidationStore
 from server.context import get_context as assemble_context
 from server.core.config import load_config
 from server.importer import import_memories_content
+from server.journal.store import SqliteEventStore
 from server.memory import (
     edit_memory as edit_episodic_memory,
     recall as recall_memory,
@@ -672,6 +675,65 @@ async def reconcile_memories(
         dry_run=dry_run,
         format_for_mcp=True,
     )
+
+
+@app.tool(
+    title="Promote Auto-Accepted Memories",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def promote_auto_accepted_memories(
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="If true (default), previews which auto-accepted candidates would be promoted without writing to Graphiti."
+        ),
+    ] = True,
+    limit: Annotated[
+        Optional[int],
+        Field(
+            description="Maximum number of candidates to promote in this call (omit for no cap). A full run is a real, minutes-long operation — start with a small limit."
+        ),
+    ] = None,
+) -> str:
+    """Promote consolidation candidates already classified 'auto_accepted' into episodic memory (Graphiti/FalkorDB).
+
+    WHEN TO USE:
+    - Use to close the gap between the evidence journal's consolidation pipeline (which only classifies and stages
+      candidates locally) and actual episodic memory. Only `approval_state='auto_accepted'` candidates are eligible —
+      queued-for-review and rejected candidates are untouched; they require Milestone 6 review tooling, not this tool.
+
+    DISTINCTIONS:
+    - Different from `remember`, which writes one explicit statement directly. This tool operates on already-classified
+      candidates from `server.consolidation.pipeline`'s local `derived_memories` table.
+    - Idempotent: a candidate already promoted in a prior call is skipped, never promoted twice.
+
+    SIDE EFFECTS:
+    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter) for each eligible
+      candidate and records the outcome. A rate-limiter exhaustion stops the run early without losing or
+      double-processing any candidate — safe to re-run later.
+    """
+    consolidation_store = ConsolidationStore()
+    journal_store = SqliteEventStore()
+    promotion_store = PromotionStore()
+    try:
+        result = await promote_auto_accepted(
+            consolidation_store=consolidation_store,
+            journal_store=journal_store,
+            promotion_store=promotion_store,
+            remember_fn=remember_memory,
+            dry_run=dry_run,
+            limit=limit,
+        )
+        return format_promotion_report(result)
+    finally:
+        consolidation_store.close()
+        journal_store.close()
+        promotion_store.close()
 
 
 def main():
