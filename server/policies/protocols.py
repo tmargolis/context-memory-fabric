@@ -28,6 +28,14 @@ class ExtractionCategory(StrEnum):
     (see ExtractionCategory's role in the actor-type guard, Milestone 3
     acceptance test 1) and other content a policy can positively rule out,
     not just fail to positively classify.
+
+    These four values are the whole vocabulary and are meant to stay that
+    way. Do NOT add a category for a "kind of thinking" (exploration,
+    analysis, experiment, investigation, decision, ...) — ADR 0005 decided
+    those are a `reasoning_kind` *property* on the derived memory, tagged
+    by the model-based ReasoningEpisodePolicyV1 (Milestone 3.5), not a fifth
+    ExtractionCategory and not a new lane. A reasoning episode is still
+    classified EPISODIC here; `reasoning_kind` rides alongside it.
     """
 
     EPISODIC = "episodic"

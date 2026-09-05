@@ -52,7 +52,7 @@ All project documentation beyond this README lives under [`docs/`](docs/).
 - 📓 **[Journal Query Guide](docs/JOURNAL-QUERIES.md):** How to inspect the evidence layer (the append-only source-event journal) directly — CLI and raw SQL.
 - 🗺️ **[Roadmap](docs/ROADMAP.md):** Architectural principles and the target logical architecture — the *what and why*.
 - ✅ **[Implementation Plan](docs/IMPLEMENTATION-PLAN.md):** Milestone-by-milestone execution log, exit gates, and acceptance tests — the *how, in what order, and how we know it worked*.
-- 📐 **[Architecture Decision Records](docs/adr/):** ADR 0001 (four-layer model), 0002 (provider boundaries), 0003 (graph/state topology), 0004 (message classifier v2 and work journal — proposed, not yet implemented).
+- 📐 **[Architecture Decision Records](docs/adr/):** ADR 0001 (four-layer model), 0002 (provider boundaries), 0003 (graph/state topology), 0004 (message classifier v2 and work journal — proposed, amended by 0005), 0005 (reasoning-episode capture: a `reasoning_kind` property, not new classification types — proposed, scoped as MS3.5, the next milestone).
 
 ---
 

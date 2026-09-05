@@ -61,6 +61,8 @@ The roadmap's common adapter requirements assume a harness that emits local life
 
 Rationale: 4a is one implementation that satisfies your top priority *and* several other clients simultaneously; 4b is the highest-fidelity capture available anywhere in your stack; 4c forces `cmf-http`, currently unscheduled, into MS4 because OpenClaw runs on a different machine.
 
+**Amendment A5 (ADR 0005) does not touch this table.** Reasoning-episode consolidation is **MS3.5**, a consolidation-layer milestone that runs before all of 4a–4d — not a capture adapter. See A5 above and the MS3.5 section.
+
 ### A3 — Add the Claude and Gemini export importers as an explicit workstream
 
 The roadmap names `cmf-import-chatgpt` only. You need Claude and Gemini history too. These are added to MS2/MS3 as `cmf-import-claude` and `cmf-import-gemini`, written against the canonical event envelope rather than directly against Graphiti.
@@ -68,6 +70,18 @@ The roadmap names `cmf-import-chatgpt` only. You need Claude and Gemini history 
 ### A4 — Promote the privacy and cost gate ahead of MS4 capture
 
 Cross-cutting "local/private extraction options" becomes a **blocking decision gate before 4a goes live**. Rationale in [Cross-cutting concerns](#cross-cutting-concerns) below.
+
+### A5 — Reasoning-episode capture (ADR 0005), and a new MS3.5
+
+**Direction set 2026-09-05 with Todd.** The classifier recognizes *closure* (a decision made, a thing shipped) but not *thinking* (exploration, analysis, experiments, dead ends). ADR 0005 fixes this without adding classification types:
+
+- The four categories (`episodic` / `durable_candidate` / `ambiguous` / `non_memory`) are **unchanged**. The kind of thinking is a new optional `reasoning_kind` **property** on derived memories (`decision`, `investigation`, `hypothesis`, `experiment`, `finding`, `rejected_alternative`, `retrospective`, `plan` — extend by adding a string, not migrating a schema).
+- A model-based `ReasoningEpisodePolicyV1` (behind the existing `ExtractionPolicy` protocol) derives typed reasoning episodes over **topical windows of turns**, not single events. `HeuristicPatternPolicyV1` stays as the cheap pre-filter and the triage gate deciding which windows are worth a model call.
+- The MS3 auto-accept gate is **loosened** — reasoning episodes may auto-accept on model confidence without a dated-decision requirement. Backlog-trimming is deferred; MS6 review tooling moves onto the critical path as a result.
+- Extraction runs on hosted Gemini (rate-limited) now; the reasoning workload is the intended first tenant of the Spark local-inference stack once it is validated.
+- ADR 0004's "thread = task-progression status timeline" framing is replaced: the thread carries the reasoning narrative; ADR 0004 decisions 1 and 3 carry forward unchanged, decision 2 is extended, decision 4 is reframed.
+
+**New milestone, no renumber of MS4:** this lands as **MS3.5 — Reasoning-episode consolidation**, run *before* the MS4 capture adapters (Todd, 2026-09-05 — the existing ~19k-event journal is the substrate to get episode-reasoning right on; realtime ingestion from Claude Code / OpenClaw is secondary). MS3.5 rather than MS4-anything because it extends MS3's consolidation split with a new stage and a model-based policy — it is not a capture mechanism. MS4a–MS4d keep the numbers they already had (MS4b Claude Code, MS4c OpenClaw, MS4d Codex/Gemini CLI).
 
 ---
 
@@ -78,7 +92,8 @@ MS0.5  Baseline correctness        ← start here, small, unblocks everything
 MS1    Provider interfaces
 MS2    Canonical event journal  +  Claude/Gemini importers  +  backfill
 MS3    Capture / consolidation split
-MS4a   MCP-boundary capture      → Claude Desktop
+MS3.5  Reasoning-episode consolidation (ADR 0005)   ← next; runs before the MS4 adapters
+MS4a   MCP-boundary capture      → Claude Desktop   (done, pending live verification)
 MS4b   Claude Code adapter
 MS4c   OpenClaw adapter (+ cmf-http)
 MS4d   Codex, Gemini CLI
@@ -282,8 +297,53 @@ New: `server/consolidation/{__init__,store,pipeline}.py`, `server/policies/{__in
 
 **Answered: threshold = 0.75, confirmed by measurement, not chosen a priori.** The confidence formula (`server/policies/heuristic_v1.py`) combines a category base score with a date-precision bonus, and 0.75 is exactly the point that requires *both* an episodic-shaped statement *and* an exact/day-precision date to clear — durable candidates, ambiguous statements, and month/year-precision dates all fall below it by construction. Measured against the labeled fixture set at this threshold: 100% auto-accept precision, 100% non-memory exclusion. The threshold wasn't tuned to hit these numbers after the fact — it fell out of the confidence formula's own bonus structure, and the fixture set is what confirmed that boundary happens to be exactly where it needed to be, and caught the date-injection bug that would have made this a real production hazard.
 
+> **Amended 2026-09-05 (ADR 0005, amendment A5).** This answer stands *for `HeuristicPatternPolicyV1`'s lexical derivations*. It is deliberately loosened for the reasoning episodes MS3.5 adds: those are lower-confidence and often undated in the text, so requiring "an exact/day-precision date" would exclude essentially all of them. Reasoning episodes auto-accept on `ReasoningEpisodePolicyV1`'s model confidence against a threshold re-derived from the rebuilt fixture (MS3.5), not this 0.75. The review backlog grows as a consequence — accepted for now, per Todd; better trimming is later work.
+
 **Effort:** 4–5 sessions.
 **Risk:** Medium. The classifier already works; the risk is regression while making it reusable. The fixture set is the guard.
+
+---
+
+## MS3.5 — Reasoning-episode consolidation
+
+**Goal:** Capture the *thinking*, not just the closure — exploration, analysis, experiments, hypotheses, and dead ends — as `episodic` memories tagged with a `reasoning_kind` property. Full design: [ADR 0005](adr/0005-reasoning-episode-capture.md).
+
+**Why now (execution order set 2026-09-05, with Todd):** this runs **before** the MS4b–MS4d capture adapters, not after. The reasoning is foundational: the ~19,000 events already in the journal (native ChatGPT, Claude, Gemini) are a large, stable corpus to refine episode-reasoning identification against, and getting that layer right matters more than realtime ingestion of new Claude Code / OpenClaw traffic. Doing it first also means every later adapter inherits a consolidation layer that already understands reasoning rather than being retrofitted. Numbered MS3.5 because it extends MS3's consolidation split (a new stage + a model-based policy), not a new capture mechanism — same "sits between milestones" placement as the promotion milestone above.
+
+### Tasks
+
+- [ ] **Add `reasoning_kind` to the data model.** Optional field on `DerivedMemory` (`server/core/models.py`) and a nullable column on `derived_memories`. Additive; existing rows read `NULL`. Settle the field name here (working name `reasoning_kind`) and whether the vocabulary is closed, registry-backed, or free-text-with-a-starter-set.
+- [ ] **`ReasoningEpisodePolicyV1`** under `server/policies/`, implementing the existing `ExtractionPolicy` protocol unchanged in shape. Model-based (rate-limited Gemini path). Returns, per reasoning episode: `{category, reasoning_kind, statement, driving_question?, rationale?, alternatives?, status?, thread_key?, confidence}`. `category` is still one of the existing four; `statement` is a concise synthesis, not raw turns.
+- [ ] **Topical-window segmentation.** A new consolidation stage that groups a conversation/session's turns into bounded topical windows and runs the policy per window (0–N episodes out). Prototype 2–3 segmentation strategies (fixed turn-count, embedding-similarity boundary, model-driven in-call) against the real ChatGPT/Claude/Gemini journal and pick from measured output — do not build blind.
+- [ ] **Triage gate in `HeuristicPatternPolicyV1`.** Keep it as the cheap pre-filter (empty / `actor_type != 'user'` / trivia) and add a triage signal marking windows worth a model call (deliberation markers, question language, technical/log-shaped content). Windows that don't clear triage are not sent to the model.
+- [ ] **Cross-conversation thread index** (ADR 0004 decision 3, carried forward): a small persistent structure of open threads (topic/project key, first-seen event, status, linked event IDs, accumulated `reasoning_kind` entries), checked before extraction so an intent in one conversation and its resolution in another land in the same thread. Most naturally alongside `derived_memories` in `server/consolidation/`.
+- [ ] **Loosen auto-accept for reasoning episodes.** `_approval_state_for` (`server/consolidation/pipeline.py`) currently auto-accepts only `EPISODIC` + confidence ≥ 0.75, which by construction needs a dated decision. Reasoning episodes auto-accept on model confidence against a threshold re-derived from the rebuilt fixture (next task). `HeuristicPatternPolicyV1`'s own derivations keep the 0.75 rule.
+- [ ] **Rebuild the memory-quality fixture's positive side.** `tests/fixtures/memory_quality/labeled_events.json` is down to 9 all-negative rows after the ChatGPT-summary-event deletion. Rebuild positives from native ChatGPT / Claude / Gemini events with `reasoning_kind` labels (Claude Code events too, once MS4b lands — but MS3.5 does not wait on them). Do **not** reconstruct anything from the abandoned ChatGPT summary (ADR 0005 decision 7).
+- [ ] **Reprocess the journal** under the new stage (bounded by the rate limiter) and inspect output before wiring anything to promotion.
+- [ ] **Keep the `actor_type != 'user'` guard — but measure what it costs.** MS3.5 derives episodes from user turns only; assistant replies are context, never seed an episode or establish a fact (ROADMAP principle 9, unchanged). Todd flagged (2026-09-05) that this likely under-captures reasoning authored by the assistant in reply to terse prompts. During the journal-reprocess inspection, sample how often a would-be episode's substance is only in assistant turns, and record the number for the exit gate — do not change the guard in MS3.5.
+- [ ] **Docstring steer** in `server/policies/protocols.py`: `ExtractionCategory` stays four values; kinds of thinking are `reasoning_kind`, not new categories. *(Done 2026-09-05, ahead of the milestone, to prevent wrong-direction work.)*
+
+### Files touched
+
+New: `server/policies/reasoning_episode_v1.py`, `server/consolidation/windowing.py` (or similar), `server/consolidation/threads.py`, `tests/test_ms3_5_reasoning_episodes.py`. Modified: `server/core/models.py`, `server/consolidation/{store,pipeline}.py`, `server/policies/{protocols,heuristic_v1}.py`, `tests/fixtures/memory_quality/labeled_events.json`.
+
+### Acceptance tests
+
+1. [ ] An investigation spanning ~10 turns with no closure verb and no in-text date produces one `episodic` memory with `reasoning_kind='investigation'` and an `event_date` resolved from the window's turn metadata.
+2. [ ] A "considered X, chose Y because Z" exchange produces both a `decision` episode and a linked `rejected_alternative` episode.
+3. [ ] A short log-narration turn (the residual promotion false-positive shape) is either a legitimate `reasoning_kind='investigation'`/`experiment` synthesis or excluded — never a raw-paste `episodic` promotion.
+4. [ ] An intent stated in conversation A and its outcome reported in conversation B land in the same thread.
+5. [ ] Reprocessing under a bumped `ReasoningEpisodePolicyV1` version creates new derivations with prior lineage intact (same guarantee as MS3 acceptance test 2).
+6. [ ] No new `ExtractionCategory` value exists; `grep` confirms the enum is unchanged.
+
+### Exit gate
+
+**What is the reasoning-episode auto-accept threshold, and what is the review-backlog burn-down plan?** Set the threshold from the rebuilt fixture. The backlog *will* grow (ADR 0005 decision 5); name the intended MS6 review affordance that drains it, even if MS6 builds it later.
+
+**Does user-turns-only under-capture the reasoning?** Report the measured rate (from the task above) at which a would-be episode's substance lives only in assistant turns. If it's material, the follow-on decision — whether assistant-authored reasoning can seed an episode (marked assistant-originated, never a personal fact, always queued for review) — is scoped as its own small milestone rather than folded into MS3.5 late.
+
+**Effort:** 5–7 sessions (segmentation and the fixture rebuild are the bulk).
+**Risk:** Medium-high. First model-based policy; segmentation is genuinely unsolved; precision is unproven until the fixture exists. Prototype offline against the existing journal before committing schema.
 
 ---
 
@@ -386,17 +446,20 @@ Prompted by Todd asking for an actual quality inspection rather than trusting th
 
 **Fix: a 500-character length guard**, applied as a hard override on top of the existing category logic (not a rewrite of it) — a candidate that would otherwise be `EPISODIC` is downgraded to `AMBIGUOUS` past 500 characters, since a genuine personal statement is concise and none of the good examples found in the queued/rejected samples ever needed to be longer. Bumped `HeuristicPatternPolicyV1` to `1.2`, reprocessed the full journal again: **`auto_accepted` dropped from 119 to 7.** Regression tests: `tests/test_regressions_baseline.py::TestClassifierLongPastedContentIsNotEpisodic`.
 
-**Inspected the final 7 individually — 4 genuinely good, 3 still wrong.** The 4 good ones are real personal state: a glasses-prescription change, an HSA/marital-status tax timing question, a Claude Pro subscription access issue, a payment confirmation email. The 3 still wrong are the *same* log-narration pattern as before, just short enough (under 500 characters) to clear the new guard — e.g. `"i'm still getting this error loop in the log\n[2026-06-02 11:11:01] watcher started\n..."`. **The length guard was necessary but not sufficient**: a short log snippet with an incidental episodic verb and an embedded timestamp is structurally indistinguishable from a short genuine episodic statement using only regex — telling them apart needs to understand *what the text is about*, not just its shape or length. See the discussion below on deriving work-session summaries instead of only suppressing this content, which is the more promising direction for the residual gap than another regex patch.
+**Inspected the final 7 individually — 4 genuinely good, 3 still wrong.** The 4 good ones are real personal state: a glasses-prescription change, an HSA/marital-status tax timing question, a Claude Pro subscription access issue, a payment confirmation email. The 3 still wrong are the *same* log-narration pattern as before, just short enough (under 500 characters) to clear the new guard — e.g. `"i'm still getting this error loop in the log\n[2026-06-02 11:11:01] watcher started\n..."`. **The length guard was necessary but not sufficient**: a short log snippet with an incidental episodic verb and an embedded timestamp is structurally indistinguishable from a short genuine episodic statement using only regex — telling them apart needs to understand *what the text is about*, not just its shape or length. This residual gap is now owned by **MS3.5 — Reasoning-episode consolidation** (ADR 0005): a model-based policy over topical windows, not another regex patch.
 
 ### Not done / explicitly out of scope here
 
-Promoting the (now) 7 `auto_accepted` candidates — paused pending Todd's direction on the work-session summarization idea below, since building that first could change which of these are worth promoting as-is versus superseding with a derived summary.
+Promoting the (now) 7 `auto_accepted` candidates — deferred into MS3.5. Building `ReasoningEpisodePolicyV1` first may supersede some of them with a derived reasoning episode rather than promoting the raw candidate as-is.
 
-### Idea under discussion: deriving "work session" memories instead of only suppressing pasted technical content
+### Resolved: deriving reasoning episodes instead of only suppressing pasted technical content
 
-Todd's question after seeing the inspection: rather than only filtering out debugging/log-paste turns, can some of them become a genuinely useful memory like "worked on debugging the AstroAlert target-list altitude bug" or "investigated the OpenClaw gateway connection issue on the Mac Pro" — a real summary of what was being worked on, distinct from a personal decision/event and distinct from storing the raw paste?
+Todd's question after the inspection — rather than only filtering out debugging/log-paste turns, can some become a genuinely useful memory ("investigated the OpenClaw gateway connection issue on the Mac Pro"), distinct from a decision and distinct from the raw paste? — is **answered by ADR 0005 (2026-09-05)** and scheduled as MS3.5, the next milestone. Two corrections to the original sketch recorded here so nobody builds the old version:
 
-This is not achievable with `CandidateClassifier`'s pattern matching — recognizing "this is a debugging session about X" from a pasted log dump requires actually understanding the content, not just detecting its shape. It's exactly the kind of thing a model-based policy (anticipated since MS3's `policy_name`/`policy_version` design, previously not cost-justified) could do, and MS4a's rate limiter now makes that a real, boundable option rather than an open-ended cost risk. Sketch, not yet built or approved: detect candidates that look technical/log-shaped (the same signal currently causing false positives) and route only those through a lightweight Gemini call asking for a one-line work-session summary; land the result as a new, distinctly-tagged memory type (not `episodic`, so it doesn't inherit the auto-accept threshold built for personal decisions) that queues for review rather than auto-accepting until this new path has its own precision track record. Needs Todd's sign-off before building — it's a real cost and design decision, not a bug fix.
+- The result is **not a new memory type / not a new category**. It is the existing `episodic` category plus a `reasoning_kind` property (`investigation`, `finding`, `experiment`, …). The earlier "land it as a distinctly-tagged memory type, not `episodic`" idea is dropped — Todd wants the four categories kept.
+- It is **not a one-line label**. A label keeps that work happened but loses what was learned, tried, and why. MS3.5 derives a real synthesis over a window of turns (driving question, rationale, alternatives, finding).
+
+The triage instinct from the sketch carries forward: `HeuristicPatternPolicyV1` flags technical/log-shaped windows (the same signal currently causing false positives) as worth a model call; everything else is skipped. Extraction runs on the rate-limited Gemini path now, Spark local inference later.
 
 ---
 
@@ -438,6 +501,8 @@ New: `server/adapters/claude_code/{parser,hooks,installer,backfill}.py`, `docs/a
 ### Exit gate
 
 **How much of a coding session is worth keeping?** A transcript is mostly file reads and tool output. Decide the retention class per event type — full turns, decisions only, or summaries — before backfilling 15 projects.
+
+> **Note (ADR 0005):** "summaries" is no longer a hand-wave — it is MS3.5's reasoning-episode derivation, which by this point already exists and runs on the journal. The MS4b decision is narrower: which raw Claude Code event types reach the journal at all (full turns vs. tool-output-elided), given that MS3.5's stage will derive the synthesis on top. Keep enough raw turns that reasoning extraction has substrate; elide pure file-read/tool-output noise.
 
 **Effort:** 3–4 sessions.
 **Risk:** Low-medium. Local files and documented hooks. The volume is the real risk: coding transcripts are large, and everything consolidated costs an extraction call.
@@ -533,6 +598,8 @@ Three questions must be answered before capture is enabled by default:
 
 **Recommendation:** journal everything locally; consolidate under an explicit policy with a spend ceiling; route sensitive content classes to local inference or hold them unconsolidated pending review.
 
+**Addendum 2026-09-05 (ADR 0005).** MS3.5's reasoning extraction adds a second model call site (multi-turn windows, larger prompts than per-event classification). Todd's direction: run it on the existing rate-limited hosted Gemini path in the interim, no content-class filtering yet — the same posture the MS4a gate settled on, not a reopened decision. The reasoning workload is the intended **first tenant of the Spark local-inference stack** once that stack's validation sequence runs; sensitive-class routing is revisited then, not before.
+
 ### Observability
 
 Add from MS2 onward, not retrofitted: capture success and lag, consolidation latency and failure, extraction precision and rejection rate, duplicate and conflict rates, retrieval relevance, temporal correctness, provenance coverage, token cost per harness, provider latency, deletion and correction propagation.
@@ -576,11 +643,12 @@ Version every canonical schema. Maintain backward-compatible MCP tool aliases th
 | MS1 | 3–4 | 6 |
 | MS2 | 5–7 | 13 |
 | MS3 | 4–5 | 18 |
-| MS4a | 3–4 | 22 |
-| MS4b | 3–4 | 26 |
-| MS4c | 4–5 | 31 |
-| MS4d | 4–6 | 37 |
-| MS5–MS9 | 20–26 | ~60 |
+| MS3.5 (reasoning-episode consolidation) | 5–7 | ~24 |
+| MS4a | 3–4 | ~28 |
+| MS4b (Claude Code) | 3–4 | ~31 |
+| MS4c (OpenClaw) | 4–5 | ~36 |
+| MS4d (Codex, Gemini CLI) | 4–6 | ~41 |
+| MS5–MS9 | 20–26 | ~64 |
 
 Estimates assume agent-assisted implementation with review at each milestone boundary.
 
@@ -590,4 +658,6 @@ Estimates assume agent-assisted implementation with review at each milestone bou
 
 **MS4a — MCP-boundary capture (Claude Desktop) is implemented and unit-tested, pending live interactive verification.** MS0.5 through MS3 are all complete (2026-09-04; see each milestone's status notes above for corrections found while doing the work — two in MS1, two significant ones in MS2 about `default_db`'s real composition and the Gemini export's actual coverage, and one in MS3 about which classifier was actually reusable, plus a real date-injection bug caught by the memory-quality fixture before it could reach production).
 
-MS4a's exit gate — the privacy/cost decision — is answered (2026-09-04, with Todd): Gemini-only for now, no content-class filtering, consolidation stays journal-everything/auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate. Capture middleware, harness/session identity, secret filtering, the `capture_note`/`capture_health` tools, and the rate limiter are all built and passing (183 tests, full suite). What's left before calling MS4a fully done: the roadmap's five-step live cross-harness test (record in Claude Desktop → consolidates with provenance → retrieve from a second harness → correct → Desktop sees current state) — genuinely interactive, needs a live Claude Desktop connection this implementation session doesn't have. Per Todd's stated harness priority (Claude Desktop before Claude Code, OpenClaw before Codex/Gemini CLI), MS4b (Claude Code) is next once that live verification happens.
+MS4a's exit gate — the privacy/cost decision — is answered (2026-09-04, with Todd): Gemini-only for now, no content-class filtering, consolidation stays journal-everything/auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate. Capture middleware, harness/session identity, secret filtering, the `capture_note`/`capture_health` tools, and the rate limiter are all built and passing (183 tests, full suite). What's left before calling MS4a fully done: the roadmap's five-step live cross-harness test (record in Claude Desktop → consolidates with provenance → retrieve from a second harness → correct → Desktop sees current state) — genuinely interactive, needs a live Claude Desktop connection this implementation session doesn't have.
+
+**The next milestone is MS3.5 — Reasoning-episode consolidation (ADR 0005), execution order set 2026-09-05 with Todd.** It comes *before* the MS4b–MS4d capture adapters, and before MS4a's remaining live verification is a blocker for anything. Rationale: the ~19,000 events already in the journal (native ChatGPT, Claude, Gemini) are a large, stable corpus to get episode-reasoning identification right against; realtime ingestion of new Claude Code / OpenClaw traffic is secondary and benefits from inheriting a consolidation layer that already works. Scope: capture the *thinking* — exploration, analysis, experiments, dead ends — as `episodic` memories carrying a `reasoning_kind` property, over topical windows, via a model-based `ReasoningEpisodePolicyV1`. ADR 0005 is written; `server/policies/protocols.py` already carries the "no new categories" steer. After MS3.5, capture-adapter order is unchanged: MS4a live verification, then MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI).

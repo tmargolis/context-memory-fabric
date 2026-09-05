@@ -152,6 +152,7 @@ A derived memory should reference, rather than replace, its evidence:
 - `valid_from` and `valid_to`;
 - confidence/ambiguity status;
 - approval state;
+- an optional `reasoning_kind` tag on episodic memories — `decision`, `investigation`, `hypothesis`, `experiment`, `finding`, `rejected_alternative`, `retrospective`, `plan` — naming the *kind of thinking* a memory represents. It is a property, not a new memory type and not a new classification category; the four categories (episodic / durable_candidate / ambiguous / non_memory) are unchanged. See [ADR 0005](adr/0005-reasoning-episode-capture.md);
 - supersedes/superseded-by relationships;
 - provider-specific references;
 - correction and deletion state.
@@ -261,6 +262,8 @@ Acceptance criteria:
 
 **Goal:** Prevent every raw turn from being treated as memory.
 
+> **Amended by [ADR 0005](adr/0005-reasoning-episode-capture.md) (2026-09-05):** this goal stands, but MS3's lexical classifier only recognizes *closure* (a decision made, a thing shipped). It is blind to *thinking in progress* — exploration, analysis, experiments, dead ends. A model-based companion policy (**MS3.5 — Reasoning-episode consolidation**, run before the MS4 capture adapters) derives those as `episodic` memories carrying a `reasoning_kind` property, over topical windows of turns rather than single events, and the auto-accept gate below is correspondingly loosened for them.
+
 Pipeline:
 
 ```text
@@ -307,6 +310,8 @@ Adapters are organized by capture *mechanism* rather than by harness name, becau
 | **4d** | Codex, Gemini CLI | Per-harness; survey local surfaces before designing | Codex, Gemini CLI |
 
 Sub-milestone 4a comes first because it is a single implementation that serves several harnesses at once, including the highest-priority one.
+
+Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) is **not** in this table — it is **MS3.5**, a consolidation-layer milestone that runs *before* all of 4a–4d. It is the next milestone: the existing ~19k-event journal is a better substrate for getting episode-reasoning identification right than waiting on realtime capture from these adapters.
 
 **Claude Desktop's limitation must be stated rather than designed around.** Claude Desktop keeps no local conversation transcript and exposes no hook API, so it cannot be served by a transcript-tailing adapter. MCP-boundary capture records every interaction routed through a CMF tool, with full harness provenance — but it does not see turns where no CMF tool is called. Claude Desktop capture is therefore interaction-triggered, not continuous. The gaps are covered by an explicit checkpoint tool, server instructions that encourage context retrieval at session start, and periodic Claude export ingestion. Documentation must not imply continuous capture that the mechanism cannot deliver.
 
@@ -513,10 +518,11 @@ The next implementation work should follow this order:
 11. separate capture from consolidation;
 12. answer the privacy and cost gate;
 13. build MCP-boundary capture and prove Claude Desktop continuity;
-14. build the Claude Code adapter;
-15. build `cmf-http` and the OpenClaw adapter;
-16. build review/governance surfaces;
-17. begin retrieval and memory evaluations.
+14. derive typed reasoning episodes (exploration, analysis, experiments, dead ends) from the existing journal, tagged with `reasoning_kind` — MS3.5, ahead of the remaining capture adapters ([ADR 0005](adr/0005-reasoning-episode-capture.md));
+15. build the Claude Code adapter;
+16. build `cmf-http` and the OpenClaw adapter;
+17. build review/governance surfaces;
+18. begin retrieval and memory evaluations.
 
 ## Explicit non-goals for the next phase
 
