@@ -1,0 +1,53 @@
+{
+  "_comment": "Fixed rules for MS6 taxonomy tests \u2014 deliberately not the user's personal taxonomy, so tests never depend on a gitignored file.",
+  "rules": [
+    [
+      "context-memory-fabric",
+      "\\b(cmf|context-memory|journal|consolidat\\w*)\\b"
+    ],
+    [
+      "interlock",
+      "\\b(interlock|agent-fabric|jspace)\\b"
+    ],
+    [
+      "openclaw",
+      "\\b(openclaw|gateway|spire)\\b"
+    ],
+    [
+      "career-navigator",
+      "\\b(career|navigator|resume)\\b"
+    ],
+    [
+      "android-apps",
+      "\\b(android|astroalert|gradle)\\b"
+    ],
+    [
+      "astrophotography",
+      "\\b(astrophotograph\\w*|celestron|mount)\\b"
+    ],
+    [
+      "claude-tooling",
+      "\\b(claude|cowork|plugin)\\b"
+    ],
+    [
+      "mac-infra",
+      "\\b(mac|macos|nas|synology|rsync)\\b"
+    ],
+    [
+      "3d",
+      "\\b(3d|blender|bambu)\\b"
+    ],
+    [
+      "photo",
+      "\\b(photoshop|lightroom|photo|print)\\b"
+    ],
+    [
+      "art-exhibition",
+      "\\b(art|gallery|exhibition)\\b"
+    ],
+    [
+      "condo",
+      "\\b(condo|board|mounting)\\b"
+    ]
+  ]
+}

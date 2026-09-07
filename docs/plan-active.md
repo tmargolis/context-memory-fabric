@@ -4,56 +4,63 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ---
 
-## MS6 — Review and governance
+## MS6a — Review surface — **built**
 
-**Goal:** Make staged context inspectable and correctable, and move it into the graph at scale. MS3.5/MS3.6 produced ~1,221 unpromoted reasoning episodes + ~9,800 heuristic candidates that all need human judgement before promotion. MS6 is the surface for that — plus the *"why does the system believe this?"* capability, which is the core differentiation competitors don't offer.
+**Goal:** Make the staged backlog reviewable at all, and get real material into the graph.
 
-**Why now:** Promotion (MS3.6) works but only 22 episodes are through it. MS7 (assembly quality) can't be evaluated until there's real material in the graph, and that requires bulk review. Separately: every `remember()` / `edit_memory` today is unaudited — no actor / time / reason / prior-state record.
+**What the corpus actually says.** Three measurements taken before writing code changed the design:
 
-**Scope — three things, in priority order:**
+1. **The thread is the wrong review unit.** The 315 unpromoted tier-1 episodes fall into 215 threads — a 1.47x reduction, 73% of them singletons. `thread_key` is a free-text slug the extraction model invents per window and matches by exact equality (`consolidation/threads.py`), so `openclaw-gateway-connection` and `openclaw-gateway-setup` are two threads. Corpus-wide that is 1.9 episodes per thread and no queue design improves it. **Grouping by project bucket instead gives 301 -> 20 buckets (15.8x), median bucket 11, one singleton.** Reading is unchanged; what drops by an order of magnitude is *re-orientation*.
+2. **There is no dedup shortcut.** Near-duplicate detection over the tier-1 statements finds one pair. These are 314 genuinely distinct claims across 180 topics and 10 months.
+3. **The heuristic pile is a quarter the size it looks.** 25,961 `queued_for_review` heuristic rows cover only **9,757 distinct events** — the same turns were re-judged under policy versions 1.0, 1.1 and 1.2 and every pass was left queued; 16,303 rows carry an explicit `supersedes` pointer. The original plan's "~9,800 heuristic candidates" and "6,582" (the v1.2 count) were both correct. Retiring stale versions is bookkeeping, not review.
 
-1. **Bulk promotion review** for the staged backlog — the unit of review is a **thread**, then a **kind**, not an episode. Per-episode modals do not scale to 1,200.
-2. **Evidence trace** — *"why does this memory exist"* walks episode → derived_memory → source events → journal turns → thread.
-3. **Correction + audit** — edit / reject / re-tier with a recorded reason and prior state; deletion that propagates without falsifying history.
+### Built
 
-### Tasks
+- **`server/review/projects.py`** — the project taxonomy (21 ordered first-match rules) plus `backfill()`. `thread_key` and `project` are now real columns on `derived_memories`; `thread_key` had only ever been serialised into the `reason` text.
+- **`server/review/store.py`** — `reviews` + append-only `review_audit`. **Every mutation routes through `ReviewStore.record()` / `record_bulk()`** — one chokepoint, not per-action discipline. A bulk action writes one audit row carrying the filter and prior-state histogram, plus per-row verdicts.
+- **`server/review/queue.py`** — `review_queue()` returning project buckets ordered by tier-1 density, UI-ready dicts, evidence optionally inlined.
+- **`server/review/explain.py`** — the journal half of `explain()`: statement, unpacked rationale, resolved evidence turns, thread. The Graphiti half is MS6b.
+- **`server/review/actions.py`** — `approve/reject/defer_episode`, `apply_verdicts`, `bulk_reject`, `bulk_reject_stale_policy_versions`, `bulk_confirm_superseded`, `sample_audit`, `revert_batch`, `promote_approved`.
+- **`server/review/cli.py`** — `backfill`, `stats`, `queue`, `export`, `apply`, `explain`, `retire-stale-versions`, `bulk-reject`, `confirm-superseded`, `sample-audit`, `revert-batch`, `promote`. Every mutating command is dry-run by default and needs `--apply`.
+- **Review artifact** — keyboard-driven, project-batched, evidence inlined, verdicts persisted to the artifact's own store so state survives across devices. It reports running keep rate and wall-clock, which is what the exit gate measures.
+- **`tests/test_ms6_review.py`** — 41 tests.
 
-- [ ] **Review data model.** A `reviews` table in the journal DB (same one-file precedent as `ConsolidationStore` / `PromotionStore`): per `memory_id` — `review_state` (`pending` / `approved` / `rejected` / `deferred`), `tier` (1/2/3, overridable; seeded from `default_tier()`), `reviewer`, `reviewed_at`, `reason`, `prior_state_json`. Append-only audit rows for every mutation.
-- [ ] **`review_queue()` API.** Returns **threads**, not episodes — each with its episodes, their `reasoning_kind`s, evidence counts, current auto-tier, and thread status (`open` / `resolved`). Ordered by tier-1-episode density (most decisions-per-look first). Filters: harness, kind, date range, thread status. Structured output (dicts), not formatted strings — must be UI-ready.
-- [ ] **Bulk actions**, each writing an audit row:
-  - `approve_thread(thread_key)` — promotes every tier-1 episode in the thread via `promote_reviewed`, marks the rest `deferred` (stay in-thread as work journal).
-  - `reject_thread(thread_key, reason)` — marks all its episodes `rejected`.
-  - `retier(memory_id, tier, reason)` — move an episode between tiers.
-  - `approve_episode` / `reject_episode` — single-episode escape hatches.
-- [ ] **`explain(memory_id)`.** Returns the reasoning episode's `statement` + `reason` fields + its `evidence_event_ids` resolved to the actual journal turns + the `reasoning_thread` it belongs to + (if promoted) the Graphiti episode name and the entities/edges Graphiti extracted. This is the differentiation feature — a complete answer to "why".
-- [ ] **`correct_memory(memory_id, {statement? | reasoning_kind? | event_date?}, reason)`.** Updates the staged `derived_memories` row; if the memory is already promoted, re-issues to Graphiti (`remove_episode` + `add_episode` with the correction, carrying the original `reference_time`). Audit row with prior state. **Journal evidence is never touched.**
-- [ ] **Deletion propagation.** `delete_memory(memory_id, reason)` — removes from Graphiti (`graphiti.remove_episode`, which cleans up entities/edges mentioned only by that episode and leaves shared ones), reverts the `PromotionStore` row, leaves `derived_memories` + journal intact, writes an audit row. Turns the MS2/MS3.6 "architecturally satisfied" invariant into a *tested* one.
-- [ ] **Heuristic pile surfacing.** The 6,582 `queued_for_review` heuristic rows *and* the 3,251 `superseded_by_reasoning` rows appear in the queue; superseded rows link to the covering reasoning episode so a reviewer confirms (one click) rather than re-judges.
-- [ ] **Scopes.** `personal` / `project` tags on memories (extend later to `team` / `org`); `recall` / `get_context` never cross a configured scope. Minimal for MS6 — personal vs project, enforced at retrieval.
-- [ ] **Surface: CLI first** (`cmf review …` subcommands over the APIs above), matching the `server/journal/cli.py` precedent. A web UI is MS9 (distribution), not MS6 — but the APIs are built UI-ready from the start.
+### Cut from the original plan, deliberately
 
-### Files touched
+- **`approve_thread` / `reject_thread`** — 73% of threads hold one tier-1 episode; a thread action is an episode action with extra machinery.
+- **`retier`** — tier 2 is "never promoted"; retiering then approving is just approving.
+- **Scopes (`personal` / `project`)** — one person, one graph, and no `recall` caller that would be scoped. Acceptance test 6 tested a feature with no user. Deferred to MS9 access control.
+- **`correct_memory` + Graphiti re-issue, deletion propagation** — deferred to MS6b. Both serve the 22 promoted rows, and the correction path cannot be designed well before watching a real review pass.
 
-New: `server/review/{__init__,store,queue,actions,explain,scopes}.py`, `server/review/cli.py`, `tests/test_ms6_review.py`. Modified: `server/consolidation/promotion.py` (called from `approve_*`), `server/providers/memory_graphiti.py` (correction re-issue + deletion path), `server/context.py` (scope filter at retrieval), `docs/CLIENTS.md` / `README.md`.
+### Acceptance tests — as built
 
-### Acceptance tests
+1. `explain()` returns statement, unpacked rationale, resolved evidence turns and thread. ✅
+2. Approval promotes exactly the approved set, idempotently; verdicts survive a promotion that stops early on quota (two ledgers: `reviews` and `promotions`). ✅
+3. Every mutation writes an audit row with actor, time, reason and prior state — asserted per action type. ✅
+4. A bulk action writes **one** audit row, not one per memory, and `revert_batch` restores the prior `approval_state`. ✅
+5. A date-scoped bulk action never sweeps a row whose `event_date` is unknown. ✅
+6. ~~scoped recall~~ — cut, see above.
+7. **Rewritten.** The plan's "decisions-made vs episodes-reviewed" passes at 215-vs-315 while saving nothing. The property that matters is the grouping: few buckets, no singleton piles. Asserted directly, and the real gate is wall-clock, instrumented by the review surface.
 
-1. `explain(memory_id)` for a promoted episode returns statement, evidence turns, thread, and Graphiti entities — a complete "why".
-2. `approve_thread` promotes exactly its tier-1 episodes; a second call is a no-op (idempotent via `PromotionStore`); its tier-2 episodes are marked `deferred`, not promoted.
-3. Correcting a promoted episode's statement updates the graph, records prior state, and preserves `reference_time`; `recall` returns the corrected form; `explain` shows the correction in the audit trail.
-4. Deleting a promoted episode removes it from the graph, reverts the promotion ledger, and leaves the journal + `derived_memories` row intact.
-5. Every mutation (approve / reject / correct / delete / retier) writes an audit row with actor, time, reason, prior state — asserted for each action type.
-6. A `recall` scoped to `personal` never returns a `project`-scoped memory.
-7. Reviewing the ~301 tier-1 episodes by thread takes materially fewer decisions than 301 (measured: threads-touched vs episodes-approved).
+### Exit gate — open, answered by the pass itself
 
-### Exit gate
+- **Wall clock.** Target: the tier-1 pass completes in under 3 hours of measured review time.
+- **Tier-1 keep rate.** The existing label fixture says 68% (n=19); a read of 45 random statements suggests ~25%. Unresolved, and it decides whether an LLM triage *ranker* (never a gate) is worth building for the next corpus. The first ~60 verdicts settle it.
 
-- **Did by-thread review actually scale?** Report decisions-made vs episodes-reviewed for the tier-1 pass. If threads don't usefully cluster episodes, the review unit is wrong — reconsider before MS7.
-- **Correction re-issue with Graphiti.** Graphiti has no in-place update; `remove_episode` + `add_episode` must keep the original date and must not orphan shared entities. Confirm both.
-- **Scope depth.** Is `personal` / `project` enough for now, or do `team` / `org` scopes need to land here rather than being pushed to MS9?
+**Effort:** ~2 sessions. **Status:** built; the pass itself is outstanding.
 
-**Effort:** 5–6 sessions.
-**Risk:** Medium. The correction → Graphiti re-issue path is the fiddly part (no in-place update). Audit-everything is easy to design and easy to forget to enforce — route every mutation through one chokepoint, not per-action discipline.
+---
+
+## MS6b — Governance — after MS7
+
+Deferred from MS6 on the grounds that all of it serves 22 promoted rows today, and the correction path should be designed after a real review pass rather than before it.
+
+- [ ] **`explain()` into Graphiti** — episode name, extracted entities and edges. The differentiation demo; worth building once the graph holds real content.
+- [ ] **`correct_memory`** — re-issue via `remove_episode` + `add_episode`, preserving `reference_time`. The fiddly part (Graphiti has no in-place update).
+- [ ] **Deletion propagation** — `delete_memory` removing from the graph, reverting the `PromotionStore` row, leaving journal + `derived_memories` intact.
+- [ ] **Scopes** — revisit as access control alongside MS9, or MS4c if remote ingest needs it first.
+
+**Effort:** 2-3 sessions. **Risk:** Medium — the correction re-issue path is the one genuinely fiddly piece.
 
 ---
 
