@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS derived_memories (
     approval_state TEXT NOT NULL,
     supersedes TEXT,
     superseded_by TEXT,
+    thread_key TEXT,
+    project TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_derived_memories_source_event ON derived_memories(source_event_id);
@@ -100,6 +102,16 @@ class ConsolidationStore:
             conn.execute("ALTER TABLE derived_memories ADD COLUMN evidence_event_ids_json TEXT")
         if "superseded_by" not in cols:  # MS3.6 — coverage-based auto-resolve of the heuristic review pile
             conn.execute("ALTER TABLE derived_memories ADD COLUMN superseded_by TEXT")
+        # MS6 — the review queue groups by project bucket, and `thread_key` was
+        # only ever serialised into the `reason` text (see record_consolidation).
+        # Promoting both to real columns removes a regex-parse from every queue
+        # read; server.review.projects.backfill() populates them.
+        if "thread_key" not in cols:
+            conn.execute("ALTER TABLE derived_memories ADD COLUMN thread_key TEXT")
+        if "project" not in cols:
+            conn.execute("ALTER TABLE derived_memories ADD COLUMN project TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_derived_memories_thread_key ON derived_memories(thread_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_derived_memories_project ON derived_memories(project)")
 
     def close(self) -> None:
         self._conn.close()
