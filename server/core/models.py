@@ -79,6 +79,27 @@ class SourceEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+# Starter vocabulary for DerivedMemory.reasoning_kind (ADR 0005, MS3.5).
+# Deliberately NOT an enum: ADR 0005 decision 1 — extend by adding a string,
+# not by migrating a schema. This set exists for documentation and soft
+# validation (warn on an unknown kind), never as a hard constraint. A
+# reasoning_kind is meaningful on `episodic` memories, permitted-but-optional
+# on `durable_candidate` / `ambiguous` (e.g. an as-yet-unresolved
+# `investigation`), and never set on `non_memory`.
+REASONING_KINDS: frozenset[str] = frozenset(
+    {
+        "decision",
+        "investigation",
+        "hypothesis",
+        "experiment",
+        "finding",
+        "rejected_alternative",
+        "retrospective",
+        "plan",
+    }
+)
+
+
 @dataclass(frozen=True)
 class DerivedMemory:
     """What an extraction/consolidation process inferred was worth
@@ -94,6 +115,11 @@ class DerivedMemory:
     observed_at: datetime
     event_date: Optional[datetime] = None
     date_precision: DatePrecision = DatePrecision.NONE
+    # ADR 0005 / MS3.5: names the *kind of thinking* this memory represents
+    # (see REASONING_KINDS). A property, not a classification category and
+    # not a memory_type value — the four ExtractionCategory values are
+    # unchanged. Optional; existing rows / non-reasoning memories read None.
+    reasoning_kind: Optional[str] = None
     valid_from: Optional[datetime] = None
     valid_to: Optional[datetime] = None
     confidence: Optional[float] = None

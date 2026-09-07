@@ -517,12 +517,19 @@ The next implementation work should follow this order:
 10. add the Claude and Gemini export importers;
 11. separate capture from consolidation;
 12. answer the privacy and cost gate;
-13. build MCP-boundary capture and prove Claude Desktop continuity;
-14. derive typed reasoning episodes (exploration, analysis, experiments, dead ends) from the existing journal, tagged with `reasoning_kind` — MS3.5, ahead of the remaining capture adapters ([ADR 0005](adr/0005-reasoning-episode-capture.md));
-15. build the Claude Code adapter;
-16. build `cmf-http` and the OpenClaw adapter;
-17. build review/governance surfaces;
-18. begin retrieval and memory evaluations.
+13. build MCP-boundary capture (MS4a — built; live cross-harness verification deferred, see below);
+14. derive typed reasoning episodes (exploration, analysis, experiments, dead ends) from the existing journal, tagged with `reasoning_kind` — MS3.5 ([ADR 0005](adr/0005-reasoning-episode-capture.md)); **← in progress**
+
+**Resequenced 2026-09-06 (with Todd).** Adding more capture is dead weight while the retrievable graph is near-empty (57 episodes). Drive the existing history all the way to useful retrieval first, then add the other adapters:
+
+15. **promotion** — move staged reasoning episodes + auto-accepted candidates into the graph so `get_context`/`recall` return them; coverage-based auto-resolve of the heuristic review backlog (MS3.6);
+16. **review/governance surfaces** — drain the `queued_for_review` backlog (MS6);
+17. **retrieval and context-assembly quality** — query intent, conflict/staleness signals, token budgeting (MS7);
+18. — retrieval loop proven end-to-end —
+19. MS4a live cross-harness verification; then the Claude Code adapter (MS4b);
+20. `cmf-http` and the OpenClaw adapter (MS4c); Codex / Gemini CLI (MS4d);
+21. knowledge-provider generalization (MS5 — the LLM Wiki already serves retrieval today; this makes it replaceable and adds a GitHub provider);
+22. replay and evaluation (MS8); distribution (MS9).
 
 ## Explicit non-goals for the next phase
 

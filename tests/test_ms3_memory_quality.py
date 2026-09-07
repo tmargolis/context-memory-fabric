@@ -59,7 +59,10 @@ FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "memory_quality" /
 AUTO_ACCEPT_THRESHOLD = 0.75
 
 
-@unittest.skipUnless(DEFAULT_JOURNAL_PATH.exists(), f"Production journal not found at {DEFAULT_JOURNAL_PATH}")
+@unittest.skipUnless(
+    DEFAULT_JOURNAL_PATH.exists() and FIXTURE_PATH.exists(),
+    "Production journal and/or the (gitignored) memory-quality fixture not present",
+)
 class TestMemoryQualityPrecision(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

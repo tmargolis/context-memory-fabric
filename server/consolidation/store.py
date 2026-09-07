@@ -33,7 +33,7 @@ import sqlite3
 from typing import Any, Optional
 
 from server.journal.store import DEFAULT_JOURNAL_PATH
-from server.policies.protocols import ExtractionCategory, ExtractionResult
+from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS derived_memories (
@@ -47,8 +47,11 @@ CREATE TABLE IF NOT EXISTS derived_memories (
     confidence REAL NOT NULL,
     event_date TEXT,
     date_precision TEXT NOT NULL,
+    reasoning_kind TEXT,
+    evidence_event_ids_json TEXT,
     approval_state TEXT NOT NULL,
     supersedes TEXT,
+    superseded_by TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_derived_memories_source_event ON derived_memories(source_event_id);
@@ -81,7 +84,22 @@ class ConsolidationStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(SCHEMA_SQL)
+        self._migrate(self._conn)
         self._conn.commit()
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Additive, idempotent in-place migrations for DBs created before a
+        column existed. SCHEMA_SQL covers fresh DBs; this covers the journal
+        file already on disk from an earlier milestone.
+        """
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(derived_memories)")}
+        if "reasoning_kind" not in cols:  # ADR 0005 / MS3.5
+            conn.execute("ALTER TABLE derived_memories ADD COLUMN reasoning_kind TEXT")
+        if "evidence_event_ids_json" not in cols:  # ADR 0005 / MS3.5 — windowed episodes cite >1 event
+            conn.execute("ALTER TABLE derived_memories ADD COLUMN evidence_event_ids_json TEXT")
+        if "superseded_by" not in cols:  # MS3.6 — coverage-based auto-resolve of the heuristic review pile
+            conn.execute("ALTER TABLE derived_memories ADD COLUMN superseded_by TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -142,6 +160,43 @@ class ConsolidationStore:
         )
         self._conn.commit()
 
+    def mark_succeeded_no_output(self, job_id: str) -> None:
+        """A window (MS3.5) the policy legitimately produced zero episodes
+        from. The job is done — recorded so it is not re-run — but there is
+        no derived_memories row to point at.
+        """
+        self._conn.execute(
+            "UPDATE consolidation_jobs SET status='succeeded', last_error=NULL, updated_at=? WHERE job_id=?",
+            (datetime.now(timezone.utc).isoformat(), job_id),
+        )
+        self._conn.commit()
+
+    def record_triaged_out(
+        self, job_id: str, source_event_id: str, policy_name: str, policy_version: str, reason: str
+    ) -> None:
+        """A window the loose triage gate withheld from the model (MS3.5).
+        Recorded with status 'triaged_out' and the reason, so it is
+        inspectable and can be re-run with triage disabled — never a silent
+        drop (ADR 0005 decision 2).
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO consolidation_jobs (job_id, source_event_id, policy_name, policy_version, status, attempts, last_error, created_at, updated_at)
+            VALUES (:job_id, :source_event_id, :policy_name, :policy_version, 'triaged_out', 0, :reason, :now, :now)
+            ON CONFLICT(job_id) DO UPDATE SET status='triaged_out', last_error=:reason, updated_at=:now
+            """,
+            {
+                "job_id": job_id,
+                "source_event_id": source_event_id,
+                "policy_name": policy_name,
+                "policy_version": policy_version,
+                "reason": reason,
+                "now": now,
+            },
+        )
+        self._conn.commit()
+
     def record_consolidation(
         self,
         job_id: str,
@@ -152,6 +207,7 @@ class ConsolidationStore:
         result: ExtractionResult,
         approval_state: str,
         supersedes: Optional[str],
+        reasoning_kind: Optional[str] = None,
     ) -> None:
         """Write the derived_memory row and mark its job succeeded, in one
         transaction. See module docstring — this is the only write path,
@@ -164,11 +220,11 @@ class ConsolidationStore:
             INSERT INTO derived_memories (
                 memory_id, source_event_id, policy_name, policy_version, category,
                 statement, reason, confidence, event_date, date_precision,
-                approval_state, supersedes, created_at
+                reasoning_kind, approval_state, supersedes, created_at
             ) VALUES (
                 :memory_id, :source_event_id, :policy_name, :policy_version, :category,
                 :statement, :reason, :confidence, :event_date, :date_precision,
-                :approval_state, :supersedes, :created_at
+                :reasoning_kind, :approval_state, :supersedes, :created_at
             )
             ON CONFLICT(memory_id) DO NOTHING
             """,
@@ -183,6 +239,79 @@ class ConsolidationStore:
                 "confidence": result.confidence,
                 "event_date": result.event_date.isoformat() if result.event_date else None,
                 "date_precision": result.date_precision.value,
+                "reasoning_kind": reasoning_kind if reasoning_kind is not None else getattr(result, "reasoning_kind", None),
+                "approval_state": approval_state,
+                "supersedes": supersedes,
+                "created_at": now,
+            },
+        )
+        self._conn.execute(
+            "UPDATE consolidation_jobs SET status='succeeded', derived_memory_id=?, updated_at=? WHERE job_id=?",
+            (memory_id, now, job_id),
+        )
+        self._conn.commit()
+
+    def record_reasoning_episode(
+        self,
+        job_id: str,
+        memory_id: str,
+        episode: ReasoningEpisode,
+        policy_name: str,
+        policy_version: str,
+        approval_state: str,
+        supersedes: Optional[str],
+    ) -> None:
+        """Write one windowed reasoning episode (MS3.5) as a derived_memories
+        row and mark its job succeeded, in one transaction — same
+        single-write-path guarantee as record_consolidation().
+
+        `source_event_id` is the episode's primary (first cited) evidence
+        event; the full list is kept in `evidence_event_ids_json` since a
+        windowed episode rests on several turns. `reason` is composed from
+        the episode's structured reasoning fields so the staging row is
+        readable without re-joining anything.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        evidence = list(episode.evidence_event_ids)
+        primary = evidence[0] if evidence else ""
+        reason_bits = [f"reasoning_kind={episode.reasoning_kind}"]
+        if episode.driving_question:
+            reason_bits.append(f"Q: {episode.driving_question}")
+        if episode.rationale:
+            reason_bits.append(f"why: {episode.rationale}")
+        if episode.alternatives:
+            reason_bits.append(f"alt: {episode.alternatives}")
+        if episode.status:
+            reason_bits.append(f"status={episode.status}")
+        if episode.thread_key:
+            reason_bits.append(f"thread={episode.thread_key}")
+
+        self._conn.execute(
+            """
+            INSERT INTO derived_memories (
+                memory_id, source_event_id, policy_name, policy_version, category,
+                statement, reason, confidence, event_date, date_precision,
+                reasoning_kind, evidence_event_ids_json, approval_state, supersedes, created_at
+            ) VALUES (
+                :memory_id, :source_event_id, :policy_name, :policy_version, :category,
+                :statement, :reason, :confidence, :event_date, :date_precision,
+                :reasoning_kind, :evidence_event_ids_json, :approval_state, :supersedes, :created_at
+            )
+            ON CONFLICT(memory_id) DO NOTHING
+            """,
+            {
+                "memory_id": memory_id,
+                "source_event_id": primary,
+                "policy_name": policy_name,
+                "policy_version": policy_version,
+                "category": episode.category.value,
+                "statement": episode.statement,
+                "reason": " | ".join(reason_bits),
+                "confidence": episode.confidence,
+                "event_date": episode.event_date.isoformat() if episode.event_date else None,
+                "date_precision": episode.date_precision.value,
+                "reasoning_kind": episode.reasoning_kind,
+                "evidence_event_ids_json": json.dumps(evidence),
                 "approval_state": approval_state,
                 "supersedes": supersedes,
                 "created_at": now,
@@ -201,11 +330,17 @@ class ConsolidationStore:
             self._conn.execute("SELECT approval_state, COUNT(*) FROM derived_memories GROUP BY approval_state").fetchall()
         )
         by_job_status = dict(self._conn.execute("SELECT status, COUNT(*) FROM consolidation_jobs GROUP BY status").fetchall())
+        by_reasoning_kind = dict(
+            self._conn.execute(
+                "SELECT reasoning_kind, COUNT(*) FROM derived_memories WHERE reasoning_kind IS NOT NULL GROUP BY reasoning_kind"
+            ).fetchall()
+        )
         return {
             "total_derived_memories": total,
             "by_category": by_category,
             "by_approval_state": by_approval,
             "by_job_status": by_job_status,
+            "by_reasoning_kind": by_reasoning_kind,
         }
 
     def query_derived_memories(
@@ -220,3 +355,92 @@ class ConsolidationStore:
             params.append(approval_state)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return self._conn.execute(f"SELECT * FROM derived_memories {where} ORDER BY created_at", params).fetchall()
+
+    def get_derived_memories(self, memory_ids: list[str]) -> list[sqlite3.Row]:
+        """Fetch specific rows by memory_id, preserving the input order
+        (used by MS3.6 promote_reviewed for a human-approved id list)."""
+        if not memory_ids:
+            return []
+        qmarks = ",".join("?" * len(memory_ids))
+        rows = {
+            r["memory_id"]: r
+            for r in self._conn.execute(
+                f"SELECT * FROM derived_memories WHERE memory_id IN ({qmarks})", memory_ids
+            ).fetchall()
+        }
+        return [rows[m] for m in memory_ids if m in rows]
+
+    def query_reasoning_episodes(
+        self, policy_version: str, kinds: Optional[list[str]] = None, exclude_approval_states: Optional[list[str]] = None
+    ) -> list[sqlite3.Row]:
+        """Reasoning-episode rows for one policy version, optionally filtered
+        to a set of `reasoning_kind`s (MS3.6 tier routing)."""
+        clauses = ["policy_name = 'reasoning-episode'", "policy_version = ?"]
+        params: list[Any] = [policy_version]
+        if kinds:
+            clauses.append(f"reasoning_kind IN ({','.join('?' * len(kinds))})")
+            params.extend(kinds)
+        if exclude_approval_states:
+            clauses.append(f"approval_state NOT IN ({','.join('?' * len(exclude_approval_states))})")
+            params.extend(exclude_approval_states)
+        return self._conn.execute(
+            f"SELECT * FROM derived_memories WHERE {' AND '.join(clauses)} ORDER BY created_at", params
+        ).fetchall()
+
+    def mark_superseded_by_reasoning(
+        self, heuristic_version: str, reasoning_version: str = "0.2", dry_run: bool = False
+    ) -> dict[str, Any]:
+        """MS3.6 coverage-based auto-resolve: a heuristic `queued_for_review`
+        row whose `source_event_id` is already cited by a reasoning episode's
+        evidence is flipped to `approval_state='superseded_by_reasoning'`,
+        with `superseded_by` set to that episode's memory_id. Review then
+        only faces heuristic turns no reasoning episode claimed.
+
+        Idempotent (rows already superseded are skipped) and reversible
+        (`revert_superseded_by_reasoning`). Returns counts + a small sample.
+        """
+        # event_id -> a reasoning episode memory_id that covers it
+        cover: dict[str, str] = {}
+        for r in self._conn.execute(
+            "SELECT memory_id, evidence_event_ids_json FROM derived_memories "
+            "WHERE policy_name='reasoning-episode' AND policy_version=?",
+            (reasoning_version,),
+        ):
+            for ev_id in json.loads(r["evidence_event_ids_json"] or "[]"):
+                cover.setdefault(ev_id, r["memory_id"])
+
+        targets = self._conn.execute(
+            "SELECT memory_id, source_event_id, statement FROM derived_memories "
+            "WHERE policy_name='heuristic-pattern' AND policy_version=? AND approval_state='queued_for_review'",
+            (heuristic_version,),
+        ).fetchall()
+
+        hits = [(t["memory_id"], cover[t["source_event_id"]], t["statement"]) for t in targets if t["source_event_id"] in cover]
+        now = None
+        if not dry_run:
+            now = datetime.now(timezone.utc).isoformat()
+            for mid, by, _ in hits:
+                self._conn.execute(
+                    "UPDATE derived_memories SET approval_state='superseded_by_reasoning', superseded_by=?, created_at=created_at "
+                    "WHERE memory_id=? AND approval_state='queued_for_review'",
+                    (by, mid),
+                )
+            self._conn.commit()
+        return {
+            "heuristic_queued_before": len(targets),
+            "covered_by_reasoning": len(hits),
+            "remaining_queued": len(targets) - len(hits),
+            "dry_run": dry_run,
+            "sample": [{"heuristic": h, "superseded_by": b, "statement": s[:120]} for h, b, s in hits[:8]],
+            "applied_at": now,
+        }
+
+    def revert_superseded_by_reasoning(self) -> int:
+        """Put every `superseded_by_reasoning` heuristic row back to
+        `queued_for_review` (clears `superseded_by`). Returns the count."""
+        cur = self._conn.execute(
+            "UPDATE derived_memories SET approval_state='queued_for_review', superseded_by=NULL "
+            "WHERE approval_state='superseded_by_reasoning'"
+        )
+        self._conn.commit()
+        return cur.rowcount
