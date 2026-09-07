@@ -42,9 +42,19 @@ from datetime import datetime
 from typing import Any, Optional
 
 from server.consolidation.store import ConsolidationStore
+from server.consolidation.threads import ThreadIndex
+from server.consolidation.triage import assess_window
+from server.consolidation.windowing import Windower, default_windower, group_by_conversation
 from server.core.models import SourceEvent
+from server.core.rate_limiter import GeminiQuotaExhaustedError
 from server.journal.store import SqliteEventStore
-from server.policies.protocols import ExtractionCategory, ExtractionPolicy, PolicyContext
+from server.policies.protocols import (
+    ExtractionCategory,
+    ExtractionPolicy,
+    PolicyContext,
+    ReasoningEpisode,
+    WindowedExtractionPolicy,
+)
 
 # Milestone 3 exit gate: auto-accept only user-stated, explicitly-dated
 # episodic candidates above this confidence. Set from the labeled fixture
@@ -174,3 +184,173 @@ def _approval_state_for(result, auto_accept_threshold: float) -> str:
     if result.category == ExtractionCategory.EPISODIC and result.confidence >= auto_accept_threshold:
         return "auto_accepted"
     return "queued_for_review"
+
+
+# --------------------------------------------------------------------------
+# MS3.5 — the windowed reasoning stage (ADR 0005). Runs ALONGSIDE
+# run_consolidation, not instead of it: an event can get a v1 per-event
+# lexical derivation and also be part of a windowed reasoning episode. This
+# stage DOES spend model calls (rate-limited Gemini) — one per window that
+# clears triage — so it is bounded by the rate limiter and, for probing, by
+# `max_windows`.
+# --------------------------------------------------------------------------
+def _reasoning_approval_state(episode: ReasoningEpisode, threshold: Optional[float]) -> str:
+    """ADR 0005 decision 5: reasoning episodes may auto-accept on the
+    model's own confidence, without the per-event path's dated-decision
+    requirement. `threshold=None` means "never auto-accept yet" — the
+    prototype default until the number is re-derived from the rebuilt
+    memory-quality fixture (MS3.5 Phase D / exit gate).
+    """
+    if threshold is None:
+        return "queued_for_review"
+    return "auto_accepted" if episode.confidence >= threshold else "queued_for_review"
+
+
+def _window_id(conv_key: str, window_events: list[SourceEvent]) -> str:
+    return f"{conv_key}:{window_events[0].event_id}:{window_events[-1].event_id}"
+
+
+def run_reasoning_consolidation(
+    journal_store: SqliteEventStore,
+    consolidation_store: ConsolidationStore,
+    policy: WindowedExtractionPolicy,
+    *,
+    thread_index: Optional[ThreadIndex] = None,
+    windower: Optional[Windower] = None,
+    harness: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    since: Optional[datetime] = None,
+    triage: bool = True,
+    min_window_events: int = 3,
+    reasoning_auto_accept_threshold: Optional[float] = None,
+    max_windows: Optional[int] = None,
+) -> dict[str, Any]:
+    """Segment matching journal events into topical windows and derive
+    reasoning episodes for each window that clears triage.
+
+    Idempotent per (window, policy@version): a window whose job already
+    succeeded (or was triaged out, while `triage` is on) is skipped.
+    Reprocessing under a bumped `policy.version` re-derives and links via
+    `supersedes`, same guarantee as run_consolidation.
+
+    `min_window_events` (default 3) is a size floor applied in triage: a
+    window below it is a single one-shot exchange and is withheld as
+    `triaged_out` without a model call (Todd, 2026-09-06 — matters mostly
+    for the Gemini slice). Pass `min_window_events=1` to disable.
+
+    Stops cleanly on `GeminiQuotaExhaustedError` — the offending window's
+    job is left retryable, nothing partial is written, and the evidence is
+    already safe in the journal.
+    """
+    windower = windower or default_windower()
+    thread_index = thread_index or ThreadIndex(consolidation_store.db_path)
+
+    events = journal_store.query(harness=harness, conversation_id=conversation_id, since=since)
+    by_conv = group_by_conversation(events)
+
+    stats: dict[str, Any] = {
+        "conversations_seen": len(by_conv),
+        "windows_seen": 0,
+        "windows_skipped_done": 0,
+        "windows_triaged_out": 0,
+        "windows_sent_to_model": 0,
+        "windows_failed": 0,
+        "episodes_created": 0,
+        "by_reasoning_kind": defaultdict(int),
+        "by_approval_state": defaultdict(int),
+        "quota_exhausted": False,
+        "stopped_at_max_windows": False,
+    }
+
+    for conv_key in sorted(by_conv):
+        conv_events = by_conv[conv_key]
+        for window in windower.windows(conv_events):
+            if not window.events:
+                continue
+            stats["windows_seen"] += 1
+            win_id = _window_id(conv_key, window.events)
+            job_id = f"job:reason:{win_id}::{policy.name}@{policy.version}"
+            primary = next((e.event_id for e in window.events if e.actor_type == "user"), window.events[0].event_id)
+
+            existing = consolidation_store.get_job(job_id)
+            if existing is not None:
+                if existing["status"] == "succeeded":
+                    stats["windows_skipped_done"] += 1
+                    continue
+                if existing["status"] == "triaged_out" and triage:
+                    stats["windows_skipped_done"] += 1
+                    continue
+
+            if triage:
+                verdict = assess_window(window, min_events=min_window_events)
+                if not verdict.send:
+                    consolidation_store.record_triaged_out(job_id, primary, policy.name, policy.version, verdict.reason)
+                    stats["windows_triaged_out"] += 1
+                    continue
+
+            if max_windows is not None and stats["windows_sent_to_model"] >= max_windows:
+                stats["stopped_at_max_windows"] = True
+                _finalize(stats)
+                return stats
+
+            context = PolicyContext(
+                topical_window=list(window.events),
+                open_threads=thread_index.open_threads(),
+                conversation_title=window.events[0].metadata.get("conversation_title"),
+            )
+            consolidation_store.mark_running(job_id, primary, policy.name, policy.version)
+            try:
+                episodes = policy.evaluate_window(list(window.events), context)
+            except GeminiQuotaExhaustedError:
+                # Leave the job 'running' so it retries next pass; write nothing.
+                stats["quota_exhausted"] = True
+                _finalize(stats)
+                return stats
+            except Exception as exc:  # noqa: BLE001 — record any policy failure, keep going
+                consolidation_store.record_failure(job_id, str(exc))
+                stats["windows_failed"] += 1
+                continue
+
+            stats["windows_sent_to_model"] += 1
+            if not episodes:
+                consolidation_store.mark_succeeded_no_output(job_id)
+                continue
+
+            harness_slug = window.events[0].source.harness
+            for idx, episode in enumerate(episodes):
+                memory_id = f"reason:{win_id}:{idx}::{policy.name}@{policy.version}"
+                anchor = episode.evidence_event_ids[0] if episode.evidence_event_ids else primary
+                prior = consolidation_store.latest_derivation_for_event(anchor, exclude_memory_id=memory_id)
+                approval = _reasoning_approval_state(episode, reasoning_auto_accept_threshold)
+                consolidation_store.record_reasoning_episode(
+                    job_id=job_id,
+                    memory_id=memory_id,
+                    episode=episode,
+                    policy_name=policy.name,
+                    policy_version=policy.version,
+                    approval_state=approval,
+                    supersedes=prior["memory_id"] if prior is not None else None,
+                )
+                stats["episodes_created"] += 1
+                stats["by_reasoning_kind"][episode.reasoning_kind] += 1
+                stats["by_approval_state"][approval] += 1
+
+                if episode.thread_key:
+                    thread_index.record_episode(
+                        thread_key=episode.thread_key,
+                        title=episode.thread_key,
+                        reasoning_kind=episode.reasoning_kind,
+                        event_ids=episode.evidence_event_ids,
+                        harness=harness_slug,
+                        conversation_id=window.conversation_id,
+                        observed_at=episode.event_date,
+                        status=episode.status,
+                    )
+
+    _finalize(stats)
+    return stats
+
+
+def _finalize(stats: dict[str, Any]) -> None:
+    stats["by_reasoning_kind"] = dict(stats["by_reasoning_kind"])
+    stats["by_approval_state"] = dict(stats["by_approval_state"])

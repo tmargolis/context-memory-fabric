@@ -15,7 +15,7 @@ from Milestone 1: a policy need not inherit from anything, only implement
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from server.core.models import DatePrecision, SourceEvent
 
@@ -54,6 +54,16 @@ class PolicyContext:
     preceding_assistant_text: Optional[str] = None
     conversation_title: Optional[str] = None
     section_heading: Optional[str] = None
+    # ADR 0005 / MS3.5 — additive, optional, ignored by per-event policies
+    # like HeuristicPatternPolicyV1. A model-based policy
+    # (ReasoningEpisodePolicyV1) reasons over `topical_window`, the bounded
+    # span of consecutive same-subject SourceEvents it is given, rather than
+    # one turn. `open_threads` is the small cross-conversation open-thread
+    # index (server/consolidation/threads.py) checked before extraction so
+    # an intent stated in one conversation and its outcome in another land
+    # in the same thread (ADR 0004 decision 3, carried forward).
+    topical_window: Optional[list[SourceEvent]] = None
+    open_threads: Optional[list[Any]] = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,17 @@ class ExtractionResult:
     confidence: float
     event_date: Optional[datetime] = None
     date_precision: DatePrecision = DatePrecision.NONE
+    # ADR 0005 / MS3.5 — populated only by ReasoningEpisodePolicyV1. `category`
+    # above stays one of the four ExtractionCategory values; these ride
+    # alongside it. `statement` is a concise synthesis of the window, not raw
+    # turns. All optional so HeuristicPatternPolicyV1 keeps satisfying the
+    # protocol unchanged.
+    reasoning_kind: Optional[str] = None
+    driving_question: Optional[str] = None
+    rationale: Optional[str] = None
+    alternatives: Optional[str] = None
+    status: Optional[str] = None
+    thread_key: Optional[str] = None
 
 
 @runtime_checkable
@@ -78,3 +99,50 @@ class ExtractionPolicy(Protocol):
     version: str
 
     def evaluate(self, event: SourceEvent, context: PolicyContext) -> ExtractionResult: ...
+
+
+# --------------------------------------------------------------------------
+# MS3.5 — the windowed reasoning path. Additive: everything above is the
+# per-event path (Milestone 3) and is unchanged. A WindowedExtractionPolicy
+# consumes a bounded span of turns and emits 0..N ReasoningEpisodes, because
+# one train of thought rarely fits in one turn and one window can hold more
+# than one (ADR 0005 decision 3). The per-event ExtractionPolicy protocol is
+# deliberately left alone rather than overloaded to return a list.
+# --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ReasoningEpisode:
+    """One piece of thinking synthesised from a topical window by a
+    model-based policy. `category` stays one of the four ExtractionCategory
+    values (usually EPISODIC); `reasoning_kind` is the property that names
+    the *kind* of thinking (see server.core.models.REASONING_KINDS). ADR
+    0005 decision 1: reasoning_kind is a property, never a fifth category.
+
+    `statement` is a concise synthesis ("investigated why promotion produced
+    junk; root cause was Case C trusting a bare date"), not raw turns.
+    `evidence_event_ids` is the subset of the window's events this episode
+    actually rests on, so the journal link stays precise even when one
+    window yields several episodes.
+    """
+
+    category: ExtractionCategory
+    reasoning_kind: str
+    statement: str
+    confidence: float
+    evidence_event_ids: list[str]
+    driving_question: Optional[str] = None
+    rationale: Optional[str] = None
+    alternatives: Optional[str] = None
+    status: Optional[str] = None
+    thread_key: Optional[str] = None
+    event_date: Optional[datetime] = None
+    date_precision: DatePrecision = DatePrecision.NONE
+
+
+@runtime_checkable
+class WindowedExtractionPolicy(Protocol):
+    name: str
+    version: str
+
+    def evaluate_window(
+        self, window: "list[SourceEvent]", context: PolicyContext
+    ) -> list[ReasoningEpisode]: ...

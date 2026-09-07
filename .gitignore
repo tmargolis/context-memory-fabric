@@ -85,3 +85,6 @@ falkordb_data/
 # Context Memory Fabric runtime state and proposals
 wiki-proposals/
 imports/
+
+# Memory-quality label fixtures — reference real personal content, keep local only
+tests/fixtures/memory_quality/

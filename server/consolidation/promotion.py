@@ -224,13 +224,145 @@ async def promote_auto_accepted(
     return result
 
 
+# --------------------------------------------------------------------------
+# MS3.6 — reasoning-episode promotion. There is NO auto-accept for reasoning
+# episodes (MS3.5 exit gate: model confidence does not separate keep from
+# drop). Promotion is entirely explicit: a human (MS6 review) approves a
+# list of memory_ids, `promote_reviewed` acts on exactly that list.
+#
+# `reasoning_kind` gives a routing *hint* only — which episodes a reviewer
+# should look at first, not which get promoted without review.
+# --------------------------------------------------------------------------
+TIER1_KINDS = frozenset({"decision", "plan", "retrospective", "rejected_alternative"})
+
+
+def default_tier(reasoning_kind: Optional[str]) -> int:
+    """1 = worth a promotion-review look; 2 = work-journal (stays in its
+    thread, not queued for promotion). Never a gate — MS6 review can move
+    any episode between tiers."""
+    return 1 if (reasoning_kind or "") in TIER1_KINDS else 2
+
+
+def tier1_review_queue(
+    consolidation_store: ConsolidationStore, promotion_store: PromotionStore, policy_version: str = "0.2"
+) -> list[sqlite3.Row]:
+    """Reasoning episodes a reviewer should triage for promotion: tier-1
+    kind, not already promoted, not rejected/superseded."""
+    rows = consolidation_store.query_reasoning_episodes(
+        policy_version=policy_version,
+        kinds=sorted(TIER1_KINDS),
+        exclude_approval_states=["rejected", "superseded_by_reasoning"],
+    )
+    return [r for r in rows if not promotion_store.is_promoted(r["memory_id"])]
+
+
+def _reasoning_source_description(row: sqlite3.Row, harness: str) -> str:
+    import json as _json
+
+    bits = [f"Promoted from {harness} via {row['policy_name']}@{row['policy_version']}"]
+    if row["reasoning_kind"]:
+        bits.append(f"reasoning_kind={row['reasoning_kind']}")
+    ev = _json.loads(row["evidence_event_ids_json"] or "[]") if "evidence_event_ids_json" in row.keys() else []
+    if ev:
+        bits.append(f"evidence={len(ev)} turn(s): {','.join(ev[:6])}")
+    bits.append(f"memory_id={row['memory_id']}")
+    return " | ".join(bits)
+
+
+async def promote_reviewed(
+    consolidation_store: ConsolidationStore,
+    journal_store: SqliteEventStore,
+    promotion_store: PromotionStore,
+    remember_fn: RememberFn,
+    memory_ids: list[str],
+    dry_run: bool = True,
+    graph_name: Optional[str] = None,
+    inter_call_delay: float = 3.5,
+) -> dict[str, Any]:
+    """Promote an explicit, human-approved list of `derived_memories` rows
+    (any policy — reasoning-episode or heuristic) into episodic memory.
+
+    Same idempotency ledger, per-row failure isolation and
+    `GeminiQuotaExhaustedError` clean-stop as `promote_auto_accepted`. The
+    only difference is the candidate set: exactly `memory_ids`, in order,
+    rather than an `approval_state` query.
+    """
+    requested = list(dict.fromkeys(memory_ids))  # dedupe, keep order
+    rows = consolidation_store.get_derived_memories(requested)
+    found_ids = {r["memory_id"] for r in rows}
+
+    candidates: list[sqlite3.Row] = []
+    already_promoted = 0
+    for row in rows:
+        if promotion_store.is_promoted(row["memory_id"]):
+            already_promoted += 1
+            continue
+        candidates.append(row)
+
+    result: dict[str, Any] = {
+        "requested": len(requested),
+        "not_found": [m for m in requested if m not in found_ids],
+        "already_promoted": already_promoted,
+        "eligible_this_run": len(candidates),
+        "dry_run": dry_run,
+        "promoted": [],
+        "failed": [],
+        "stopped_early": False,
+    }
+
+    if dry_run or not candidates:
+        result["promoted_preview"] = [
+            {"memory_id": r["memory_id"], "reasoning_kind": r["reasoning_kind"],
+             "statement": r["statement"], "event_date": r["event_date"]}
+            for r in candidates
+        ]
+        return result
+
+    for row in candidates:
+        memory_id = row["memory_id"]
+        source_event = journal_store.get(row["source_event_id"])
+        harness = source_event.source.harness if source_event else "unknown"
+        episode_name = _episode_name_for(memory_id, row["event_date"])
+        reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
+
+        try:
+            await remember_fn(
+                content=row["statement"],
+                name=episode_name,
+                source_description=_reasoning_source_description(row, harness),
+                reference_time=reference_time,
+            )
+            promotion_store.record_success(memory_id, episode_name, graph_name or "")
+            result["promoted"].append({"memory_id": memory_id, "episode_name": episode_name,
+                                       "reasoning_kind": row["reasoning_kind"]})
+        except GeminiQuotaExhaustedError as e:
+            logger.warning(f"promote_reviewed stopped early — rate limiter exhausted: {e}")
+            result["stopped_early"] = True
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to promote {memory_id}: {e}")
+            promotion_store.record_failure(memory_id, str(e))
+            result["failed"].append({"memory_id": memory_id, "error": str(e)})
+            continue
+
+        if inter_call_delay > 0:
+            await asyncio.sleep(inter_call_delay)
+
+    return result
+
+
 def format_promotion_report(result: dict[str, Any]) -> str:
+    # handles both promote_auto_accepted (candidates_considered) and
+    # promote_reviewed (requested / not_found) result shapes
+    considered = result.get("candidates_considered", result.get("requested", 0))
     lines = [
         f"### 🎓 Memory Promotion Report ({'DRY RUN' if result['dry_run'] else 'COMMITTED'})",
-        f"- **Auto-accepted candidates total:** {result['candidates_considered']}",
+        f"- **Candidates:** {considered}",
         f"- **Already promoted (skipped):** {result['already_promoted']}",
         f"- **Eligible this run:** {result['eligible_this_run']}",
     ]
+    if result.get("not_found"):
+        lines.append(f"- **Not found (bad id):** {len(result['not_found'])} — {', '.join(result['not_found'][:3])}")
     if result["dry_run"]:
         lines.append("")
         lines.append("#### Would promote:")

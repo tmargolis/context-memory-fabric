@@ -17,6 +17,8 @@ Work proceeds **one milestone at a time**. Each milestone below has:
 
 Nothing in a milestone begins until the previous milestone's exit gate is answered and the milestone is approved.
 
+Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
+
 ---
 
 ## Baseline as of 2026-09-03
@@ -87,24 +89,30 @@ Cross-cutting "local/private extraction options" becomes a **blocking decision g
 
 ## Milestone sequence
 
-```text
-MS0.5  Baseline correctness        ← start here, small, unblocks everything
-MS1    Provider interfaces
-MS2    Canonical event journal  +  Claude/Gemini importers  +  backfill
-MS3    Capture / consolidation split
-MS3.5  Reasoning-episode consolidation (ADR 0005)   ← next; runs before the MS4 adapters
-MS4a   MCP-boundary capture      → Claude Desktop   (done, pending live verification)
-MS4b   Claude Code adapter
-MS4c   OpenClaw adapter (+ cmf-http)
-MS4d   Codex, Gemini CLI
-MS5    Knowledge provider generalization
-MS6    Review and governance
-MS7    Context assembly quality
-MS8    Replay and evaluation
-MS9    Distribution
-```
+**Execution order (resequenced 2026-09-06 with Todd).** The `## MS…` section numbers below are stable identifiers — they no longer run in numeric order. The driving change: adding more *capture* (MS4b–MS4d) is pointless while the retrievable graph has almost nothing in it, so the near-term path drives one harness's history all the way to *retrieval* first, then adds the other adapters.
+
+| # | Milestone | Focus | Status |
+|--:|---|---|---|
+| 1 | MS0.5 | Baseline correctness & wiring | done |
+| 2 | MS1 | Provider interfaces | done |
+| 3 | MS2 | Canonical event journal + importers + backfill | done |
+| 4 | MS3 | Capture / consolidation split | done |
+| 5 | MS3.5 | Reasoning-episode consolidation (ADR 0005) | done (2026-09-07) |
+| 6 | MS3.6 | Promotion: staged memories → retrievable graph | done (2026-09-07) |
+| 7 | **MS6** | Review and governance | **next ← here** |
+| 8 | MS7 | Context assembly quality | |
+| | | *— retrieval loop proven end-to-end here —* | |
+| 9 | MS4a | MCP-boundary capture — live cross-harness verification | built; verify |
+| 10 | MS4b | Claude Code adapter | |
+| 11 | MS4c | OpenClaw adapter (+ `cmf-http`) | |
+| 12 | MS4d | Codex, Gemini CLI | |
+| 13 | MS5 | Knowledge-provider generalization (wiki serves retrieval today; this makes it replaceable) | |
+| 14 | MS8 | Replay and evaluation | |
+| 15 | MS9 | Distribution | |
 
 MS3 and MS4a may partially interleave: capture writes events and can ship before consolidation is complete, because an unconsolidated event is still durable evidence.
+
+**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph (today: 57 MS0.5 episodes) plus the LLM Wiki. The ~1k reasoning episodes and the heuristic candidates are staged in SQLite and are **not retrievable** until promoted. So the blocker for "test what CMF actually does" is MS3.6 (promotion) + MS6 (review to approve the backlog) + MS7 (make assembly good) — not more capture adapters. MS4b–MS4d and MS5 come after the retrieval loop is proven on the existing history.
 
 ---
 
@@ -312,38 +320,96 @@ New: `server/consolidation/{__init__,store,pipeline}.py`, `server/policies/{__in
 
 ### Tasks
 
-- [ ] **Add `reasoning_kind` to the data model.** Optional field on `DerivedMemory` (`server/core/models.py`) and a nullable column on `derived_memories`. Additive; existing rows read `NULL`. Settle the field name here (working name `reasoning_kind`) and whether the vocabulary is closed, registry-backed, or free-text-with-a-starter-set.
-- [ ] **`ReasoningEpisodePolicyV1`** under `server/policies/`, implementing the existing `ExtractionPolicy` protocol unchanged in shape. Model-based (rate-limited Gemini path). Returns, per reasoning episode: `{category, reasoning_kind, statement, driving_question?, rationale?, alternatives?, status?, thread_key?, confidence}`. `category` is still one of the existing four; `statement` is a concise synthesis, not raw turns.
-- [ ] **Topical-window segmentation.** A new consolidation stage that groups a conversation/session's turns into bounded topical windows and runs the policy per window (0–N episodes out). Prototype 2–3 segmentation strategies (fixed turn-count, embedding-similarity boundary, model-driven in-call) against the real ChatGPT/Claude/Gemini journal and pick from measured output — do not build blind.
-- [ ] **Triage gate in `HeuristicPatternPolicyV1`.** Keep it as the cheap pre-filter (empty / `actor_type != 'user'` / trivia) and add a triage signal marking windows worth a model call (deliberation markers, question language, technical/log-shaped content). Windows that don't clear triage are not sent to the model.
-- [ ] **Cross-conversation thread index** (ADR 0004 decision 3, carried forward): a small persistent structure of open threads (topic/project key, first-seen event, status, linked event IDs, accumulated `reasoning_kind` entries), checked before extraction so an intent in one conversation and its resolution in another land in the same thread. Most naturally alongside `derived_memories` in `server/consolidation/`.
-- [ ] **Loosen auto-accept for reasoning episodes.** `_approval_state_for` (`server/consolidation/pipeline.py`) currently auto-accepts only `EPISODIC` + confidence ≥ 0.75, which by construction needs a dated decision. Reasoning episodes auto-accept on model confidence against a threshold re-derived from the rebuilt fixture (next task). `HeuristicPatternPolicyV1`'s own derivations keep the 0.75 rule.
-- [ ] **Rebuild the memory-quality fixture's positive side.** `tests/fixtures/memory_quality/labeled_events.json` is down to 9 all-negative rows after the ChatGPT-summary-event deletion. Rebuild positives from native ChatGPT / Claude / Gemini events with `reasoning_kind` labels (Claude Code events too, once MS4b lands — but MS3.5 does not wait on them). Do **not** reconstruct anything from the abandoned ChatGPT summary (ADR 0005 decision 7).
-- [ ] **Reprocess the journal** under the new stage (bounded by the rate limiter) and inspect output before wiring anything to promotion.
-- [ ] **Keep the `actor_type != 'user'` guard — but measure what it costs.** MS3.5 derives episodes from user turns only; assistant replies are context, never seed an episode or establish a fact (ROADMAP principle 9, unchanged). Todd flagged (2026-09-05) that this likely under-captures reasoning authored by the assistant in reply to terse prompts. During the journal-reprocess inspection, sample how often a would-be episode's substance is only in assistant turns, and record the number for the exit gate — do not change the guard in MS3.5.
-- [ ] **Docstring steer** in `server/policies/protocols.py`: `ExtractionCategory` stays four values; kinds of thinking are `reasoning_kind`, not new categories. *(Done 2026-09-05, ahead of the milestone, to prevent wrong-direction work.)*
+- [x] **Add `reasoning_kind` to the data model.** Optional field on `DerivedMemory` (`server/core/models.py`) and a nullable column on `derived_memories`. Additive; existing rows read `NULL`. Settle the field name here (working name `reasoning_kind`) and whether the vocabulary is closed, registry-backed, or free-text-with-a-starter-set. *(Done. Kept the name `reasoning_kind`. Vocabulary is **free-text with a documented starter set** — `REASONING_KINDS` frozenset in `models.py` for docs + soft validation, column is plain `TEXT`, no enum, per ADR 0005 decision 1 ("extend by adding a string, not migrating a schema"). `ExtractionResult` gained matching optional fields (`reasoning_kind`, `driving_question`, `rationale`, `alternatives`, `status`, `thread_key`); `PolicyContext` gained optional `topical_window` / `open_threads`. `ConsolidationStore` migrates the on-disk journal in place via a guarded `ALTER TABLE` and `stats()` now reports `by_reasoning_kind`. All additive — `HeuristicPatternPolicyV1` unchanged, full MS1/MS2/MS3/capture/promotion suites green.)*
+- [x] **`ReasoningEpisodePolicyV1`** under `server/policies/`, implementing the existing `ExtractionPolicy` protocol unchanged in shape. Model-based (rate-limited Gemini path). Returns, per reasoning episode: `{category, reasoning_kind, statement, driving_question?, rationale?, alternatives?, status?, thread_key?, confidence}`. `category` is still one of the existing four; `statement` is a concise synthesis, not raw turns. *(Done — `server/policies/reasoning_episode_v1.py`, version `0.1`. Deviation from "unchanged in shape": the per-event `ExtractionPolicy` protocol IS left untouched, but a windowed policy emits 0–N episodes per call, which a `-> ExtractionResult` signature can't express — so a new **additive** `WindowedExtractionPolicy` protocol + `ReasoningEpisode` dataclass were added alongside it in `protocols.py` (nothing existing changed). Model call is injected (`generate_fn`), defaults to `google-genai`, rate-limited via `get_default_rate_limiter().reserve()` — one call per window, `GeminiQuotaExhaustedError` propagates and the pipeline stops clean. Live-verified against the real journal (see the bounded-slice note below).)*
+- [x] **Topical-window segmentation.** A new consolidation stage that groups a conversation/session's turns into bounded topical windows and runs the policy per window (0–N episodes out). Prototype 2–3 segmentation strategies (fixed turn-count, embedding-similarity boundary, model-driven in-call) against the real ChatGPT/Claude/Gemini journal and pick from measured output — do not build blind. *(Done — `server/consolidation/windowing.py`. Prototyped 3 cheap strategies (fixed turn-count, time-gap, marker-cue) over the real 296-conversation / 7.5k-event ChatGPT+Claude slice; **none reliably found topic boundaries** — real topic shifts in Todd's transcripts routinely have no pause and no cue phrase. Decision (with Todd, 2026-09-05): keep segmentation **loose** — `default_windower()` = `TimeGapWindower(2h gap, 20-turn cap)` bounds model-input size and splits obvious session breaks only; the model does topical sub-segmentation inside its own call. `EmbeddingBoundaryWindower` is implemented (injectable `embed_fn`) but shelved for a later bake-off, revisited once the Spark local-inference stack can carry that work.)*
+- [x] **Triage gate.** Keep it as the cheap pre-filter (empty / `actor_type != 'user'` / trivia) and add a triage signal marking windows worth a model call (deliberation markers, question language, technical/log-shaped content). Windows that don't clear triage are not sent to the model. *(Done — `server/consolidation/triage.py`. Deviation: built as a standalone `assess_window()` rather than folded into `HeuristicPatternPolicyV1`, because it operates on a **window** not a single event — different unit. Per Todd (2026-09-05, "not sure I need that triage filter"): it is **loose** (only withholds a window with zero question / deliberation / technical signal across its user turns), **logged** (withheld windows get a `triaged_out` job row + reason, re-runnable), and **optional** (`run_reasoning_consolidation(..., triage=False)`).)*
+- [x] **Cross-conversation thread index** (ADR 0004 decision 3, carried forward): a small persistent structure of open threads (topic/project key, first-seen event, status, linked event IDs, accumulated `reasoning_kind` entries), checked before extraction so an intent in one conversation and its resolution in another land in the same thread. Most naturally alongside `derived_memories` in `server/consolidation/`. *(Done — `server/consolidation/threads.py`, `reasoning_threads` table in the same journal DB. Explicitly **cross-harness AND cross-session**, not just cross-conversation (Todd flagged 2026-09-05 that a line of reasoning routinely moves Claude→Gemini, or to a fresh thread with the same assistant to keep context small): `thread_key` is a `normalize_key()`-collapsed topic slug that ignores harness and conversation; `stats()` reports `cross_harness_threads` / `cross_conversation_threads`; tested with a Claude-conv-A intent + Gemini-conv-B outcome landing on one thread.)*
+- [x] **Loosen auto-accept for reasoning episodes.** `_approval_state_for` (`server/consolidation/pipeline.py`) currently auto-accepts only `EPISODIC` + confidence ≥ 0.75, which by construction needs a dated decision. Reasoning episodes auto-accept on model confidence against a threshold re-derived from the rebuilt fixture (next task). `HeuristicPatternPolicyV1`'s own derivations keep the 0.75 rule. *(Done — `_reasoning_approval_state()` in `pipeline.py`, separate from `_approval_state_for` (v1's 0.75 dated-decision rule untouched). Prototype default is `reasoning_auto_accept_threshold=None` = **nothing auto-accepts yet, all `queued_for_review`** — the bounded live slice confirmed model-reported confidence runs hot/uncalibrated (constant 0.9–1.0), so a real number must come from the rebuilt fixture, next task. Not carried over from 0.75.)*
+- [x] **Rebuild the memory-quality fixture's positive side.** `tests/fixtures/memory_quality/labeled_events.json` is down to 9 all-negative rows after the ChatGPT-summary-event deletion. Rebuild positives from native ChatGPT / Claude / Gemini events with `reasoning_kind` labels (Claude Code events too, once MS4b lands — but MS3.5 does not wait on them). Do **not** reconstruct anything from the abandoned ChatGPT summary (ADR 0005 decision 7). *(Done 2026-09-07 — `tests/fixtures/memory_quality/reasoning_labels.{jsonl,json}`, 51 human-labeled staged episodes across all 8 kinds and 3 harnesses: **22 keep / 28 drop / 1 maybe**. Labeled through a phone artifact (swipe keep/drop) rather than the CLI. The single question was "should this be stored as long-term memory," not "is the kind right".)*
+- [x] **Reprocess the journal** under the new stage (bounded by the rate limiter) and inspect output before wiring anything to promotion. *(Done 2026-09-06 — Option B slice fully processed under `v0.2`: 1,291 windows (Claude 230, ChatGPT 261, Gemini 800), zero failed/running. **1,243 reasoning episodes** staged (all `queued_for_review` — nothing promoted), **659 threads** (20 cross-harness, 67 cross-conversation). Kinds: investigation 755, decision 198, experiment 138, plan 94, hypothesis 33, finding 16, rejected_alternative 8, retrospective 1. Evidence/ep median 4, single-event 13%. Live status: `imports/ingest-pipeline-status.md`; browsable sample: `imports/reasoning-episode-samples.md`. Gemini triaged 40% of windows (min-window floor + loose signal on a single-exchange-heavy corpus). Fixes landed mid-loop: 429→`GeminiQuotaExhaustedError`, bounded 503 retry, min-window floor (`min_window_events=3`). Full suite green throughout, `v0.2` prompt unchanged since the early Claude batch.)*
+- [x] **Keep the `actor_type != 'user'` guard — but measure what it costs.** MS3.5 derives episodes from user turns only; assistant replies are context, never seed an episode or establish a fact (ROADMAP principle 9, unchanged). Todd flagged (2026-09-05) that this likely under-captures reasoning authored by the assistant in reply to terse prompts. During the journal-reprocess inspection, sample how often a would-be episode's substance is only in assistant turns, and record the number for the exit gate — do not change the guard in MS3.5. *(Done — instrumented via `substance_in_assistant_turns`, measured per batch across the full reprocess: **~5% on Claude, ~13–26% on ChatGPT/Gemini** (not re-aggregated to a single number). Material but not urgent — see the exit gate; most assistant-carried reasoning that resolves is tier-2 "work journal" content anyway, which the three-tier routing keeps without promoting. Guard unchanged, as instructed.)*
+- [x] **Docstring steer** in `server/policies/protocols.py`: `ExtractionCategory` stays four values; kinds of thinking are `reasoning_kind`, not new categories. *(Done 2026-09-05, ahead of the milestone, to prevent wrong-direction work.)*
 
 ### Files touched
 
-New: `server/policies/reasoning_episode_v1.py`, `server/consolidation/windowing.py` (or similar), `server/consolidation/threads.py`, `tests/test_ms3_5_reasoning_episodes.py`. Modified: `server/core/models.py`, `server/consolidation/{store,pipeline}.py`, `server/policies/{protocols,heuristic_v1}.py`, `tests/fixtures/memory_quality/labeled_events.json`.
+New: `server/policies/reasoning_episode_v1.py`, `server/consolidation/windowing.py`, `server/consolidation/threads.py`, `server/consolidation/triage.py`, `tests/test_ms3_5_reasoning_episodes.py`. Modified: `server/core/models.py`, `server/consolidation/{store,pipeline}.py`, `server/policies/protocols.py`, `tests/fixtures/memory_quality/labeled_events.json` (pending — fixture rebuild task). **Not modified:** `server/policies/heuristic_v1.py` — the triage gate went into a standalone `triage.py` (window-scoped, not event-scoped), so v1 stays untouched.
+
+### Bounded reprocess — Phase C checkpoint (2026-09-05), Option B slice, in progress
+
+Slice scope (Todd's call, 2026-09-05): **Claude + ChatGPT since 2026-03-05**, loose **triage on**, real Gemini path, written to the **real** consolidation store (all `queued_for_review` — nothing auto-accepts, nothing promotes). Resumable/idempotent per window+policy@version; run in `max_windows`-bounded batches as free-tier quota allows.
+
+**First 40 Claude windows under `v0.1`** → 66 episodes across all 8 `reasoning_kind`s. It reconstructs real narratives — one debugging thread ran plan → experiment → rejected_alternative → decision → investigation across a dozen turns; others captured a tooling-integration decision, a credential-handling change, and a "should I switch tools" deliberation. The lexical v1 classifier produces none of this.
+
+**Prompt tightened → `v0.2`** (Todd asked for a better prompt): explicit exclusions for task-requests / lookups / wording tweaks, "cite every contributing turn not just the first", graded-confidence guidance. Re-ran the first 30 windows (`supersedes`-linked to `v0.1`). Measured delta:
+
+| | v0.1 | v0.2 |
+|---|---|---|
+| evidence events / episode (median, mean) | 1, 2.1 | **4, 4.1** |
+| single-event episodes | 53% | **7%** |
+| episodes / window | 1.65 | 1.5 |
+| confidence (min–median) | 0.90–0.95 | 0.90–0.95 |
+
+Evidence linking is materially better; density slightly tighter. **Confidence guidance did not take** — the model still won't score below 0.90, so model self-report is unusable for the auto-accept threshold (as already accepted — it comes from the rebuilt fixture). `substance_in_assistant_turns` ran 6/66 (v0.1) then 2/45 (v0.2) — user-only-guard cost, for the exit gate; full number from the completed slice.
+
+`v0.2` is the version the rest of the Option B slice runs on. Minor deferred polish: model sometimes returns `alternatives` as a JSON array (stringified into `reason`); `google-genai` AFC warning is harmless.
+
+**Live status report:** `imports/ingest-pipeline-status.md` (gitignored, regenerated every loop run by `scratchpad/gen_ingest_report.py`) — full-pipeline view (source → journal → per-event classification → reasoning episodes → threads → promotion → retrieval) with Mermaid flow, per-harness/class/kind tables + bar charts, thread stats, and a growing run-history table. Home the generator properly when MS3.5 is committed.
+
+**Progress (hourly batched loop, session-only, 2026-09-05):**
+
+- **Claude: complete** — 230 windows (180 succeeded + 50 triaged_out).
+- **ChatGPT (since 2026-03-05): complete** — 261 windows (232 succeeded + 29 triaged_out). One window returned unparseable JSON even after salvage → logged, 0 episodes, no crash (designed degradation); 1/70.
+- **Gemini (since 2026-03-05): complete** — 800 windows (483 succeeded + 317 triaged_out). The min-window floor + loose signal triaged 40% of Gemini windows (single-exchange-heavy corpus). `503`/`429` handling held — zero failed jobs across the whole Gemini phase. Multi-turn Gemini exchanges are substantive (personal-finance planning, a property-governance dispute, multi-step technical research threads) with strong evidence linking (ev=8–22). **Min-window-size floor added (Todd, 2026-09-06):** `run_reasoning_consolidation` gained `min_window_events` (default 3), applied in `assess_window` — a window below 3 events is a single one-shot exchange, withheld as `triaged_out` with no model call. Cuts the thin ev=2 Gemini episodes at the source; near-no-op for Claude/ChatGPT (naturally longer windows). Triage, not policy — no version bump; set `min_window_events=1` to disable. Only affects the ~530 not-yet-processed Gemini windows; the ~50 thin ev=2 episodes already created stay in `queued_for_review` for review to filter. 2 new tests.
+- **Fix landed (error handling, no version bump — output-identical):** a real Google-side `429 RESOURCE_EXHAUSTED` can land even when the local rate limiter had headroom (concurrent processes share the free tier). It was being recorded as a spurious job failure; `ReasoningEpisodePolicyV1` now re-raises it as `GeminiQuotaExhaustedError` so the pipeline stops clean and leaves the window retryable, same as local exhaustion. Tests green.
+- **Totals so far: 621 episodes**, 313 threads (5 cross-harness — incl. `claude-cowork-astrophotography-recovery` linking a Claude and a ChatGPT conversation; richest cross-conversation is `openclaw-gateway-connection`, 11 episodes across sessions). ev/ep median 4, single-event ~10–12%, confidence 0.80–1.00. No prompt tune needed across all three harnesses.
+- **Exit-gate signal:** `assistant_only_substance` runs ~13–26% on ChatGPT/Gemini windows vs ~5% on Claude — those harnesses more often have a terse user prompt with the assistant carrying the analysis. Guard stays (ADR 0005); quantify properly in Phase D — the "can assistant-authored reasoning seed an episode" open question looks like it will matter.
+- **Reprocess complete (2026-09-06).** All three phases `succeeded`/`triaged_out` under `v0.2`; the hourly loop is stopped. **1,243 episodes / 659 threads staged, all `queued_for_review`.**
+- **Phase D complete (2026-09-07).** Fixture rebuilt (51 labels, 22 keep / 28 drop), exit gate answered: **no auto-accept threshold** (confidence doesn't separate keep from drop), backlog handled by **three-tier routing** (promote / work-journal-in-thread / discard) reviewed by thread in MS6. **MS3.5 is done.**
 
 ### Acceptance tests
 
-1. [ ] An investigation spanning ~10 turns with no closure verb and no in-text date produces one `episodic` memory with `reasoning_kind='investigation'` and an `event_date` resolved from the window's turn metadata.
-2. [ ] A "considered X, chose Y because Z" exchange produces both a `decision` episode and a linked `rejected_alternative` episode.
-3. [ ] A short log-narration turn (the residual promotion false-positive shape) is either a legitimate `reasoning_kind='investigation'`/`experiment` synthesis or excluded — never a raw-paste `episodic` promotion.
-4. [ ] An intent stated in conversation A and its outcome reported in conversation B land in the same thread.
-5. [ ] Reprocessing under a bumped `ReasoningEpisodePolicyV1` version creates new derivations with prior lineage intact (same guarantee as MS3 acceptance test 2).
-6. [ ] No new `ExtractionCategory` value exists; `grep` confirms the enum is unchanged.
+1. [x] An investigation spanning ~10 turns with no closure verb and no in-text date produces one `episodic` memory with `reasoning_kind='investigation'` and an `event_date` resolved from the window's turn metadata. *(`tests/test_ms3_5_reasoning_episodes.py::TestUndatedInvestigation`.)*
+2. [x] A "considered X, chose Y because Z" exchange produces both a `decision` episode and a linked `rejected_alternative` episode. *(`TestDecisionAndRejectedAlternative` — both episodes land, and both link into one `journal-backend` thread.)*
+3. [x] A short log-narration turn (the residual promotion false-positive shape) is either a legitimate `reasoning_kind='investigation'`/`experiment` synthesis or excluded — never a raw-paste `episodic` promotion. *(`TestShortLogPasteNeverRawEpisodic` — triage withholds the short logpaste; a model returning `[]` writes no memory.)*
+4. [x] An intent stated in conversation A and its outcome reported in conversation B land in the same thread. *(`TestCrossConversationThread` — Claude conv A + Gemini conv B, different `thread_key` surface forms, collapse to one cross-harness / cross-conversation thread.)*
+5. [x] Reprocessing under a bumped `ReasoningEpisodePolicyV1` version creates new derivations with prior lineage intact (same guarantee as MS3 acceptance test 2). *(`TestReprocessUnderBumpedVersion`.)*
+6. [x] No new `ExtractionCategory` value exists; `grep` confirms the enum is unchanged. *(`TestNoNewCategory` — enum asserted to be exactly the four values; `reasoning_kind` values asserted disjoint from it.)*
 
-### Exit gate
+### Phase D — completed 2026-09-07
 
-**What is the reasoning-episode auto-accept threshold, and what is the review-backlog burn-down plan?** Set the threshold from the rebuilt fixture. The backlog *will* grow (ADR 0005 decision 5); name the intended MS6 review affordance that drains it, even if MS6 builds it later.
+The three closing items, all hands-on:
 
-**Does user-turns-only under-capture the reasoning?** Report the measured rate (from the task above) at which a would-be episode's substance lives only in assistant turns. If it's material, the follow-on decision — whether assistant-authored reasoning can seed an episode (marked assistant-originated, never a personal fact, always queued for review) — is scoped as its own small milestone rather than folded into MS3.5 late.
+1. **Memory-quality fixture rebuilt** — `tests/fixtures/memory_quality/reasoning_labels.{jsonl,json}`, 51 human-labeled staged episodes, **22 keep / 28 drop / 1 maybe**, spread across all 8 kinds and 3 harnesses. Labeled via a phone artifact (swipe keep/drop; single question = "belongs in long-term memory?"). Tooling kept for reuse under `imports/tools/` (gitignored): `label_reasoning_episodes.py` (CLI), the labeler artifact + its `read_db` → compile path, `compile_reasoning_samples.py`.
+2. **Threshold derivation** — see exit gate: no workable threshold exists.
+3. **Exit gate answered** — below.
 
-**Effort:** 5–7 sessions (segmentation and the fixture rebuild are the bulk).
-**Risk:** Medium-high. First model-based policy; segmentation is genuinely unsolved; precision is unproven until the fixture exists. Prototype offline against the existing journal before committing schema.
+### Exit gate — ANSWERED 2026-09-07
+
+**What is the reasoning-episode auto-accept threshold?** **There isn't one — auto-accept stays off (`_reasoning_approval_state(threshold=None)`).** Against the 51-row fixture, no single feature separates keep from drop:
+
+| signal | keep vs. drop | best single-threshold accuracy (baseline "drop all" = 56%) |
+|---|---|---|
+| model confidence | mean 0.95 vs. 0.94 — fully overlapping | 58% |
+| statement length | 197 vs. 175 chars | 64% |
+| evidence-event count | median 2 vs. 1 | 60% |
+
+Model self-reported confidence is noise for this decision (a drop at conf 1.0 sits beside a keep at 0.90 — this was flagged during the loop and the fixture confirmed it). The only real signal is **`reasoning_kind`**: `decision` kept 7/9, `plan` 5/8; `experiment` 1/8, `hypothesis` 1/5, `finding` 2/7. So kind is a routing hint, not an accept gate.
+
+**Review-backlog burn-down plan — three tiers, not two (Todd, 2026-09-07).** "Auto-accept off" does *not* mean 1,243 episodes need one-by-one human review. Todd's labeling revealed the real structure: he dropped episodes that were "just working through a problem" — correct for *retrievable memory*, but those shouldn't be discarded either. So:
+
+| tier | content | destination | ~count (Option B slice) |
+|---|---|---|---|
+| **1 — promote** | durable facts, decisions, plans, findings with lasting relevance | the graph, surfaced by `recall`/`get_context` | the `decision`/`plan`/`retrospective`/`rejected_alternative` episodes ≈ **301**, reviewed **by thread** in MS6, not per-episode |
+| **2 — work journal** | the working-through: experiments, dead ends, transient troubleshooting that resolved | stays in its `reasoning_thread` (659 exist), **not** promoted; browsable, promotable later if a thread turns out to matter | the `investigation`/`experiment`/`hypothesis`/`finding` episodes ≈ **942** |
+| **3 — discard** | thin fragments from bad windows (the segmentation cost — see the `lunar-topographic-model-slicing` case: a 320-turn rolling Gemini thread sliced into 20-turn windows straddling ~3 topics), genuine trivia | dropped in MS6 review or by a cheap pre-filter | subset of tier 2 |
+
+Tier 2 is **already built** — the thread index. An unpromoted episode still lives under its thread, so "not promoted" ≠ "lost". MS6's affordance is therefore **bulk review by thread / by kind**, not a modal per episode. The MS3.6 "coverage-based auto-resolve" still drains the separate 9,833-row *heuristic* `queued_for_review` pile.
+
+**Does user-turns-only under-capture the reasoning?** Measured rate that an episode's substance is assistant-only: **~5% Claude, ~13–26% ChatGPT/Gemini** per batch. Material, but the three-tier framing lowers its urgency — assistant-carried reasoning that resolves is mostly tier-2 work-journal content, kept in-thread regardless of who authored it. The follow-on (can assistant-authored reasoning *seed* an episode, marked assistant-originated, never a personal fact, always queued) stays a scoped-later small milestone, not folded into MS3.5.
+
+**Effort:** 5–7 sessions (segmentation and the fixture rebuild are the bulk). *Actual: ~1 heavy build session + a multi-day autonomous reprocess loop + ~1 session for Phase D.*
+**Risk (retired):** First model-based policy shipped; segmentation stayed deliberately loose (its cost is visible and understood — tier 3); precision is characterized by the fixture (no threshold, kind-based routing).
 
 ---
 
@@ -406,13 +472,15 @@ Plus:
 
 ---
 
-## Unnumbered — Promote auto-accepted memories (closes the MS3 → MS6 gap)
+## MS3.6 — Promotion: staged memories into the retrievable graph
 
-**Goal:** Give Milestone 3's `auto_accepted` classification somewhere to actually go. Not in the original milestone sequence — MS3's `pipeline.py` explicitly deferred this ("deriving new episodic memories from the full journal is explicitly out of scope until the Milestone 4a privacy/cost gate is answered"), and it never got its own milestone number. Sits between MS3 (classification) and MS6 (review/governance for everything that isn't auto-accepted).
+*(Was "Unnumbered — Promote auto-accepted memories". Given a number and pulled onto the critical path in the 2026-09-06 resequencing: it is the step that first makes CMF's own reasoning history retrievable, so it runs right after MS3.5 and before MS6/MS7.)*
 
-**Why now:** Directly motivated by a live gap check (2026-09-04): the production Graphiti graph still held exactly 57 episodes — the original MS0.5 backfill — while the journal held 19,012 events, 182 of them `auto_accepted` and sitting unpromoted. Wiring MS4a's capture into Claude Desktop before this existed would have added more unconsolidated volume on top of a backlog nothing was draining.
+**Goal:** Move staged `derived_memories` — the MS3 `auto_accepted` per-event candidates **and** the MS3.5 reasoning episodes — into FalkorDB via `remember()`, so `get_context` / `recall` can actually return them. Everything upstream (journal, classification, reasoning extraction) is staging; this is the stage that closes the loop to retrieval.
 
-### Tasks
+**Why now:** Live gap check (2026-09-04, still true): the graph holds 57 episodes (the MS0.5 backfill) while the journal holds 19,012 events and — after MS3.5 — ~1k+ reasoning episodes, all staged, none retrievable. Testing review (MS6) and assembly quality (MS7) needs real material in the graph; adding more capture (MS4b–d) does not.
+
+### Done so far (auto-accepted path)
 
 - [x] `server/consolidation/promotion.py`: `PromotionStore` (idempotency ledger — a `promotions` table in the same SQLite file as the journal/consolidation store, `succeeded`/`failed` per `memory_id`, same "one file, no cross-database consistency problem" precedent as `ConsolidationStore`) and `promote_auto_accepted()` (reads `derived_memories` rows with `approval_state='auto_accepted'` not yet promoted, calls `remember()` — through the MS4a rate limiter — for each, isolating per-row failures rather than aborting the batch). `remember_fn` is injected, not imported directly, so tests exercise real bookkeeping logic with zero Gemini/FalkorDB dependency.
 - [x] `GeminiQuotaExhaustedError` mid-batch stops the run cleanly — remaining candidates are left untouched (no partial/terminal record), safe to retry in a later call, not silently dropped or double-attempted.
@@ -460,6 +528,25 @@ Todd's question after the inspection — rather than only filtering out debuggin
 - It is **not a one-line label**. A label keeps that work happened but loses what was learned, tried, and why. MS3.5 derives a real synthesis over a window of turns (driving question, rationale, alternatives, finding).
 
 The triage instinct from the sketch carries forward: `HeuristicPatternPolicyV1` flags technical/log-shaped windows (the same signal currently causing false positives) as worth a model call; everything else is skipped. Extraction runs on the rate-limited Gemini path now, Spark local inference later.
+
+### The reasoning-episode path (MS3.6 proper) — DONE 2026-09-07
+
+MS3.5 is done. Its exit gate settled that **there is no auto-accept for reasoning episodes** — model confidence doesn't separate keep from drop (fixture: keep mean 0.95 vs. drop 0.94). So MS3.6 is entirely review-gated, structured by the **three tiers** the Phase D labeling surfaced (2026-09-07):
+
+- **Tier 1 — promote to the graph.** Durable facts, decisions, plans, findings with lasting relevance. `recall`/`get_context` return these. Roughly the `decision`/`plan`/`retrospective`/`rejected_alternative` episodes (≈301 in the Option B slice — Todd kept 63–78% of those kinds vs. ~15% of `investigation`/`experiment`/`hypothesis`/`finding`).
+- **Tier 2 — work journal.** The working-through: experiments, dead ends, transient troubleshooting that resolved. Stays in its `reasoning_thread` (659 exist), **not** promoted. Not lost — browsable, and promotable later if a thread turns out to matter. ≈942 episodes.
+- **Tier 3 — discard.** Thin fragments from windows that straddle topics (segmentation cost) and genuine trivia.
+
+Tasks:
+
+- [x] **`promote_reviewed(memory_ids)`** — no `promote_auto_accepted()` for reasoning episodes (there's no auto-accept). A human (MS6) marks episodes/threads tier-1; this promotes them. `remember()` gets the `statement` synthesis with `reasoning_kind` + `evidence_event_ids` as provenance metadata. `promote_auto_accepted()` kept for the heuristic path. *(`server/consolidation/promotion.py`; explicit ordered id-list, same `PromotionStore` ledger, per-row failure isolation, `GeminiQuotaExhaustedError` clean-stop, `not_found` reporting. 7 new tests in `tests/test_ms3_6_promotion.py`.)*
+- [x] **`reasoning_kind` → default tier routing** (a hint, not a gate): `default_tier()` — `decision`/`plan`/`retrospective`/`rejected_alternative` → tier 1; rest → tier 2. `tier1_review_queue()` returns the unpromoted, unrejected tier-1 episodes a reviewer should triage.
+- [x] **Coverage-based auto-resolve of the heuristic backlog.** `ConsolidationStore.mark_superseded_by_reasoning()` — a heuristic `queued_for_review` row whose `source_event_id` is cited by a reasoning episode's evidence → `approval_state='superseded_by_reasoning'`, `superseded_by=<episode memory_id>`. Idempotent, `revert_superseded_by_reasoning()` undoes it. **Applied to the real journal 2026-09-07: 3,251 of 9,833 v1.2 heuristic rows superseded (~33% cut) → 6,582 remain for review.**
+- [x] **First real promotion batch** — the **22 human-`keep` episodes from the Phase D fixture** → `memory-fabric` via live rate-limited `remember()` (3.5s inter-call). 21/22 first pass; 1 transient Gemini failure recorded `failed` in `PromotionStore` and cleanly picked up on a retry run (the 21 `succeeded` skipped — idempotency verified on real infra). **`memory-fabric`: 57 → 79 `Episodic` nodes.**
+- [x] **Verify retrieval.** `recall()` returns the promoted episodes with Graphiti's entity extraction done — a query for a tooling decision comes back as *"chose X over Y because Z"* decomposed into entity + relationship facts (not the raw statement), and a query for a planning thread returns its candidate-option decision facts. The journal → episode → keep → promote → retrievable loop is closed.
+- [x] **Deletion/correction propagation** — architecturally satisfied (same as MS2 acceptance test 4): the journal (`events`, SQLite) and `derived_memories` have no code path to FalkorDB; `graphiti.remove_episode` on a promoted episode cannot touch either. Becomes a tested cross-store invariant in MS6 when memory correction is wired to journal lineage.
+
+**Exit gate — ANSWERED 2026-09-07.** A promoted reasoning episode survives the round trip — `remember()` → `recall()` with the synthesis retrievable and Graphiti's entities/edges attached (verified above; `reasoning_kind`/thread key ride in `source_description` as provenance, not yet as first-class graph properties — that's MS5/MS6 when the knowledge contract formalizes). The coverage auto-resolve cut the v1.2 heuristic review pile **9,833 → 6,582 (−3,251, ~33%)**, and every superseded row keeps a `superseded_by` pointer to the episode that covered it, so nothing is hidden — a reviewer can always follow it back. Whether by-thread bulk review actually beats per-episode is a **MS6** question (the review surface doesn't exist yet); the tier structure and `tier1_review_queue()` are in place for it to build on.
 
 ---
 
@@ -563,15 +650,15 @@ New: `server/http/{app,ingest,auth}.py`, `server/adapters/openclaw/`, `docs/adap
 
 ## MS5–MS9
 
-These follow the roadmap as written; detailed task breakdowns are deferred until MS4 completes, because MS4's findings will reshape them.
+Detailed task breakdowns still to be written. **Per the 2026-09-06 resequencing, MS6 and MS7 move ahead of the MS4b–MS4d capture adapters and MS5** — they are the path from staged reasoning episodes to actually-useful retrieval, which is what needs proving next. MS6 now depends on MS3.6 (promotion), and MS7 no longer waits on MS5 (the LLM Wiki already serves retrieval; the file provider is enough to build and evaluate assembly against).
 
-| MS | Goal | Depends on | Effort |
-|---|---|---|---:|
-| **5** | Generalize knowledge providers; `propose_knowledge_change`; GitHub provider; Wiki becomes optional | MS1 | 3–4 |
-| **6** | Review and governance — inspect evidence, approve/reject, correct, scopes, audit | MS2, MS3 | 5–6 |
-| **7** | Context assembly quality — intent classification, time-aware modes, token budget, conflict signals | MS2, MS5 | 4–5 |
-| **8** | Replay and evaluation — historical context snapshots, counterfactual policy comparison | MS2, MS6 | 4–5 |
-| **9** | Distribution — Docker Compose, SDK, OpenAPI, adapter/provider DKs, migration and backup | All | 4–6 |
+| MS | Goal | Depends on | Effort | Order |
+|---|---|---|---:|---|
+| **6** | Review and governance — inspect evidence, approve/reject, correct, scopes, audit. **Must support bulk review by thread / by kind / by tier** (MS3.5 exit gate: ~1,243 reasoning episodes, three-tier routing, per-episode modals won't scale) | MS3.5, MS3.6 | 5–6 | **next after MS3.6** |
+| **7** | Context assembly quality — intent classification, time-aware modes, token budget, conflict signals | MS2, MS6 | 4–5 | **after MS6** |
+| **5** | Generalize knowledge providers; `propose_knowledge_change`; GitHub provider; Wiki becomes optional | MS1 | 3–4 | after the MS4 adapters |
+| **8** | Replay and evaluation — historical context snapshots, counterfactual policy comparison | MS2, MS6 | 4–5 | after MS5 |
+| **9** | Distribution — Docker Compose, SDK, OpenAPI, adapter/provider DKs, migration and backup | All | 4–6 | last |
 
 Two notes carried forward:
 
@@ -637,18 +724,24 @@ Version every canonical schema. Maintain backward-compatible MCP tool aliases th
 
 ## Effort summary
 
-| Milestone | Sessions | Cumulative |
-|---|---:|---:|
-| MS0.5 | 1–2 | 2 |
-| MS1 | 3–4 | 6 |
-| MS2 | 5–7 | 13 |
-| MS3 | 4–5 | 18 |
-| MS3.5 (reasoning-episode consolidation) | 5–7 | ~24 |
-| MS4a | 3–4 | ~28 |
-| MS4b (Claude Code) | 3–4 | ~31 |
-| MS4c (OpenClaw) | 4–5 | ~36 |
-| MS4d (Codex, Gemini CLI) | 4–6 | ~41 |
-| MS5–MS9 | 20–26 | ~64 |
+Rows in **execution order** (2026-09-06 resequencing), not milestone-number order.
+
+| Milestone | Sessions | Cumulative | Status |
+|---|---:|---:|---|
+| MS0.5 | 1–2 | 2 | done |
+| MS1 | 3–4 | 6 | done |
+| MS2 | 5–7 | 13 | done |
+| MS3 | 4–5 | 18 | done |
+| MS3.5 (reasoning-episode consolidation) | 5–7 | ~24 | **done 2026-09-07** — 1,243 episodes / 659 threads staged; no auto-accept threshold; three-tier review routing |
+| MS3.6 (promotion → retrievable graph) | 2–3 | ~27 | **done 2026-09-07** — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251 heuristic rows), 22 keeps promoted (graph 57→79), retrieval verified |
+| MS6 (review and governance) | 5–6 | ~33 | |
+| MS7 (context assembly quality) | 4–5 | ~38 | |
+| MS4a (live cross-harness verification) | 1 | ~39 | built; needs a live Claude Desktop session |
+| MS4b (Claude Code) | 3–4 | ~43 | |
+| MS4c (OpenClaw) | 4–5 | ~48 | |
+| MS4d (Codex, Gemini CLI) | 4–6 | ~54 | |
+| MS5 (knowledge-provider generalization) | 3–4 | ~58 | |
+| MS8–MS9 (replay/eval, distribution) | 8–11 | ~68 | |
 
 Estimates assume agent-assisted implementation with review at each milestone boundary.
 
@@ -660,4 +753,12 @@ Estimates assume agent-assisted implementation with review at each milestone bou
 
 MS4a's exit gate — the privacy/cost decision — is answered (2026-09-04, with Todd): Gemini-only for now, no content-class filtering, consolidation stays journal-everything/auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate. Capture middleware, harness/session identity, secret filtering, the `capture_note`/`capture_health` tools, and the rate limiter are all built and passing (183 tests, full suite). What's left before calling MS4a fully done: the roadmap's five-step live cross-harness test (record in Claude Desktop → consolidates with provenance → retrieve from a second harness → correct → Desktop sees current state) — genuinely interactive, needs a live Claude Desktop connection this implementation session doesn't have.
 
-**The next milestone is MS3.5 — Reasoning-episode consolidation (ADR 0005), execution order set 2026-09-05 with Todd.** It comes *before* the MS4b–MS4d capture adapters, and before MS4a's remaining live verification is a blocker for anything. Rationale: the ~19,000 events already in the journal (native ChatGPT, Claude, Gemini) are a large, stable corpus to get episode-reasoning identification right against; realtime ingestion of new Claude Code / OpenClaw traffic is secondary and benefits from inheriting a consolidation layer that already works. Scope: capture the *thinking* — exploration, analysis, experiments, dead ends — as `episodic` memories carrying a `reasoning_kind` property, over topical windows, via a model-based `ReasoningEpisodePolicyV1`. ADR 0005 is written; `server/policies/protocols.py` already carries the "no new categories" steer. After MS3.5, capture-adapter order is unchanged: MS4a live verification, then MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI).
+**MS3.5 — Reasoning-episode consolidation (ADR 0005) — DONE 2026-09-07.** Build (schema, `ReasoningEpisodePolicyV1` v0.2, windowing, triage + min-window floor, cross-harness thread index, tests); full Option B reprocess (1,291 windows → **1,243 episodes / 659 threads**, all `queued_for_review`); Phase D fixture (51 labels) and exit gate. Exit-gate result: **no auto-accept threshold** — model confidence does not separate keep from drop; promotion is entirely review-gated, with a **three-tier** routing (promote to graph / keep in thread as work-journal / discard) so the ~1,243-episode backlog is reviewed by thread in MS6, not per-episode.
+
+**MS3.6 — Promotion — DONE 2026-09-07.** `promote_reviewed(memory_ids)` (no auto-accept — explicit human-approved list), `default_tier()`/`tier1_review_queue()` kind routing, `mark_superseded_by_reasoning()` coverage auto-resolve (applied: **9,833 → 6,582** v1.2 heuristic queued). First batch: the **22 Phase-D `keep` episodes promoted into `memory-fabric`** (57 → 79 `Episodic` nodes), retrieval verified end-to-end via `recall()` with Graphiti entity extraction.
+
+**Current: MS6 — Review and governance.** The staging tables now hold everything the retrieval loop needs; MS6 builds the surface to review/approve/correct it — **bulk by thread / kind / tier** (per the MS3.5 exit gate; ~942 tier-2 episodes + ~301 tier-1 + 6,582 heuristic rows). Then MS7 (assembly quality).
+
+**Then, per the 2026-09-06 resequencing (with Todd):** MS3.6 (promotion — get staged episodes into the graph so retrieval works) → MS6 (review/governance to drain the queued backlog) → MS7 (context-assembly quality). Only after that retrieval loop is proven end-to-end do the deferred items run: MS4a live verification, MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI), MS5 (knowledge-provider generalization — the LLM Wiki already works for retrieval today; MS5 only makes it replaceable). Rationale: more capture is dead weight while the retrievable graph is near-empty; drive one harness's history all the way to useful context first.
+
+**MS4a — MCP-boundary capture — remains implemented and unit-tested, pending only the live interactive cross-harness test**, which is not a blocker for the resequenced path above.
