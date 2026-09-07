@@ -136,6 +136,8 @@ def _default_generate(model: str, prompt: str) -> str:
                 continue
             raise
 
+    raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
+
 
 class ReasoningEpisodePolicyV1:
     """Structurally satisfies server.policies.protocols.WindowedExtractionPolicy."""
@@ -244,8 +246,9 @@ class ReasoningEpisodePolicyV1:
         first_user = next((e for e in cited if e.actor_type == "user"), cited[0])
         event_date: Optional[datetime] = first_user.observed_at
 
+        raw_conf = spec.get("confidence")
         try:
-            confidence = float(spec.get("confidence"))
+            confidence = float(raw_conf) if raw_conf is not None else 0.5
         except (TypeError, ValueError):
             confidence = 0.5
         confidence = max(0.0, min(1.0, confidence))
