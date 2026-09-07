@@ -1,95 +1,25 @@
 # Context Memory Fabric — Implementation Plan
 
-**Status:** Proposed
-**Created:** 2026-09-03
-**Companion to:** [ROADMAP.md](ROADMAP.md) — the roadmap states *what and why*; this plan states *how, in what order, and how we know it worked*.
+**Companion to** [ROADMAP.md](ROADMAP.md) — the roadmap states *what and why*; this plan states *how, in what order, and how we know it worked*.
 
-## How to use this document
+This file is the **index**. Detail lives in two companions:
 
-Work proceeds **one milestone at a time**. Each milestone below has:
+| File | Contents |
+|---|---|
+| **[plan-active.md](plan-active.md)** | the milestones still to do — full task lists, acceptance tests, exit gates |
+| **[plan-history.md](plan-history.md)** | completed milestones (MS0.5–MS3.6, MS4a) — decisions, corrections found while building, exit-gate answers |
 
-- a **Goal** and **Why now** (dependency justification),
-- an explicit **Task list**,
-- **Files touched**,
-- **Acceptance tests** (mechanically checkable),
-- an **Exit gate** — a decision that must be answered before the next milestone starts,
-- **Effort** in working sessions, and **Risks**.
+## How to use
 
-Nothing in a milestone begins until the previous milestone's exit gate is answered and the milestone is approved.
+Work proceeds **one milestone at a time**. Each milestone in `plan-active.md` has a Goal + Why now, a task list, Files touched, Acceptance tests (mechanically checkable), an Exit gate (a decision answered before the next milestone starts), Effort, and Risks. Nothing in a milestone begins until the previous exit gate is answered and the milestone is approved.
 
 Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 
 ---
 
-## Baseline as of 2026-09-03
-
-**Working:** 8 MCP tools; Graphiti/FalkorDB episodic memory; local corpus retrieval with PDF/media extraction; unified context assembly; markdown-summary importer; native ChatGPT export parser and classifier; import registry with idempotency; production import runner with resume/reconcile/verify; 40 passing tests.
-
-**Live FalkorDB state:**
-
-| Graph | Nodes | Edges | Episodic | Role |
-|---|---:|---:|---:|---|
-| `default_db` | 128 | 167 | 86 | Old markdown-summary import + **test-suite pollution** |
-| `memory-fabric` | 142 | 169 | 57 | Verified native-export production import |
-| `cmf_chatgpt_000` | 52 | 67 | 20 | Validation run; **overlaps** `memory-fabric` |
-
-**Two defects found during review:**
-
-1. **The MCP server does not read the production graph.** `server/memory.py:42` and `:91` resolve the target graph as `os.getenv("FALKORDB_DATABASE", "default_db")`. `FALKORDB_DATABASE` is set in no `.env`, no `.env.example`, no `SETUP.md`, and not in `claude_desktop_config.json`. Every `recall()` and `get_context()` call from Claude Desktop therefore reads `default_db` and cannot see the 57 imported episodes.
-2. **Test memories are in the graph the server reads.** `phase1_step6_atlas_test_memory` and `step6b_orion_sqlite_decision` each appear three times in `default_db`. The test suite writes to the same default graph as production.
-
-**One data-quality defect found, one initially misdiagnosed:** `default_db` contained an episode dated `2026-12-01` (`import_chatgpt_20261201_*`) from the markdown-summary importer. Checking the source candidate directly (`cand_324`: "Checked Illinois registration and found it valid through December 2026") shows this is not a year-inference bug — `TemporalExtractor` never invents a year. The actual defect is narrower: the extractor has no notion of a validity/expiration boundary ("valid through", "expires", "until") versus an occurrence date, so it anchored the *checking* event to the *registration's expiration month* mentioned in the same sentence. A sibling episode dated `2026-11-02` (`import_chatgpt_20261102_*`) is **not** a defect — its source text, "Owners Meeting / election: 2026-11-02," is a correctly-parsed future-scheduled event, not a parsing error. Both are captured precisely in [tests/test_regressions_baseline.py](tests/test_regressions_baseline.py).
-
----
-
-## Roadmap amendments proposed
-
-`ROADMAP.md` is **not yet modified**. These are the deltas to apply on approval.
-
-### A1 — Mark Milestone 0 substantially complete, with named gaps
-
-The production import is done and verified (57/57, idempotent, protected graphs untouched). Three MS0 deliverables were never produced and move into MS0.5: MCP tool-contract fixtures; regression cases for the known date/provenance failures; architecture decision records.
-
-### A2 — Restructure Milestone 4 around capture *mechanism*, not harness name
-
-The roadmap's common adapter requirements assume a harness that emits local lifecycle data. Claude Desktop does not. Replace the flat priority list with four sub-milestones ordered by your stated preference:
-
-| Sub-MS | Adapter | Mechanism | Serves |
-|---|---|---|---|
-| **4a** | MCP-boundary capture | `app.middleware` + `Context.client_info` inside CMF | **Claude Desktop**, ChatGPT, Cursor, Antigravity, any MCP client |
-| **4b** | Claude Code | Hooks (`SessionStart`/`Stop`/`PostToolUse`) + `~/.claude/projects/<slug>/<session>.jsonl` tailer | Claude Code |
-| **4c** | OpenClaw | HTTP ingest endpoint (`cmf-http`), cross-host | OpenClaw Studio Network (Mac Pro) |
-| **4d** | Codex, Gemini CLI | Per-harness, TBD | Deferred |
-
-Rationale: 4a is one implementation that satisfies your top priority *and* several other clients simultaneously; 4b is the highest-fidelity capture available anywhere in your stack; 4c forces `cmf-http`, currently unscheduled, into MS4 because OpenClaw runs on a different machine.
-
-**Amendment A5 (ADR 0005) does not touch this table.** Reasoning-episode consolidation is **MS3.5**, a consolidation-layer milestone that runs before all of 4a–4d — not a capture adapter. See A5 above and the MS3.5 section.
-
-### A3 — Add the Claude and Gemini export importers as an explicit workstream
-
-The roadmap names `cmf-import-chatgpt` only. You need Claude and Gemini history too. These are added to MS2/MS3 as `cmf-import-claude` and `cmf-import-gemini`, written against the canonical event envelope rather than directly against Graphiti.
-
-### A4 — Promote the privacy and cost gate ahead of MS4 capture
-
-Cross-cutting "local/private extraction options" becomes a **blocking decision gate before 4a goes live**. Rationale in [Cross-cutting concerns](#cross-cutting-concerns) below.
-
-### A5 — Reasoning-episode capture (ADR 0005), and a new MS3.5
-
-**Direction set 2026-09-05 with Todd.** The classifier recognizes *closure* (a decision made, a thing shipped) but not *thinking* (exploration, analysis, experiments, dead ends). ADR 0005 fixes this without adding classification types:
-
-- The four categories (`episodic` / `durable_candidate` / `ambiguous` / `non_memory`) are **unchanged**. The kind of thinking is a new optional `reasoning_kind` **property** on derived memories (`decision`, `investigation`, `hypothesis`, `experiment`, `finding`, `rejected_alternative`, `retrospective`, `plan` — extend by adding a string, not migrating a schema).
-- A model-based `ReasoningEpisodePolicyV1` (behind the existing `ExtractionPolicy` protocol) derives typed reasoning episodes over **topical windows of turns**, not single events. `HeuristicPatternPolicyV1` stays as the cheap pre-filter and the triage gate deciding which windows are worth a model call.
-- The MS3 auto-accept gate is **loosened** — reasoning episodes may auto-accept on model confidence without a dated-decision requirement. Backlog-trimming is deferred; MS6 review tooling moves onto the critical path as a result.
-- Extraction runs on hosted Gemini (rate-limited) now; the reasoning workload is the intended first tenant of the Spark local-inference stack once it is validated.
-- ADR 0004's "thread = task-progression status timeline" framing is replaced: the thread carries the reasoning narrative; ADR 0004 decisions 1 and 3 carry forward unchanged, decision 2 is extended, decision 4 is reframed.
-
-**New milestone, no renumber of MS4:** this lands as **MS3.5 — Reasoning-episode consolidation**, run *before* the MS4 capture adapters (Todd, 2026-09-05 — the existing ~19k-event journal is the substrate to get episode-reasoning right on; realtime ingestion from Claude Code / OpenClaw is secondary). MS3.5 rather than MS4-anything because it extends MS3's consolidation split with a new stage and a model-based policy — it is not a capture mechanism. MS4a–MS4d keep the numbers they already had (MS4b Claude Code, MS4c OpenClaw, MS4d Codex/Gemini CLI).
-
----
-
 ## Milestone sequence
 
-**Execution order (resequenced 2026-09-06 with Todd).** The `## MS…` section numbers below are stable identifiers — they no longer run in numeric order. The driving change: adding more *capture* (MS4b–MS4d) is pointless while the retrievable graph has almost nothing in it, so the near-term path drives one harness's history all the way to *retrieval* first, then adds the other adapters.
+**Execution order (resequenced 2026-09-06 with Todd).** Section numbers are stable identifiers — they no longer run in numeric order. The driving change: adding more *capture* (MS4b–MS4d) is dead weight while the retrievable graph is near-empty, so the near-term path drives the existing history all the way to *retrieval* first, then adds the other adapters.
 
 | # | Milestone | Focus | Status |
 |--:|---|---|---|
@@ -97,599 +27,72 @@ Cross-cutting "local/private extraction options" becomes a **blocking decision g
 | 2 | MS1 | Provider interfaces | done |
 | 3 | MS2 | Canonical event journal + importers + backfill | done |
 | 4 | MS3 | Capture / consolidation split | done |
-| 5 | MS3.5 | Reasoning-episode consolidation (ADR 0005) | done (2026-09-07) |
-| 6 | MS3.6 | Promotion: staged memories → retrievable graph | done (2026-09-07) |
+| 5 | MS3.5 | Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) | done 2026-09-07 |
+| 6 | MS3.6 | Promotion: staged memories → retrievable graph | done 2026-09-07 |
 | 7 | **MS6** | Review and governance | **next ← here** |
 | 8 | MS7 | Context assembly quality | |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | MS4a | MCP-boundary capture — live cross-harness verification | built; verify |
+| 9 | MS4a | MCP-boundary capture — live cross-harness verification | built; verification pending |
 | 10 | MS4b | Claude Code adapter | |
 | 11 | MS4c | OpenClaw adapter (+ `cmf-http`) | |
 | 12 | MS4d | Codex, Gemini CLI | |
-| 13 | MS5 | Knowledge-provider generalization (wiki serves retrieval today; this makes it replaceable) | |
+| 13 | MS5 | Knowledge-provider generalization | |
 | 14 | MS8 | Replay and evaluation | |
 | 15 | MS9 | Distribution | |
 
-MS3 and MS4a may partially interleave: capture writes events and can ship before consolidation is complete, because an unconsolidated event is still durable evidence.
-
-**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph (today: 57 MS0.5 episodes) plus the LLM Wiki. The ~1k reasoning episodes and the heuristic candidates are staged in SQLite and are **not retrievable** until promoted. So the blocker for "test what CMF actually does" is MS3.6 (promotion) + MS6 (review to approve the backlog) + MS7 (make assembly good) — not more capture adapters. MS4b–MS4d and MS5 come after the retrieval loop is proven on the existing history.
+**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. The ~1.2k reasoning episodes and the heuristic candidates are staged in SQLite and are **not retrievable** until reviewed and promoted. So the blocker for "test what CMF actually does" is MS6 (review the backlog) → MS7 (make assembly good) — not more capture adapters. MS4b–MS4d and MS5 come after the retrieval loop is proven.
 
 ---
 
-## MS0.5 — Baseline correctness and wiring
+## Current state (2026-09-07)
 
-**Goal:** Make the system you actually run reflect the work you actually did, and close the MS0 gaps.
+**Done through MS3.6.** The full pipeline loop is closed end-to-end:
 
-**Why now:** Nothing downstream is meaningful while the MCP server reads the wrong graph. This is small, high-value, and entirely mechanical.
+```text
+source exports → journal (19,012 events) → per-event classification (heuristic v1.2)
+                                          → reasoning episodes (model v0.2): 1,243 staged / 659 threads
+                                          → promotion (MS3.6): 22 human-reviewed keeps in the graph
+                                          → recall() / get_context() return them, entity-extracted
+```
 
-### Tasks
+- **Graph (`memory-fabric`):** 57 MS0.5-backfilled episodes + 22 promoted reasoning episodes = 79.
+- **Staged, awaiting review:** ~1,221 unpromoted reasoning episodes (three-tier: ~301 tier-1 for promotion review, ~942 tier-2 work-journal, rest discard) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (covered by an episode, confirm-only).
+- **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
-- [x] **Resolve the graph split.** Decide the production graph (see exit gate), then:
-  - add `FALKORDB_DATABASE` to `.env`, `.env.example`, the `SETUP.md` config table, and the `claude_desktop_config.json` snippet in `CLIENTS.md`;
-  - remove the `"default_db"` fallback default in `server/memory.py` in favour of a required-with-clear-error resolution, so a misconfigured deployment fails loudly rather than silently writing to the wrong graph.
-- [x] **Isolate test writes.** Tests must target a dedicated graph (`cmf_test`) via fixture-set env, never the configured production graph. Add a guard that refuses to run the suite if the resolved test graph equals the production graph.
-- [x] **Purge test pollution** from whichever graph becomes production (`phase1_step6_atlas_test_memory` ×3, `step6b_orion_sqlite_decision` ×3), with a pre-purge snapshot written to `imports/state/`. *(Resolved differently than originally scoped: `default_db`, which held the pollution, was cleared entirely per the exit gate below, and the underlying test — `test_step6_mcp_tools.py::test_remember_and_recall_tools` — now writes to `cmf_test` instead, so the pollution cannot recur in production.)*
-- [x] **Record MCP tool-contract fixtures** (MS0 deliverable). Snapshot the JSON schema and a representative output for all tools into `tests/fixtures/mcp_contracts/`, with a test asserting no unintended drift. This is the safety net for the MS1 refactor. *(Found and fixed a doc-drift bug while doing this: there are 9 registered tools, not 8 — `import_chatgpt_exports` was missing from README.md's table and CLIENTS.md's summary since commit `a0f14bf`. Both corrected.)*
-- [x] **Add regression cases** (MS0 deliverable) for the known failures:
-  - the validity/expiration-date-as-event-date defect (`2026-12-01`, from "valid through December 2026") — confirmed, captured as an `expectedFailure` regression pending an MS2 fix; the sibling `2026-11-02` episode is a correctly-parsed future-scheduled event, not a regression;
-  - assistant-inference-as-personal-fact;
-  - idempotency on re-import;
-  - retrospective `reference_time` preservation (`cand_8f7ed87e0b4a` → 2014, commit gates → 2023-12-19).
-- [x] **Write the first three ADRs** into `docs/adr/`: `0001-four-layer-model.md` (evidence / memory / knowledge / context), `0002-provider-boundaries.md`, `0003-graph-and-state-topology.md`.
-- [x] **Secret hygiene.** `GEMINI_API_KEY` is stored in plaintext in both `.env` and `claude_desktop_config.json`. `.env` is confirmed gitignored. Todd's call (2026-09-03): don't rotate, and use this exposure as a live fixture later for the MS4a privacy/secret-filtering acceptance test ("an argument containing an API-key-shaped string never reaches the journal").
-- [x] **Tag the baseline** `phase-1-baseline` once the above is green. *(Committed as `2e1ee1b`, tagged `phase-1-baseline` on 2026-09-03.)*
-
-### Files touched
-
-`server/memory.py`, `.env`, `.env.example`, `SETUP.md`, `CLIENTS.md`, `README.md`, `tests/conftest.py` (new), `tests/fixtures/mcp_contracts/` (new), `tests/test_regressions_baseline.py` (new), `docs/adr/` (new)
-
-### Acceptance tests
-
-1. [x] `recall("MRI neck injury")` from a fresh MCP server returns an episode imported in the production run. *(Verified 2026-09-03 — returns 5 real production facts including the follow-up brain MRI episode.)*
-2. [x] `get_context("Context Memory Fabric")` returns both durable Wiki hits and production episodic memory. *(Verified 2026-09-03 — both sections populated from `memory-fabric`.)*
-3. [x] The full suite passes with zero writes to the production graph (asserted by node-count delta). *(Verified via `tests/conftest.py`'s session-scoped guard; 77/79 pass, 2 environmental failures unrelated — see note below.)*
-4. [x] No episode in the production graph has an event date incorrectly anchored to a mentioned validity/expiration boundary rather than its actual occurrence (the narrower, verified form of the original "no future dates" criterion — see the corrected defect description above). *(`memory-fabric` never contained the defective content; the defect lives only in the cleared `default_db` snapshot, captured as an `expectedFailure` regression pending its MS2 fix.)*
-5. [x] Contract fixtures match live tool schemas. *(`tests/test_mcp_contract_fixtures.py`, 4/4 passing.)*
-
-**Note on suite status:** 77/79 tests pass. The 2 failures (`test_step9_classifier_improvements.py::test_17_...`, `::test_18_...`) are a macOS TCC permission restriction on this session's access to `~/Documents/export-chatgpt/` — confirmed via direct filesystem probe, unrelated to any change made in this milestone.
-
-### Exit gate — ANSWERED 2026-09-03
-
-**`memory-fabric` is the production graph.** Pinned as `FALKORDB_DATABASE` in `.env`.
-
-- `default_db` — **cleared**. Its 86 episodes came from the markdown-summary importer, at least one of which carries the validity/expiration-date defect described above. They are re-imported through the journal in MS2, where the defect is fixed at the parser rather than propagated into the graph.
-- `cmf_chatgpt_000` — **deleted**. It was a validation run whose 20 episodes are a subset of `memory-fabric`'s 57.
-
-**Recoverability verified before deletion.** `imports/results/*_committed.json` retain every parsed candidate with full `text`, `category`, `reference_time`, `date_precision`, `section_heading`, and `fingerprint` — the largest report holds all 504 candidates from the ChatGPT memory-summary parse. No source material is lost by clearing the graphs. Both graphs are snapshotted to `imports/state/` before deletion regardless.
-
-**Effort:** 1–2 sessions.
-**Risk:** Low. Mostly config and tests. The purge step is destructive — snapshot first.
+**Next: MS6 — Review and governance** ([plan-active.md](plan-active.md#ms6--review-and-governance)). Build the surface to move the staged backlog into the graph — **bulk review by thread / kind / tier**, plus evidence-trace ("why does this memory exist"), correction, audit, and scopes.
 
 ---
 
-## MS1 — Extract provider interfaces without changing behavior
+## Exit-gate decisions log
 
-**Goal:** Establish seams before adding capability. Roadmap MS1, unchanged in substance.
+The distilled output of the plan — every gate answered, newest first.
 
-**Why now:** Every later milestone adds a provider (journal, second knowledge source, second memory backend, adapters). Doing it before the journal exists means the journal is written against an interface rather than retrofitted.
-
-### Tasks
-
-- [x] Create `server/core/` with protocols: `MemoryProvider`, `KnowledgeProvider`, `EventStore`, `Importer`, `ContextAssembler`, `ProposalProvider`. *(`typing.Protocol`, structural — a class satisfies them without inheriting.)*
-- [x] Define canonical dataclasses in `server/core/models.py`: `SourceEvent`, `DerivedMemory`, `KnowledgeResult`, `AssembledContext`, plus `DatePrecision` and provenance types — lifted from the roadmap's canonical data model. *(Forward-declared, not yet constructed anywhere at runtime — first real writer is Milestone 2's journal.)*
-- [x] Move Graphiti/FalkorDB access behind `GraphitiMemoryProvider` (`server/providers/memory_graphiti.py`). `server/memory.py` becomes a thin back-compat shim. *(Relocated verbatim, not rewritten — `GraphitiMemoryProvider` thinly wraps the same functions. Verified every existing `from server.memory import X` and `@patch("server.memory.get_graphiti")` call site still resolves correctly, since `server/memory.py` re-exports the real names.)*
-- [x] Move `wiki.py`/`corpus.py` behind `FileKnowledgeProvider` (`server/providers/knowledge_files.py`). *(Wrapped, not physically relocated — 9+ test files import `CorpusScanner`/`WikiCorpusManager`/etc. by name; unlike Graphiti, `wiki.py`/`corpus.py` have no external-service coupling to solve by moving, so wrapping in place was the lower-risk choice for the same architectural outcome.)*
-- [x] Centralize configuration in `server/core/config.py` with validation and capability discovery; make `LLM_WIKI_PATH` **optional**. *(`CMFConfig.knowledge_enabled`/`memory_enabled` are cheap presence checks; per-value validation — e.g. that a configured `LLM_WIKI_PATH` is a real, readable directory — stays where it already lived, in `server.corpus.get_corpus_root()`, unchanged. Confirmed the server never actually crashed at import time without `LLM_WIKI_PATH` — `WikiCorpusManager` inits lazily — so the real fix was in tool registration and `get_context`'s degradation, not a startup-time crash.)*
-- [x] Make `server/context.py` consume providers rather than importing `memory` and `wiki` directly. *(Consumes `KnowledgeProvider`/`MemoryProvider`, sourced via `server/providers/__init__.py`'s `get_default_*_provider()` factory functions rather than importing `GraphitiMemoryProvider`/`FileKnowledgeProvider` by name — see acceptance test 4 below for why that indirection mattered.)*
-- [x] Register tools conditionally on capability — `search_wiki` and `propose_wiki_update` are not advertised when no knowledge provider is configured. *(Verified both branches directly: 9 tools with `LLM_WIKI_PATH` set, exactly 7 — the two knowledge tools absent — with it unset.)*
-- [x] Add provider fakes in `tests/fakes/` and convert tests that currently require a live backend. *(Added `FakeMemoryProvider`/`FakeKnowledgeProvider` and a new fake-based test module. Did NOT convert the pre-existing suite to fakes — see acceptance test 3 below for why that's marked as a correction rather than done-as-written.)*
-
-### Files touched
-
-New: `server/core/{__init__,protocols,models,config,errors}.py`, `server/providers/{__init__,memory_graphiti,knowledge_files}.py`, `tests/fakes/{__init__,fake_memory_provider,fake_knowledge_provider}.py`, `tests/test_ms1_provider_interfaces.py`. Modified: `server/{mcp,context,memory}.py`. `server/wiki.py`/`server/corpus.py` left untouched (see task note above).
-
-### Acceptance tests
-
-1. [x] Server starts and passes tool-listing with `LLM_WIKI_PATH` unset; memory tools work; knowledge tools are absent with a clear capability message. *(Verified directly: 7 tools registered, `search_wiki`/`propose_wiki_update` absent, `SERVER_INSTRUCTIONS` carries an explicit capability note.)*
-2. [x] MCP contract fixtures from MS0.5 still match — **no observable behavior change**. *(First attempt failed this — wrapping the tool function bodies themselves in an `if` block re-indented their docstrings, which FastMCP does not normalize away, drifting the recorded tool descriptions by 4 spaces of leading whitespace. Fixed by keeping the function definitions at their original top-level indentation and gating only the `app.tool(...)(func)` registration call. All 9 tool contracts now match the fixture exactly.)*
-3. **Corrected, not met as written:** "Majority of the suite runs against fakes with no FalkorDB and no Gemini key." The pre-existing ~95 tests were not converted to fakes — most still exercise live FalkorDB, and converting well-functioning integration-style tests carried refactor risk with no corresponding benefit for a milestone whose goal is zero behavior change. What was actually built and verified: a dedicated fake-based test module (`tests/test_ms1_provider_interfaces.py`, 8 tests) exercises `get_context()` end-to-end — knowledge search, memory write, memory recall, graceful degradation — with zero live dependencies (no FalkorDB connection, no `GEMINI_API_KEY`, no configured `LLM_WIKI_PATH`), confirming the seam works without requiring the whole suite to move onto it. Migrating the remaining tests to fakes is optional future cleanup, not a Milestone 1 requirement.
-4. **Corrected, not met as written:** `grep -rn "graphiti\|falkor" server/ --include=*.py` outside `server/providers/` does **not** return nothing. Categorized what remains:
-   - `server/memory.py` — the back-compat shim necessarily re-exports Graphiti-named symbols (`get_graphiti`, `GraphitiMemoryProvider`, etc.); that's its entire purpose and an explicitly accepted exception.
-   - `server/mcp.py`, `server/importer.py` — user-facing MCP tool `description=` strings and status labels naming the current backend for the calling AI client's benefit. Prose describing behavior, not code-level coupling; ROADMAP.md's "avoid leaking Graphiti-specific types into the public contract" principle is about types and control flow, not documentation text.
-   - `server/chatgpt_export_parser.py:1753-1755` — a real, substantive `get_graphiti()`/`EpisodeType` import in the native ChatGPT importer's commit path. Pre-existing, and explicitly out of Milestone 1's task list — Milestone 2's "rewrite the ChatGPT importer to emit source events" is where this gets addressed, not before.
-   - `server/core/config.py` — `CMFConfig`'s `falkordb_*` field names. Deliberate: FalkorDB is the only configured backend today, and inventing a fake abstraction ahead of an actual second backend would be premature generalization.
-
-   The one substantive (non-prose, non-out-of-scope) instance found — `server/context.py` importing `GraphitiMemoryProvider`/`FileKnowledgeProvider` by concrete class name as its module-level defaults — was fixed: `server/providers/__init__.py` now exposes `get_default_memory_provider()`/`get_default_knowledge_provider()` factory functions, and `context.py` imports only those, with zero remaining code-level (as opposed to docstring/comment) reference to either backend name.
-
-### Exit gate
-
-**Can a second memory provider be stubbed against `MemoryProvider` without changing core?** Prove it with a trivial in-memory provider used by the test suite. If the protocol leaks Graphiti semantics, fix it here — not later.
-
-**Answered, yes.** `tests/fakes/fake_memory_provider.py`'s `FakeMemoryProvider` and `fake_knowledge_provider.py`'s `FakeKnowledgeProvider` satisfy `MemoryProvider`/`KnowledgeProvider` (`isinstance()`-verified against the `runtime_checkable` protocols) with zero changes to `server/core/protocols.py`, and `get_context()` runs correctly end-to-end against both fakes with no live FalkorDB/Gemini/filesystem dependency. No Graphiti-specific semantics (episode UUIDs, `valid_at`/`invalid_at` shapes beyond the plain-dict contract already in the protocol, Cypher, driver objects) leaked into the protocol signatures.
-
-**Effort:** 3–4 sessions.
-**Risk:** Medium. Pure refactor of working code. The contract fixtures are the safety net; do not proceed without them.
-
----
-
-## MS2 — Canonical event journal, importers, and backfill
-
-**Goal:** Preserve evidence before deriving memory. Roadmap MS2, plus the Claude/Gemini importers (amendment A3) and backfill of existing imports.
-
-**Why now:** This is the keystone of the whole differentiation argument — evidence distinct from memory, provenance chain inspectable. Every adapter in MS4 writes here. Every importer targets it.
-
-### Tasks
-
-- [x] **Finalize the source-event schema** (`schema_version: "1.0"`) from the roadmap envelope. Version it; write a JSON Schema; document the `observed_at` / `event_date` / `date_precision` distinction with worked examples. *(`docs/schemas/source-event-1.0.json` + `source-event-1.0-examples.md`, 5 worked examples including the mutable-project-snapshot and backfill-divergence cases.)*
-- [x] **Implement the event store** — SQLite (`imports/journal/journal.db`), append-only, with explicit durability semantics (WAL, fsync policy documented). Indices on source harness, conversation, session, actor, type, and both time fields. *(`server/journal/store.py`; WAL + `synchronous=FULL`, rationale documented in the module docstring — chose durability over write throughput since this is evidence of record.)*
-- [x] **Content-hash dedup** on `content_hash`, with the hashing rule specified and tested against near-miss cases (whitespace, ordering). *(`server/journal/identity.py`. Refined during implementation: dedup is keyed on `event_id`, not raw `content_hash` — two events can legitimately share identical text in different conversations, e.g. a routine "Understood.", and hashing content alone would wrongly collapse them. `content_hash` feeds `event_id` only when no native stable ID exists.)*
-- [x] **Journal CLI**: `export`, `replay`, `inspect`, `stats`. *(`server/journal/cli.py`. `replay` re-emits evidence deterministically — it does not re-run consolidation, since no consolidation pipeline exists until MS3.)*
-- [x] **Retention policy**: store raw / redacted / summarized / excluded per content class, driven by config. *(`server/journal/retention.py`. Scoped narrowly on purpose: this takes a `content_class` string an importer already assigned and applies raw/redacted/excluded handling; the classifier that assigns content_class automatically is MS3's job, not MS2's.)*
-- [x] **Rewrite the ChatGPT importer to emit source events**, then derive candidates from events. `chatgpt_export_parser.py`'s classifier logic is preserved; only its input and output boundaries change. *(`server/importers/chatgpt.py`. Scoped as evidence-emission only, not a rewrite of the 2022-line classifier — see the module docstring and the four-layer-model ADR for why. `chatgpt_export_parser.py` itself was not modified. Tested against a synthetic export exercising branching (a discarded regenerated-answer sibling must not be journaled), `is_do_not_remember` exclusion, and idempotency — all pass. **Run against the real export on 2026-09-04**, once Todd moved the files to `imports/source/chatgpt-export/full_export-2026-09-01/` (the original macOS TCC restriction under `~/Documents/` no longer applied): 577 conversations, 8307 messages seen (1964 empty/non-text skipped), **6343 turn.completed events journaled**. This runs alongside, not instead of, the 95 reconstructed/backfilled chatgpt events below — the backfill isn't superseded, since it recovers episodes whose Graphiti memories predate any export CMF has.)*
-- [x] **Write `cmf-import-claude`** for Claude's `conversations.json` + `projects.json` + memory export. *(`server/importers/claude.py`. Two rounds — see below. Final state, run against the full 2026-09-04 re-export: 122 conversations / 2267 messages, 7 project snapshots, and 21 memory snapshots (1 whole-account `conversations_memory`, 3 `project_memories`, 17 `memory_files`) — 2274 events total. Memory snapshots are deliberately `actor_type='assistant'`: they're Claude's own synthesized summary of the user, not the user's direct words, so per ROADMAP.md principle 9 they must not alone establish a personal fact during Milestone 3 consolidation even though their subject is the user. Branch reconstruction heuristic (latest-leaf-by-timestamp) remains a documented approximation, not a guarantee.*
-  *First round (2026-09-03) covered only `conversations`+`projects` — the `memories` category was lost to the single-use-link failure recorded earlier in this session and had to be re-requested. The importer was written to accept either the original per-category `.zip` files or an already-extracted plain file/directory, since the re-exported archive landed pre-extracted rather than zipped — both are read identically now.)*
-- [x] **Write `cmf-import-gemini`** for Google Takeout Gemini Apps activity (HTML or JSON, format confirmed on receipt of the actual export). *(`server/importers/gemini.py`. Two rounds. First (2026-09-03): Todd's Takeout export contained no "Gemini Apps" product category at all — only "Gemini" (Gems/scheduled-actions metadata) and "Gemini in Workspace" (5 conversations, 12 turns) — flagged as a real gap rather than treated as sufficient coverage. Second (2026-09-04), after Todd correctly selected "Gemini Apps" specifically: **5715 real activity records**, journaled as `journal_gemini_apps_export` — 5691 prompt events + 4692 response events (not every activity type produces a response; e.g. "Cleared conversation" has none). Google's generic "My Activity" format here is a flat list of prompt+response pairs, not per-conversation files like the Workspace export, so this is a genuinely separate importer function, not a shared code path. Journal now spans December 2024 to September 2026. **Third correction, same day**: Google's own activity title carries a literal `"Prompted "` prefix (e.g. `"Prompted what's the weather"`) that was being journaled verbatim into `content.text` — present on 5123 of the 5691 prompt records (90%), confirmed by review. Fixed at the parser: `_strip_prompted_prefix()` removes only that literal leading label (other activity types like "Created a Gem" are untouched), the original title is kept verbatim in `metadata.raw_title`, and all 10383 `gemini_apps` events were deleted and re-journaled from the same source file so no event carries the old, unstripped identity.)*
-- [x] **Backfill.** Reconstruct source events for the 57 already-imported episodes from `imports/results/` + `imports/state/import_registry_memory-fabric.json`, and link each existing memory to its event. Mark backfilled events `provenance_reconstructed: true` — do not claim fidelity the reconstruction does not have. *(`server/importers/backfill.py::backfill_memory_fabric_57`. All 57 registry records matched to real recovered text in the native committed report; retrospective dates — the 2014 gesture presentation, both 2023-12-19 commit gates — verified preserved through backfill. **2026-09-04: deleted from the live journal** at Todd's explicit direction once native ChatGPT coverage existed — this code and its acceptance tests are unchanged and still correct; only its *output in the production journal* was later removed. See the MS2 production-journal note below for the full account.)*
-- [x] **Re-import `default_db`'s 86 markdown-summary episodes** through the journal, fixing the validity/expiration-date-as-event-date defect at the parser rather than in the graph (per MS0.5 exit gate option A). *(`server/importers/backfill.py::reimport_default_db_episodes`. **Second correction to the MS0.5 record, found while building this**: default_db's 86 episodes were not "86 markdown-summary episodes plus test pollution from two known offenders" as characterized there. Reconstructing against the pre-deletion graph snapshot found only **38 are real content** — 20 markdown-summary-sourced, 18 from `reconcile_memories` calls (a source MS0.5 didn't account for at all). The other **48** were test pollution from a *third* offender, `tests/test_step7_import_memories.py`, missed by MS0.5's audit of `test_step6_mcp_tools.py`/`test_step6b_proposals.py`. No new code fix needed — MS0.5's `tests/conftest.py` graph-isolation fix already prevents this regardless of which test file writes to the graph; this is a correction to what was found, not a gap in what was fixed. All 38 real episodes are now journaled, idempotently, with the 1 validity-boundary defect fixed and the 18 reconciled ones' recorded dates trusted as-is (no regex-extraction defect class applies to them). **2026-09-04: deleted from the live journal** alongside the 57 above, same reason, same caveat — the code and its tests are unchanged.)*
-
-**Production journal populated for real**, not just tested: `imports/journal/journal.db` (gitignored) now holds **19,012 events**, all live-captured (zero `provenance_reconstructed` remaining) — 6343 chatgpt (native turns journaled 2026-09-04), 2274 claude (full export including memory snapshots), 10,395 gemini (12 Workspace + 5691 prompt/4692 response events from the real Gemini Apps activity log, Prompted-prefix corrected). Date range spans December 2022 to September 2026. Zero Graphiti writes were made from any of this — the journal captures evidence; deriving new episodic memories from it is explicitly out of scope until the MS4a privacy/cost gate is answered (routing over 19,000 real messages through Gemini extraction is a real, unbudgeted cost this milestone does not authorize — this number alone is a strong argument for the sampling/triage default the privacy gate already recommends, not consolidating everything).
->
-> *(2026-09-04 update, first pass: the figure above was originally 12,764 — 95 chatgpt was entirely reconstructed, since the native `conversations-*.json` export was inaccessible under macOS TCC at the time this milestone was first written up. Once Todd relocated the export files into the repo's `imports/source/` tree, the native ChatGPT importer ran for real (+6343 events) and the Gemini Prompted-prefix defect above was fixed and re-journaled, bringing the total to 19,107.)*
->
-> *(2026-09-04 update, second pass: at Todd's explicit direction, the 95 reconstructed chatgpt events (57 backfilled + 38 default_db-recovered) were then deleted outright now that native coverage exists, bringing chatgpt to exactly 6343 and the total to 19,012 — the figure above. `SqliteEventStore.stats()` gained a `by_provenance` breakdown (captured vs. reconstructed, per harness) so this distinction is visible going forward without needing to delete anything to see it. **Consequence worth recording plainly**: this deletion also removed the event_ids that 39 of `tests/fixtures/memory_quality/labeled_events.json`'s 48 labels pointed to — including all 35 positive/"episodic" labels — degrading Milestone 3's precision fixture to 9 (all-negative) rows. See the Milestone 3 exit gate below for the full account; this was a real, foreseeable-in-hindsight cost of the deletion, not a hidden one.)*
-
-**Operational aside, same session (2026-09-04):** `gemini-3.5-flash-lite` (the model hardcoded in `production_import_runner.py`'s quota probe and `server/providers/memory_graphiti.py`'s `GeminiClient`/`GeminiRerankerClient`) was returning `503 UNAVAILABLE` under live load. Switched to `gemini-3.8-flash` at Todd's direction — confirmed still free-tier as of its 2026-09-02 release and verified live via `probe_gemini_quota()` (200 OK, 2.17s response). Not itself a fix for transient upstream 503s, but a newer, more capable model at the same free-tier cost; worth monitoring whether its heavier per-request reasoning (Google's own release notes: it deliberately uses more tokens/tool calls on complex tasks) changes free-tier quota consumption in practice.
-
-### Files touched
-
-New: `server/journal/{__init__,store,identity,retention,cli}.py`, `server/importers/{__init__,chatgpt,claude,gemini,backfill}.py`, `docs/schemas/source-event-1.0.json`, `docs/schemas/source-event-1.0-examples.md`, `tests/test_journal.py`, `tests/test_ms2_importers.py`, `tests/test_ms2_backfill.py`. Modified: `server/importer.py` (the validity-boundary date fix — see Cross-cutting note below), `tests/test_regressions_baseline.py` (un-xfailed). **Not modified, deliberately**: `server/chatgpt_export_parser.py`, `production_import_runner.py` — no code in either needed to change for evidence-emission to work.
-
-### Acceptance tests
-
-1. [x] Importing the same export twice produces zero new events. *(Verified for all three sources: ChatGPT synthetic, Claude real export, Gemini real export, plus both backfill paths — 8 idempotency tests total across `test_ms2_importers.py`/`test_ms2_backfill.py`.)*
-2. [x] Journal replay with a pinned normalization policy is byte-identical across runs. *(`tests/test_journal.py::TestReplayDeterminism`.)*
-3. [x] Every one of the 57 production memories resolves to a source event. *(`tests/test_ms2_backfill.py::TestBackfillMemoryFabric57`.)*
-4. [x] Deleting a derived memory leaves its source event intact. *(Trivially true by construction, not by a delete-and-verify test: the journal (SQLite) and Graphiti (FalkorDB) are fully decoupled stores with no code path connecting them in either direction yet — `edit_memory`'s existing deletion/correction logic has no awareness the journal exists. This becomes a real, non-trivial guarantee once MS6 governance actually wires memory correction to journal lineage; recorded here as "architecturally satisfied for now," not as a designed and tested cross-store invariant.)*
-5. [x] Re-imported `default_db` content anchors event dates to occurrences, not to mentioned validity/expiration boundaries (`tests/test_regressions_baseline.py::TestTemporalExtractorValidityDateConfusion` no longer expected-fails). *(Verified — see the `server/importer.py` fix below.)*
-6. [x] Retention policy: a content class marked `excluded` never reaches the store; one marked `redacted` stores the redacted form only. *(`tests/test_journal.py::TestRetentionPolicy`.)*
-
-**Cross-cutting fix landed as part of this milestone:** `server/importer.py`'s `TemporalExtractor` now skips a date immediately preceded by a validity/expiration/renewal marker phrase (`VALIDITY_BOUNDARY_MARKER_PATTERN` — "valid through", "expires", "renews", etc.) rather than anchoring the event to that mentioned boundary. This is the actual code fix behind acceptance test 5 and MS0.5's `expectedFailure` regression test, which now passes unmarked.
-
-### Exit gate
-
-**Is SQLite sufficient, or is PostgreSQL required?** Decide against measured numbers: journal size after all four exports (ChatGPT + Claude + Gemini + backfill), p95 query latency for the MS7 retrieval patterns, and whether cross-host writes from OpenClaw (MS4c) argue for a server.
-
-**Answered for now: SQLite is sufficient.** 19,012 events across three real sources (some 5715-record files ingesting in ~2 seconds, a 6343-event native ChatGPT import in a few seconds) produced a journal well within SQLite's comfortable range; `stats`/`query`/`replay` all run in well under a second. This isn't the full measured picture the gate asked for (no p95 latency numbers, and the OpenClaw cross-host question is unaddressed since MS4c hasn't started) — revisit if MS4's adapters push volume up by an order of magnitude or MS4c's cross-host writes make a single-writer SQLite file actively awkward, but nothing observed here argues for PostgreSQL yet. *(Figure updated 2026-09-04, twice — from the original 12,764, through 19,107, to the current 19,012 — see the MS2 production-journal note above for both passes. The conclusion is unchanged throughout; none of these moves the SQLite-vs-PostgreSQL judgment.)*
-
-**Effort:** 5–7 sessions (the importers are the bulk; ChatGPT's was ~2k lines).
-**Risk:** Medium-high. Schema mistakes here are expensive later — the schema is the durable artifact. Spend the design time before writing the store.
-
----
-
-## MS3 — Separate capture from consolidation
-
-**Goal:** Prevent every raw turn from becoming a memory. Roadmap MS3, unchanged in substance.
-
-**Why now:** Directly gates MS4. Without it, turning on continuous capture floods the graph with routine turns and floods the Gemini bill with extraction calls.
-
-### Tasks
-
-- [x] Define the pipeline as explicit, resumable stages: `capture → normalize → redact → classify → extract → reconcile → approve → write`. *(`server/consolidation/pipeline.py`. `capture` is a no-op here — the event already exists, captured by an MS2 importer; `redact` likewise a no-op, since the journal never stores excluded/unredacted content in the first place (MS2's `RetentionPolicy` already ran at capture time); `classify`+`extract` are one call (`policy.evaluate()`) since `HeuristicPatternPolicyV1` classifies and extracts in one pass. Each stage's mapping is documented in the module docstring rather than implemented as literal separate no-op functions — a stage with nothing to do doesn't need a stub, but the pipeline's shape genuinely matches all eight.)*
-- [x] Consolidation job model with statuses, a durable queue, and retry. *(`server/consolidation/store.py`'s `consolidation_jobs` table: pending/running/succeeded/failed, attempts count, retried automatically when found `running` at pipeline start. Deliberately minimal — no actual async worker or message queue, since no continuous producer exists until MS4's adapters. Building a heavyweight queue for traffic that doesn't exist yet would be speculative scaffolding; this is sized for the real use case today (batch reprocessing of journaled evidence) and revisited when MS4a needs to enqueue live capture traffic.)*
-- [x] Extract the classifier logic in `chatgpt_export_parser.py` (`StageBasedMemoryExtractor` and the ~30 pattern constants) into reusable, **versioned** policies under `server/policies/`. *(**Corrected scope, found while doing this**: `StageBasedMemoryExtractor` turns out not to be the reusable classifier — `distill_turn_to_candidates()` contains literal hardcoded string matches against specific sentences in Todd's own ChatGPT corpus (e.g. `if "student at harold washington college" in clean_user`), tuned to one export's content, not a general policy. The actual reusable classifier is `server/importer.py`'s `CandidateClassifier` + `TemporalExtractor` — built for the markdown-summary importer, already source-agnostic by construction, no special-casing. `server/policies/heuristic_v1.py` wraps that pair unchanged (same "wrap, don't move" precedent as MS1's `wiki.py`/`corpus.py`); `chatgpt_export_parser.py` remains untouched, still the dedicated native ChatGPT import path, not something this policy layer subsumes.)*
-- [x] Version extraction prompts, models, and policies; stamp every derived memory with the versions that produced it. *(Every `derived_memories` row carries `policy_name`+`policy_version`. No extraction *prompts* exist to version yet — `HeuristicPatternPolicyV1` is pure local pattern matching, zero model calls; prompt versioning becomes relevant once a model-based policy exists.)*
-- [x] Preserve rejected and no-op candidates with structured reasons — rejection is data, not absence. *(Every event gets a `derived_memories` row regardless of outcome — `rejected`/`queued_for_review`/`auto_accepted` are all persisted with their `reason` string, never silently dropped.)*
-- [x] Support reprocessing selected events under a new policy, creating a **new derivation version** rather than overwriting lineage. *(`ConsolidationStore.latest_derivation_for_event()` + `supersedes` column — verified with a throwaway v1.1 test policy: reprocessing creates a linked new row, the v1.0 row is untouched.)*
-- [x] Memory-quality evaluation fixtures: a labelled set drawn from the real ChatGPT corpus, scored for precision on "did this deserve to become a memory". *(`tests/fixtures/memory_quality/labeled_events.json` — 48 labels, referential only (`event_id` + expected category, no message content), spanning all three harnesses, not just ChatGPT as originally scoped, since the journal now holds real Claude/Gemini evidence too. See the exit gate below for what this measured. **2026-09-04 correction**: at Todd's explicit direction, the 95 reconstructed/backfilled chatgpt events were deleted from the journal once the native ChatGPT export could be journaled directly (see the MS2 production-journal note above) — 39 of these 48 labels, including all 35 positive/"episodic" ones, pointed at that now-deleted content. The fixture was shrunk to its 9 still-resolvable rows (all negatives) rather than left silently broken; `tests/test_ms3_memory_quality.py::test_precision_on_auto_accepted_predictions` now skips with an explicit reason instead of measuring anything, since zero positive labels currently exist. The precision number below is the historical measurement from when this exit gate was originally answered — it is preserved for the record, not re-verified against the current journal. Rebuilding the positive side of this fixture against native chatgpt/claude/gemini content is open follow-up work, deferred for now.)*
-- [ ] Synchronous path (`remember()`) preserved; asynchronous path added for adapter traffic. *(First half true — `server/memory.py::remember()` is completely untouched by this milestone. Second half deliberately deferred: an asynchronous capture path has no real consumer until an MS4 adapter exists to produce live traffic; building one now would be exactly the kind of premature scaffolding this milestone's job-model task above explicitly chose not to build. Revisit at MS4a.)*
-
-### Files touched
-
-New: `server/consolidation/{__init__,store,pipeline}.py`, `server/policies/{__init__,protocols,heuristic_v1}.py`, `tests/fixtures/memory_quality/labeled_events.json`, `tests/test_ms3_consolidation.py`, `tests/test_ms3_memory_quality.py`. **Not modified**: `server/chatgpt_export_parser.py`, `server/importer.py` — both wrapped, not touched, per the scope correction above.
-
-### Acceptance tests
-
-1. [x] A routine assistant statement with no user corroboration does not become a personal fact. *(Hard policy-level guard: any `actor_type != 'user'` forces `NON_MEMORY`/`rejected` regardless of text content. Verified against real assistant-authored Claude turns in the fixture set, not just a synthetic example.)*
-2. [x] Replaying an event under extractor v2 creates a v2 derivation with v1 lineage intact. *(Adapted from "replay" to "reprocess" — this pipeline's `replay` name is already taken by MS2's deterministic evidence re-emission (`server/journal/cli.py`), which does not re-run consolidation. "Reprocessing under a new policy version" is the MS3-equivalent operation, and it's what's tested.)*
-3. [x] Dry-run output distinguishes additions, updates, rejections, and ambiguities. *(The pipeline never writes to Graphiti at all — see the note in the summary below — so the consolidation store's queryable state, by `approval_state`, IS the dry-run output. Verified additions/rejections/ambiguities are separately queryable; "updates" is acceptance test 2's re-derivation case.)*
-4. [x] Killing the consolidator mid-job loses no captured event and leaves no partial memory. *(Simulated directly: mark a job `running`, stop — confirmed no `derived_memories` row exists and the source event in the separate, already write-once journal `events` table is completely untouched. A subsequent run retries the `running` job rather than skipping it.)*
-5. [x] Precision on the labelled fixture set meets a threshold agreed at the exit gate. *(See exit gate below — measured, not assumed, and caught a real bug along the way.)*
-
-**A real bug found and fixed via this fixture, worth stating plainly:** the first version of `HeuristicPatternPolicyV1` unconditionally preferred a journal event's own `event_date` over text-mining, to correctly handle the 95 backfilled ChatGPT events (whose dates are curated/verified, not just send-timestamps). Applied uniformly, this measured at **50% of known-negative real events wrongly auto-accepted** — because every real conversational turn has a send-timestamp, and treating "has a timestamp" as equivalent to "the text meaningfully references a notable date" defeated `CandidateClassifier`'s actual signal. Real examples wrongly promoted to episodic: *"Prompted set alarm for 6:45"*, *"Used an Assistant feature"*. Fixed by gating the date-preference override to `metadata.provenance_reconstructed=True` events only (the backfilled ones, where the date is genuinely curated) — live-captured turns now rely on text-mining alone, as `CandidateClassifier` was originally designed to. Precision after the fix: **100% (29/29)** auto-accept precision, **100% (16/16)** non-memory exclusion, both measured against the real fixture set.
-
-**Full-scale run against the entire production journal**, after the fix: 215 episodic (182 auto-accepted, ~1.0% of all events), 1348 durable_candidate, 8277 ambiguous, 9172 non_memory (every assistant-authored event, correctly). This conservative ratio is the point of Milestone 3 — most everyday chat should not become a memory candidate at all, and now measurably doesn't. Runs in a few seconds end-to-end since `HeuristicPatternPolicyV1` is pure local pattern matching with zero model calls. **No Graphiti writes were made** — `derived_memories` is a local, reviewable staging table; promoting any of the 182 auto-accepted candidates into actual episodic memory remains a separate, explicit step gated on MS4a's still-open privacy/cost question, exactly as MS2's journal population was. *(Numbers updated 2026-09-04, twice: originally measured at 12,764 events/227 episodic/206 auto-accepted; then 19,107/299/264 once the ChatGPT native import and Gemini Prompted-prefix re-import landed; then the current 19,012/215/182 once the 95 reconstructed chatgpt events were deleted at Todd's direction and this policy re-run — see the MS2 production-journal note above for the full account, including the memory-quality fixture regression that deletion caused.)*
-
-### Exit gate
-
-**Which memories may be auto-accepted, and which require review?** Proposal: auto-accept only user-stated, explicitly-dated, single-fact candidates above a confidence threshold; queue everything else. Set the numeric threshold from the fixture set rather than by intuition.
-
-**Answered: threshold = 0.75, confirmed by measurement, not chosen a priori.** The confidence formula (`server/policies/heuristic_v1.py`) combines a category base score with a date-precision bonus, and 0.75 is exactly the point that requires *both* an episodic-shaped statement *and* an exact/day-precision date to clear — durable candidates, ambiguous statements, and month/year-precision dates all fall below it by construction. Measured against the labeled fixture set at this threshold: 100% auto-accept precision, 100% non-memory exclusion. The threshold wasn't tuned to hit these numbers after the fact — it fell out of the confidence formula's own bonus structure, and the fixture set is what confirmed that boundary happens to be exactly where it needed to be, and caught the date-injection bug that would have made this a real production hazard.
-
-> **Amended 2026-09-05 (ADR 0005, amendment A5).** This answer stands *for `HeuristicPatternPolicyV1`'s lexical derivations*. It is deliberately loosened for the reasoning episodes MS3.5 adds: those are lower-confidence and often undated in the text, so requiring "an exact/day-precision date" would exclude essentially all of them. Reasoning episodes auto-accept on `ReasoningEpisodePolicyV1`'s model confidence against a threshold re-derived from the rebuilt fixture (MS3.5), not this 0.75. The review backlog grows as a consequence — accepted for now, per Todd; better trimming is later work.
-
-**Effort:** 4–5 sessions.
-**Risk:** Medium. The classifier already works; the risk is regression while making it reusable. The fixture set is the guard.
-
----
-
-## MS3.5 — Reasoning-episode consolidation
-
-**Goal:** Capture the *thinking*, not just the closure — exploration, analysis, experiments, hypotheses, and dead ends — as `episodic` memories tagged with a `reasoning_kind` property. Full design: [ADR 0005](adr/0005-reasoning-episode-capture.md).
-
-**Why now (execution order set 2026-09-05, with Todd):** this runs **before** the MS4b–MS4d capture adapters, not after. The reasoning is foundational: the ~19,000 events already in the journal (native ChatGPT, Claude, Gemini) are a large, stable corpus to refine episode-reasoning identification against, and getting that layer right matters more than realtime ingestion of new Claude Code / OpenClaw traffic. Doing it first also means every later adapter inherits a consolidation layer that already understands reasoning rather than being retrofitted. Numbered MS3.5 because it extends MS3's consolidation split (a new stage + a model-based policy), not a new capture mechanism — same "sits between milestones" placement as the promotion milestone above.
-
-### Tasks
-
-- [x] **Add `reasoning_kind` to the data model.** Optional field on `DerivedMemory` (`server/core/models.py`) and a nullable column on `derived_memories`. Additive; existing rows read `NULL`. Settle the field name here (working name `reasoning_kind`) and whether the vocabulary is closed, registry-backed, or free-text-with-a-starter-set. *(Done. Kept the name `reasoning_kind`. Vocabulary is **free-text with a documented starter set** — `REASONING_KINDS` frozenset in `models.py` for docs + soft validation, column is plain `TEXT`, no enum, per ADR 0005 decision 1 ("extend by adding a string, not migrating a schema"). `ExtractionResult` gained matching optional fields (`reasoning_kind`, `driving_question`, `rationale`, `alternatives`, `status`, `thread_key`); `PolicyContext` gained optional `topical_window` / `open_threads`. `ConsolidationStore` migrates the on-disk journal in place via a guarded `ALTER TABLE` and `stats()` now reports `by_reasoning_kind`. All additive — `HeuristicPatternPolicyV1` unchanged, full MS1/MS2/MS3/capture/promotion suites green.)*
-- [x] **`ReasoningEpisodePolicyV1`** under `server/policies/`, implementing the existing `ExtractionPolicy` protocol unchanged in shape. Model-based (rate-limited Gemini path). Returns, per reasoning episode: `{category, reasoning_kind, statement, driving_question?, rationale?, alternatives?, status?, thread_key?, confidence}`. `category` is still one of the existing four; `statement` is a concise synthesis, not raw turns. *(Done — `server/policies/reasoning_episode_v1.py`, version `0.1`. Deviation from "unchanged in shape": the per-event `ExtractionPolicy` protocol IS left untouched, but a windowed policy emits 0–N episodes per call, which a `-> ExtractionResult` signature can't express — so a new **additive** `WindowedExtractionPolicy` protocol + `ReasoningEpisode` dataclass were added alongside it in `protocols.py` (nothing existing changed). Model call is injected (`generate_fn`), defaults to `google-genai`, rate-limited via `get_default_rate_limiter().reserve()` — one call per window, `GeminiQuotaExhaustedError` propagates and the pipeline stops clean. Live-verified against the real journal (see the bounded-slice note below).)*
-- [x] **Topical-window segmentation.** A new consolidation stage that groups a conversation/session's turns into bounded topical windows and runs the policy per window (0–N episodes out). Prototype 2–3 segmentation strategies (fixed turn-count, embedding-similarity boundary, model-driven in-call) against the real ChatGPT/Claude/Gemini journal and pick from measured output — do not build blind. *(Done — `server/consolidation/windowing.py`. Prototyped 3 cheap strategies (fixed turn-count, time-gap, marker-cue) over the real 296-conversation / 7.5k-event ChatGPT+Claude slice; **none reliably found topic boundaries** — real topic shifts in Todd's transcripts routinely have no pause and no cue phrase. Decision (with Todd, 2026-09-05): keep segmentation **loose** — `default_windower()` = `TimeGapWindower(2h gap, 20-turn cap)` bounds model-input size and splits obvious session breaks only; the model does topical sub-segmentation inside its own call. `EmbeddingBoundaryWindower` is implemented (injectable `embed_fn`) but shelved for a later bake-off, revisited once the Spark local-inference stack can carry that work.)*
-- [x] **Triage gate.** Keep it as the cheap pre-filter (empty / `actor_type != 'user'` / trivia) and add a triage signal marking windows worth a model call (deliberation markers, question language, technical/log-shaped content). Windows that don't clear triage are not sent to the model. *(Done — `server/consolidation/triage.py`. Deviation: built as a standalone `assess_window()` rather than folded into `HeuristicPatternPolicyV1`, because it operates on a **window** not a single event — different unit. Per Todd (2026-09-05, "not sure I need that triage filter"): it is **loose** (only withholds a window with zero question / deliberation / technical signal across its user turns), **logged** (withheld windows get a `triaged_out` job row + reason, re-runnable), and **optional** (`run_reasoning_consolidation(..., triage=False)`).)*
-- [x] **Cross-conversation thread index** (ADR 0004 decision 3, carried forward): a small persistent structure of open threads (topic/project key, first-seen event, status, linked event IDs, accumulated `reasoning_kind` entries), checked before extraction so an intent in one conversation and its resolution in another land in the same thread. Most naturally alongside `derived_memories` in `server/consolidation/`. *(Done — `server/consolidation/threads.py`, `reasoning_threads` table in the same journal DB. Explicitly **cross-harness AND cross-session**, not just cross-conversation (Todd flagged 2026-09-05 that a line of reasoning routinely moves Claude→Gemini, or to a fresh thread with the same assistant to keep context small): `thread_key` is a `normalize_key()`-collapsed topic slug that ignores harness and conversation; `stats()` reports `cross_harness_threads` / `cross_conversation_threads`; tested with a Claude-conv-A intent + Gemini-conv-B outcome landing on one thread.)*
-- [x] **Loosen auto-accept for reasoning episodes.** `_approval_state_for` (`server/consolidation/pipeline.py`) currently auto-accepts only `EPISODIC` + confidence ≥ 0.75, which by construction needs a dated decision. Reasoning episodes auto-accept on model confidence against a threshold re-derived from the rebuilt fixture (next task). `HeuristicPatternPolicyV1`'s own derivations keep the 0.75 rule. *(Done — `_reasoning_approval_state()` in `pipeline.py`, separate from `_approval_state_for` (v1's 0.75 dated-decision rule untouched). Prototype default is `reasoning_auto_accept_threshold=None` = **nothing auto-accepts yet, all `queued_for_review`** — the bounded live slice confirmed model-reported confidence runs hot/uncalibrated (constant 0.9–1.0), so a real number must come from the rebuilt fixture, next task. Not carried over from 0.75.)*
-- [x] **Rebuild the memory-quality fixture's positive side.** `tests/fixtures/memory_quality/labeled_events.json` is down to 9 all-negative rows after the ChatGPT-summary-event deletion. Rebuild positives from native ChatGPT / Claude / Gemini events with `reasoning_kind` labels (Claude Code events too, once MS4b lands — but MS3.5 does not wait on them). Do **not** reconstruct anything from the abandoned ChatGPT summary (ADR 0005 decision 7). *(Done 2026-09-07 — `tests/fixtures/memory_quality/reasoning_labels.{jsonl,json}`, 51 human-labeled staged episodes across all 8 kinds and 3 harnesses: **22 keep / 28 drop / 1 maybe**. Labeled through a phone artifact (swipe keep/drop) rather than the CLI. The single question was "should this be stored as long-term memory," not "is the kind right".)*
-- [x] **Reprocess the journal** under the new stage (bounded by the rate limiter) and inspect output before wiring anything to promotion. *(Done 2026-09-06 — Option B slice fully processed under `v0.2`: 1,291 windows (Claude 230, ChatGPT 261, Gemini 800), zero failed/running. **1,243 reasoning episodes** staged (all `queued_for_review` — nothing promoted), **659 threads** (20 cross-harness, 67 cross-conversation). Kinds: investigation 755, decision 198, experiment 138, plan 94, hypothesis 33, finding 16, rejected_alternative 8, retrospective 1. Evidence/ep median 4, single-event 13%. Live status: `imports/ingest-pipeline-status.md`; browsable sample: `imports/reasoning-episode-samples.md`. Gemini triaged 40% of windows (min-window floor + loose signal on a single-exchange-heavy corpus). Fixes landed mid-loop: 429→`GeminiQuotaExhaustedError`, bounded 503 retry, min-window floor (`min_window_events=3`). Full suite green throughout, `v0.2` prompt unchanged since the early Claude batch.)*
-- [x] **Keep the `actor_type != 'user'` guard — but measure what it costs.** MS3.5 derives episodes from user turns only; assistant replies are context, never seed an episode or establish a fact (ROADMAP principle 9, unchanged). Todd flagged (2026-09-05) that this likely under-captures reasoning authored by the assistant in reply to terse prompts. During the journal-reprocess inspection, sample how often a would-be episode's substance is only in assistant turns, and record the number for the exit gate — do not change the guard in MS3.5. *(Done — instrumented via `substance_in_assistant_turns`, measured per batch across the full reprocess: **~5% on Claude, ~13–26% on ChatGPT/Gemini** (not re-aggregated to a single number). Material but not urgent — see the exit gate; most assistant-carried reasoning that resolves is tier-2 "work journal" content anyway, which the three-tier routing keeps without promoting. Guard unchanged, as instructed.)*
-- [x] **Docstring steer** in `server/policies/protocols.py`: `ExtractionCategory` stays four values; kinds of thinking are `reasoning_kind`, not new categories. *(Done 2026-09-05, ahead of the milestone, to prevent wrong-direction work.)*
-
-### Files touched
-
-New: `server/policies/reasoning_episode_v1.py`, `server/consolidation/windowing.py`, `server/consolidation/threads.py`, `server/consolidation/triage.py`, `tests/test_ms3_5_reasoning_episodes.py`. Modified: `server/core/models.py`, `server/consolidation/{store,pipeline}.py`, `server/policies/protocols.py`, `tests/fixtures/memory_quality/labeled_events.json` (pending — fixture rebuild task). **Not modified:** `server/policies/heuristic_v1.py` — the triage gate went into a standalone `triage.py` (window-scoped, not event-scoped), so v1 stays untouched.
-
-### Bounded reprocess — Phase C checkpoint (2026-09-05), Option B slice, in progress
-
-Slice scope (Todd's call, 2026-09-05): **Claude + ChatGPT since 2026-03-05**, loose **triage on**, real Gemini path, written to the **real** consolidation store (all `queued_for_review` — nothing auto-accepts, nothing promotes). Resumable/idempotent per window+policy@version; run in `max_windows`-bounded batches as free-tier quota allows.
-
-**First 40 Claude windows under `v0.1`** → 66 episodes across all 8 `reasoning_kind`s. It reconstructs real narratives — one debugging thread ran plan → experiment → rejected_alternative → decision → investigation across a dozen turns; others captured a tooling-integration decision, a credential-handling change, and a "should I switch tools" deliberation. The lexical v1 classifier produces none of this.
-
-**Prompt tightened → `v0.2`** (Todd asked for a better prompt): explicit exclusions for task-requests / lookups / wording tweaks, "cite every contributing turn not just the first", graded-confidence guidance. Re-ran the first 30 windows (`supersedes`-linked to `v0.1`). Measured delta:
-
-| | v0.1 | v0.2 |
+| Milestone | Question | Answer (date) |
 |---|---|---|
-| evidence events / episode (median, mean) | 1, 2.1 | **4, 4.1** |
-| single-event episodes | 53% | **7%** |
-| episodes / window | 1.65 | 1.5 |
-| confidence (min–median) | 0.90–0.95 | 0.90–0.95 |
-
-Evidence linking is materially better; density slightly tighter. **Confidence guidance did not take** — the model still won't score below 0.90, so model self-report is unusable for the auto-accept threshold (as already accepted — it comes from the rebuilt fixture). `substance_in_assistant_turns` ran 6/66 (v0.1) then 2/45 (v0.2) — user-only-guard cost, for the exit gate; full number from the completed slice.
-
-`v0.2` is the version the rest of the Option B slice runs on. Minor deferred polish: model sometimes returns `alternatives` as a JSON array (stringified into `reason`); `google-genai` AFC warning is harmless.
-
-**Live status report:** `imports/ingest-pipeline-status.md` (gitignored, regenerated every loop run by `scratchpad/gen_ingest_report.py`) — full-pipeline view (source → journal → per-event classification → reasoning episodes → threads → promotion → retrieval) with Mermaid flow, per-harness/class/kind tables + bar charts, thread stats, and a growing run-history table. Home the generator properly when MS3.5 is committed.
-
-**Progress (hourly batched loop, session-only, 2026-09-05):**
-
-- **Claude: complete** — 230 windows (180 succeeded + 50 triaged_out).
-- **ChatGPT (since 2026-03-05): complete** — 261 windows (232 succeeded + 29 triaged_out). One window returned unparseable JSON even after salvage → logged, 0 episodes, no crash (designed degradation); 1/70.
-- **Gemini (since 2026-03-05): complete** — 800 windows (483 succeeded + 317 triaged_out). The min-window floor + loose signal triaged 40% of Gemini windows (single-exchange-heavy corpus). `503`/`429` handling held — zero failed jobs across the whole Gemini phase. Multi-turn Gemini exchanges are substantive (personal-finance planning, a property-governance dispute, multi-step technical research threads) with strong evidence linking (ev=8–22). **Min-window-size floor added (Todd, 2026-09-06):** `run_reasoning_consolidation` gained `min_window_events` (default 3), applied in `assess_window` — a window below 3 events is a single one-shot exchange, withheld as `triaged_out` with no model call. Cuts the thin ev=2 Gemini episodes at the source; near-no-op for Claude/ChatGPT (naturally longer windows). Triage, not policy — no version bump; set `min_window_events=1` to disable. Only affects the ~530 not-yet-processed Gemini windows; the ~50 thin ev=2 episodes already created stay in `queued_for_review` for review to filter. 2 new tests.
-- **Fix landed (error handling, no version bump — output-identical):** a real Google-side `429 RESOURCE_EXHAUSTED` can land even when the local rate limiter had headroom (concurrent processes share the free tier). It was being recorded as a spurious job failure; `ReasoningEpisodePolicyV1` now re-raises it as `GeminiQuotaExhaustedError` so the pipeline stops clean and leaves the window retryable, same as local exhaustion. Tests green.
-- **Totals so far: 621 episodes**, 313 threads (5 cross-harness — incl. `claude-cowork-astrophotography-recovery` linking a Claude and a ChatGPT conversation; richest cross-conversation is `openclaw-gateway-connection`, 11 episodes across sessions). ev/ep median 4, single-event ~10–12%, confidence 0.80–1.00. No prompt tune needed across all three harnesses.
-- **Exit-gate signal:** `assistant_only_substance` runs ~13–26% on ChatGPT/Gemini windows vs ~5% on Claude — those harnesses more often have a terse user prompt with the assistant carrying the analysis. Guard stays (ADR 0005); quantify properly in Phase D — the "can assistant-authored reasoning seed an episode" open question looks like it will matter.
-- **Reprocess complete (2026-09-06).** All three phases `succeeded`/`triaged_out` under `v0.2`; the hourly loop is stopped. **1,243 episodes / 659 threads staged, all `queued_for_review`.**
-- **Phase D complete (2026-09-07).** Fixture rebuilt (51 labels, 22 keep / 28 drop), exit gate answered: **no auto-accept threshold** (confidence doesn't separate keep from drop), backlog handled by **three-tier routing** (promote / work-journal-in-thread / discard) reviewed by thread in MS6. **MS3.5 is done.**
-
-### Acceptance tests
-
-1. [x] An investigation spanning ~10 turns with no closure verb and no in-text date produces one `episodic` memory with `reasoning_kind='investigation'` and an `event_date` resolved from the window's turn metadata. *(`tests/test_ms3_5_reasoning_episodes.py::TestUndatedInvestigation`.)*
-2. [x] A "considered X, chose Y because Z" exchange produces both a `decision` episode and a linked `rejected_alternative` episode. *(`TestDecisionAndRejectedAlternative` — both episodes land, and both link into one `journal-backend` thread.)*
-3. [x] A short log-narration turn (the residual promotion false-positive shape) is either a legitimate `reasoning_kind='investigation'`/`experiment` synthesis or excluded — never a raw-paste `episodic` promotion. *(`TestShortLogPasteNeverRawEpisodic` — triage withholds the short logpaste; a model returning `[]` writes no memory.)*
-4. [x] An intent stated in conversation A and its outcome reported in conversation B land in the same thread. *(`TestCrossConversationThread` — Claude conv A + Gemini conv B, different `thread_key` surface forms, collapse to one cross-harness / cross-conversation thread.)*
-5. [x] Reprocessing under a bumped `ReasoningEpisodePolicyV1` version creates new derivations with prior lineage intact (same guarantee as MS3 acceptance test 2). *(`TestReprocessUnderBumpedVersion`.)*
-6. [x] No new `ExtractionCategory` value exists; `grep` confirms the enum is unchanged. *(`TestNoNewCategory` — enum asserted to be exactly the four values; `reasoning_kind` values asserted disjoint from it.)*
-
-### Phase D — completed 2026-09-07
-
-The three closing items, all hands-on:
-
-1. **Memory-quality fixture rebuilt** — `tests/fixtures/memory_quality/reasoning_labels.{jsonl,json}`, 51 human-labeled staged episodes, **22 keep / 28 drop / 1 maybe**, spread across all 8 kinds and 3 harnesses. Labeled via a phone artifact (swipe keep/drop; single question = "belongs in long-term memory?"). Tooling kept for reuse under `imports/tools/` (gitignored): `label_reasoning_episodes.py` (CLI), the labeler artifact + its `read_db` → compile path, `compile_reasoning_samples.py`.
-2. **Threshold derivation** — see exit gate: no workable threshold exists.
-3. **Exit gate answered** — below.
-
-### Exit gate — ANSWERED 2026-09-07
-
-**What is the reasoning-episode auto-accept threshold?** **There isn't one — auto-accept stays off (`_reasoning_approval_state(threshold=None)`).** Against the 51-row fixture, no single feature separates keep from drop:
-
-| signal | keep vs. drop | best single-threshold accuracy (baseline "drop all" = 56%) |
-|---|---|---|
-| model confidence | mean 0.95 vs. 0.94 — fully overlapping | 58% |
-| statement length | 197 vs. 175 chars | 64% |
-| evidence-event count | median 2 vs. 1 | 60% |
-
-Model self-reported confidence is noise for this decision (a drop at conf 1.0 sits beside a keep at 0.90 — this was flagged during the loop and the fixture confirmed it). The only real signal is **`reasoning_kind`**: `decision` kept 7/9, `plan` 5/8; `experiment` 1/8, `hypothesis` 1/5, `finding` 2/7. So kind is a routing hint, not an accept gate.
-
-**Review-backlog burn-down plan — three tiers, not two (Todd, 2026-09-07).** "Auto-accept off" does *not* mean 1,243 episodes need one-by-one human review. Todd's labeling revealed the real structure: he dropped episodes that were "just working through a problem" — correct for *retrievable memory*, but those shouldn't be discarded either. So:
-
-| tier | content | destination | ~count (Option B slice) |
-|---|---|---|---|
-| **1 — promote** | durable facts, decisions, plans, findings with lasting relevance | the graph, surfaced by `recall`/`get_context` | the `decision`/`plan`/`retrospective`/`rejected_alternative` episodes ≈ **301**, reviewed **by thread** in MS6, not per-episode |
-| **2 — work journal** | the working-through: experiments, dead ends, transient troubleshooting that resolved | stays in its `reasoning_thread` (659 exist), **not** promoted; browsable, promotable later if a thread turns out to matter | the `investigation`/`experiment`/`hypothesis`/`finding` episodes ≈ **942** |
-| **3 — discard** | thin fragments from bad windows (the segmentation cost — see the `lunar-topographic-model-slicing` case: a 320-turn rolling Gemini thread sliced into 20-turn windows straddling ~3 topics), genuine trivia | dropped in MS6 review or by a cheap pre-filter | subset of tier 2 |
-
-Tier 2 is **already built** — the thread index. An unpromoted episode still lives under its thread, so "not promoted" ≠ "lost". MS6's affordance is therefore **bulk review by thread / by kind**, not a modal per episode. The MS3.6 "coverage-based auto-resolve" still drains the separate 9,833-row *heuristic* `queued_for_review` pile.
-
-**Does user-turns-only under-capture the reasoning?** Measured rate that an episode's substance is assistant-only: **~5% Claude, ~13–26% ChatGPT/Gemini** per batch. Material, but the three-tier framing lowers its urgency — assistant-carried reasoning that resolves is mostly tier-2 work-journal content, kept in-thread regardless of who authored it. The follow-on (can assistant-authored reasoning *seed* an episode, marked assistant-originated, never a personal fact, always queued) stays a scoped-later small milestone, not folded into MS3.5.
-
-**Effort:** 5–7 sessions (segmentation and the fixture rebuild are the bulk). *Actual: ~1 heavy build session + a multi-day autonomous reprocess loop + ~1 session for Phase D.*
-**Risk (retired):** First model-based policy shipped; segmentation stayed deliberately loose (its cost is visible and understood — tier 3); precision is characterized by the fixture (no threshold, kind-based routing).
-
----
-
-## MS4a — MCP-boundary capture (Claude Desktop)
-
-**Goal:** Capture experience from Claude Desktop — and from every other MCP client — without needing a per-harness adapter.
-
-**Why now:** Your top priority. Also the highest leverage in the plan: one implementation, many harnesses.
-
-### The mechanism, and its honest limits
-
-Claude Desktop stores no conversation transcript locally (`~/Library/Application Support/Claude/` holds Electron and webview caches only) and exposes no hook API. It **does** speak MCP to CMF, and `mcp` 2.1.1 exposes `MCPServer.middleware` plus `Context.client_info`. So CMF can journal, for every tool call: harness identity and version, session id, tool name, arguments, result summary, and timing.
-
-**What this captures:** every interaction the user routes through CMF, with full harness provenance.
-**What it does not capture:** turns where no CMF tool is called. This is a real limitation, not a technicality — it means Claude Desktop capture is *interaction-triggered*, not continuous. The mitigations are (a) a `capture_note` tool the model is instructed to call at natural checkpoints, (b) server instructions that encourage `get_context` at session start, and (c) periodic Claude export ingestion for the gaps.
-
-State this limitation in the docs. Do not let the architecture imply continuous Claude Desktop capture that it cannot deliver.
-
-### Tasks
-
-- [x] **Privacy/cost exit gate answered first** (2026-09-04, with Todd), since it blocks capture being enabled by default. Local extraction stays out of scope — the Spark's local-inference stack (documented separately, GLM-4.7-flash/Nomic/BGE) has an explicit validation sequence that hasn't run yet, "rebuild CMF using the local provider stack" is step 11 of 12. Content-class filtering is explicitly deferred ("don't worry about filtering for now" — Todd's words). Consolidation policy is the plan's stated default (journal everything, auto-consolidate only above MS3's threshold) — nothing is permanently excluded by this, since every event still gets a staged `derived_memories` row regardless, addressing a concern Todd raised directly. Budget ceiling: zero spend beyond Todd's existing Gemini Pro (Google One AI Premium) subscription, which does **not** extend to the Gemini Developer API Graphiti actually calls — so the mechanism built is a hard technical RPM/RPD gate (`server/core/rate_limiter.py`), not a soft dollar estimate.
-- [x] **Gemini free-tier rate limiter** (`server/core/rate_limiter.py`, 12 tests) — persisted per-model RPM/RPD ledger (resets at midnight Pacific, matching Google's own reset), with automatic fallback through a configurable model chain, sourced from Todd's real AI Studio dashboard numbers. Wired into `server/providers/memory_graphiti.py` via `get_graphiti_for_operation()`, used only by `remember()`/`recall()` — the two functions that actually call Gemini. Raises `GeminiQuotaExhaustedError` *before* any Gemini call when the whole chain lacks headroom, so no quota is spent on a call that would fail anyway.
-- [x] **Corrected a live model-reliability conflict found mid-milestone**, worth recording plainly: a concurrent session on this same repo (commit `2355264`, same day) independently investigated Gemini reliability and reached the *opposite* conclusion from this session — they found `gemini-3.5-flash-lite` returning 503s and switched the (then-)hardcoded model to `gemini-3.8-flash`; this session found `gemini-3.8-flash` returning consistent `503 UNAVAILABLE`/"high demand" errors and built the rate limiter's chain around `gemini-3.5-flash-lite → gemini-3.1-flash-lite` instead (20 RPD vs. 500 RPD free-tier ceiling was the deciding factor, not just the 503s). Root-caused the apparent contradiction: neither session's retry logic in `remember()`/`recall()` treated `503`/`UNAVAILABLE`/"high demand" as retryable — only 429/quota-shaped errors were — so a transient, model-independent Google-side capacity error just failed outright on whichever model either session had configured at the time, and got misread as a property of that specific model. Fixed by classifying 503/`UNAVAILABLE`/"high demand"/"overloaded" as a second retryable category (`_is_transient_gemini_error`, `tests/test_gemini_transient_errors.py`), alongside the existing quota category — distinct from the rate limiter, which handles *this process's own* quota bookkeeping, not live server-side availability. Flagged directly to that other session (still `isRunning: false` at the time) via `send_message` rather than silently overwriting its commit; the rate-limiter refactor removed the hardcoded model literals from `create_graphiti()` entirely, so that commit's specific string-swap diff is superseded, not in conflict, on this working tree. The other session replied, deferred to the dashboard-sourced RPD numbers over its own one-shot probe, and flagged one more spot it had found with the same stale-literal problem in a file the `create_graphiti()` refactor didn't touch: `production_import_runner.py::probe_gemini_quota()` had three hardcoded `"gemini-3.8-flash"` literals of its own — fixed the same way, by having it reserve a model from `get_default_rate_limiter()` instead, so the probe reflects what the pipeline would actually use and counts against the real ledger.
-- [x] Capture middleware on `MCPServer` writing a source event per tool call. (`server/capture/middleware.py`, registered via `app.middleware.append(...)` in `server/mcp.py`.) `call_next(ctx)` always runs first — capture is scheduled as a fire-and-forget `asyncio.create_task` afterward, so it can add zero latency and zero failure risk to the tool response.
-- [x] Harness identity from `client_info` (name, version, and a normalized `harness` slug), with a mapping table for known clients and a safe fallback for unknown ones. (`server/capture/identity.py::resolve_harness` — regex substring match against a small known-client table, `_fallback_slug()` for anything unrecognized, `None`/missing `client_info` handled safely.)
-- [x] Session and conversation identity: derive a stable session id from the MCP connection; document that MCP has no conversation id and how CMF synthesizes one. (`server/capture/identity.py::resolve_session_id` — prefers the transport's real `session_id` when one exists (streamable-http/SSE), synthesizes and caches a UUID4 per connection object otherwise, since stdio — Claude Desktop's transport — has no native session id at all per `mcp/server/context.py`'s own docstring. Documented in `docs/CLIENTS.md`'s new "MCP-Boundary Capture" section.)
-- [x] `capture_note(content, kind)` tool for explicit checkpointing, with server-instruction guidance on when to call it. (`server/mcp.py` — new tool, plus `SERVER_INSTRUCTIONS` updated to describe when to call it and that it's evidence capture, not a `remember`-equivalent memory write.)
-- [x] Never block the client: capture is fire-and-forget onto the consolidation queue, with a bounded buffer and a documented drop policy. **Corrected in scope**: there is no separate "consolidation queue" to enqueue onto — `server.consolidation.pipeline.run_consolidation()` (Milestone 3) is pull-based, querying the journal itself for unprocessed events on its own schedule. Capture's actual job is getting events into the journal reliably without blocking the tool call: a bounded `asyncio.Queue` (default 500) plus a single background consumer task; a full queue drops the newest event and counts it (`server/capture/health.py`) rather than blocking — documented drop policy.
-- [x] Secret and credential filtering on captured arguments **before** the journal write. (`server/capture/filters.py::redact_secrets` — reuses `server.journal.retention`'s pattern-based scrub (added `redact_secret_patterns()` there as a public entry point, rather than a second divergent pattern list) plus a key-name heuristic (`api_key`, `token`, `secret`, `password`, etc.) for credentials that don't match a known provider shape. Verified against a fake `AIza...`-shaped value matching `GEMINI_API_KEY`'s own format, per MS0.5's live-fixture intent — never the real key.)
-- [x] Allow/deny filters by tool, client, and content class. **Partial, by explicit direction**: tool and client allow/deny (`CMF_CAPTURE_DENY_TOOLS`/`CMF_CAPTURE_DENY_CLIENTS`) are implemented; `import_memories`/`import_chatgpt_exports` are denied by default since they already have dedicated Milestone 2 importers producing higher-fidelity events. Content-class filtering is **not** built — this is the piece Todd explicitly deferred in the privacy/cost gate answer above, not an oversight.
-- [x] Capture-health surface: events captured, dropped, redacted, queue depth. (`server/capture/health.py` + the new `capture_health` MCP tool. In-process counters, reset on restart — durable counts remain in the journal itself via `SqliteEventStore.stats()`.)
-- [x] Update `CLIENTS.md` with the capture model and its limits per client. (New "MCP-Boundary Capture (Milestone 4a)" section in `docs/CLIENTS.md`, including a per-client table on session-identity stability; `README.md`'s tool reference and architecture summary also updated.)
-
-### Files touched
-
-New: `server/capture/{__init__,middleware,identity,health,filters}.py`, `server/core/rate_limiter.py`, `tests/test_capture.py`, `tests/test_gemini_rate_limiter.py`, `tests/test_gemini_transient_errors.py`. Modified: `server/mcp.py`, `server/memory.py` (re-export shim), `server/providers/memory_graphiti.py` (rate-limiter wiring + transient-error retry classification), `server/journal/retention.py` (`redact_secret_patterns()` public entry point), `production_import_runner.py` (`probe_gemini_quota()` uses the rate limiter's chain instead of a hardcoded model), `docs/CLIENTS.md`, `README.md`, `.env.example`. Also updated for the two new tools: `tests/fixtures/mcp_contracts/tool_schemas.json` (regenerated) and four pre-existing tests that hardcoded an exact tool-name/count set (`test_mcp_contract_fixtures.py`, `test_ms1_provider_interfaces.py`, `test_step6_mcp_tools.py`, `test_step6b_proposals.py`, `test_step7_import_memories.py`).
-
-### Acceptance tests
-
-The roadmap's five-step cross-harness test, run for real:
-
-1. Record a decision in Claude Desktop.
-2. Verify it consolidates into memory with source provenance naming Claude Desktop.
-3. Retrieve it from a second harness (Claude Code, or ChatGPT via HTTP transport).
-4. Correct it from that second harness.
-5. Verify Claude Desktop sees current state while history stays inspectable.
-
-**Not yet run** — this is a live, interactive, cross-harness test that this implementation session cannot perform on its own (no live Claude Desktop connection here). Capture middleware, harness identity, and session identity are unit-tested (`tests/test_capture.py`, 24 tests) against faithful fakes of the MCP session/client_info shapes, but the end-to-end "does a real Claude Desktop tool call actually land in the journal with the right harness name" claim is unverified outside this session. Flagging honestly rather than marking done — do this the next time Claude Desktop is actually connected to a build carrying this middleware.
-
-Plus:
-- [x] An argument containing an API-key-shaped string never reaches the journal. (`tests/test_capture.py::TestBuildToolCallEvent::test_secret_shaped_argument_never_reaches_the_event`, plus the redaction unit tests.)
-- [x] Killing FalkorDB mid-session degrades capture without breaking any tool call. **Architecturally satisfied, not tested as a live kill scenario** (same category as MS2 acceptance test 4's note): capture middleware and the journal it writes to (`imports/journal/journal.db`, SQLite) have no code path touching FalkorDB at all — only `remember`/`recall`/`edit_memory`/etc. do. A FalkorDB outage cannot affect capture by construction, not by a tested failure-injection scenario.
-
-### Exit gate — ANSWERED 2026-09-04
-
-**Privacy and cost.** See the first task above and [Cross-cutting concerns](#cross-cutting-concerns) for the full answer: Gemini-only (no local routing yet), no content-class filtering yet, consolidation stays journal-everything/auto-consolidate-selectively, and spend is bounded by a hard free-tier RPM/RPD gate rather than a soft estimate. Capture is now registered unconditionally in `server/mcp.py` (no feature flag), consistent with the gate being answered rather than still pending.
-
-**Effort:** 3–4 sessions.
-**Risk:** Medium. Middleware in the request path — a bug here degrades every tool call. Fire-and-forget plus a bounded buffer is the mitigation; test the failure modes explicitly.
-
----
-
-## MS3.6 — Promotion: staged memories into the retrievable graph
-
-*(Was "Unnumbered — Promote auto-accepted memories". Given a number and pulled onto the critical path in the 2026-09-06 resequencing: it is the step that first makes CMF's own reasoning history retrievable, so it runs right after MS3.5 and before MS6/MS7.)*
-
-**Goal:** Move staged `derived_memories` — the MS3 `auto_accepted` per-event candidates **and** the MS3.5 reasoning episodes — into FalkorDB via `remember()`, so `get_context` / `recall` can actually return them. Everything upstream (journal, classification, reasoning extraction) is staging; this is the stage that closes the loop to retrieval.
-
-**Why now:** Live gap check (2026-09-04, still true): the graph holds 57 episodes (the MS0.5 backfill) while the journal holds 19,012 events and — after MS3.5 — ~1k+ reasoning episodes, all staged, none retrievable. Testing review (MS6) and assembly quality (MS7) needs real material in the graph; adding more capture (MS4b–d) does not.
-
-### Done so far (auto-accepted path)
-
-- [x] `server/consolidation/promotion.py`: `PromotionStore` (idempotency ledger — a `promotions` table in the same SQLite file as the journal/consolidation store, `succeeded`/`failed` per `memory_id`, same "one file, no cross-database consistency problem" precedent as `ConsolidationStore`) and `promote_auto_accepted()` (reads `derived_memories` rows with `approval_state='auto_accepted'` not yet promoted, calls `remember()` — through the MS4a rate limiter — for each, isolating per-row failures rather than aborting the batch). `remember_fn` is injected, not imported directly, so tests exercise real bookkeeping logic with zero Gemini/FalkorDB dependency.
-- [x] `GeminiQuotaExhaustedError` mid-batch stops the run cleanly — remaining candidates are left untouched (no partial/terminal record), safe to retry in a later call, not silently dropped or double-attempted.
-- [x] `promote_auto_accepted_memories(dry_run=True, limit=None)` MCP tool (12 tools total). `dry_run` defaults `True`, matching `import_memories`/`import_chatgpt_exports`'s convention. `limit` exists because a full run is a real, minutes-long operation — each `remember()` call gets the same polite inter-call delay `reconcile_memories` already uses.
-- [x] Explicitly scoped to `auto_accepted` only. `queued_for_review` (9,658 of 19,012 events — the overwhelming majority) and `rejected` (9,172) are untouched; they need Milestone 6's actual review/correction tooling, not a path that bypasses it.
-- [x] 7 tests (`tests/test_promotion.py`): dry-run preview, commit + idempotency on a second run, only-auto_accepted-rows-considered, one row's failure doesn't block another's success, rate-limit exhaustion stops early without losing or double-recording remaining candidates, `limit` caps a run.
-
-### Files touched
-
-New: `server/consolidation/promotion.py`, `tests/test_promotion.py`. Modified: `server/mcp.py` (new tool), `docs/CLIENTS.md`, `README.md`, `tests/fixtures/mcp_contracts/tool_schemas.json` (regenerated) plus the same five tool-count/name-set tests updated for MS4a's two tools now updated again for this one.
-
-### Live run and a real defect it caught (2026-09-04)
-
-Ran for real: `limit=5`, `dry_run=False`. Client-side MCP timeout hit mid-batch (4 of 5 candidates had already completed server-side by then — the timeout was the tool-call round-trip, not the underlying work, which kept running). Checking the 4 that landed found **3 of 4 were junk**: raw Android logcat lines pasted into a Claude Code debugging session (AstroAlert project), promoted verbatim as episodic memory.
-
-**Root cause, traced to `server/importer.py`'s `CandidateClassifier.classify()`, Case C (the fallback branch):** it classified *any* text containing a parseable date and 4+ words as `EPISODIC` — no requirement for actual episodic or durable language. A logcat line always carries an exact embedded timestamp, so it trivially cleared the bar; combined with the exact-date confidence bonus (0.6 + 0.3 = 0.9), it sailed past the 0.75 auto-accept threshold. MS3's labeled fixture (down to 9 rows after the other session's ChatGPT-event deletion) never contained this shape of content — raw technical output is characteristic of Claude-harness coding sessions, essentially absent from the original ChatGPT corpus the classifier was tuned against.
-
-**Fixed:** Case C now requires an actual positive signal (durable or episodic language) — a bare date is no longer sufficient on its own, symmetric with the pre-existing rule that an undated episodic statement must not be assigned today's date. Regression tests: `tests/test_regressions_baseline.py::TestClassifierDatedTextWithoutSignalIsAmbiguous`. Bumped `HeuristicPatternPolicyV1.version` to `1.1` and reprocessed the full 19,012-event journal (local/free — zero model calls) so every already-computed classification picks up the fix: `auto_accepted` dropped from 182 to **119** (63 false positives corrected to `ambiguous`/`queued_for_review`), `rejected`/`non_memory` unchanged (9,172 — confirms the fix didn't touch the actor-type guard at all, only the dateonly-fallback path).
-
-**Cleanup:** the 4 promoted episodes were removed from `memory-fabric` (`graphiti.remove_episode`, which correctly cleans up entities/edges solely mentioned by that episode and leaves shared ones alone) and their `PromotionStore` rows reverted to `failed` with a clear reason, so they're eligible for a corrected re-run. Verified the 3 logcat candidates now classify `ambiguous` under 1.1.
-
-**One remaining, narrower, un-fixed issue:** the 4th promoted candidate ("ok, i'm gettin recommended targets now that i fixed showing the targetlist...") is *correctly* `episodic` under the fix — it has a real episodic verb ("fixed") — but its `event_date` was still extracted from an unrelated pasted API/log timestamp later in the same message, not from anything about when the statement was made. `TemporalExtractor.extract_date()` takes the first matching date pattern anywhere in the text with no awareness that a later paste boundary makes a subsequent date untrustworthy. Content-wise this candidate is legitimate; its claimed date precision (`exact`) is not earned. Left unfixed deliberately rather than attempting a same-day heuristic with no fixture to validate it against — flagged for a dedicated pass before promoting this specific candidate (or others like it) again.
-
-### Full manual inspection (2026-09-04) — the 4-item spot check undersold the problem
-
-Prompted by Todd asking for an actual quality inspection rather than trusting the spot check above: read essentially the entire 119-item `auto_accepted` set (not a sample), plus a random 100 from `queued_for_review` and 30 from `rejected`.
-
-**`auto_accepted` was still badly compromised.** An estimated 90%+ of the 119 were not genuine personal memories — technical troubleshooting excerpts (shell commands, git output, error logs, JSON API responses) or entire pasted documents (legal letters, insurance forms, job application drafts), several tens of thousands of characters long, one **exactly 1,000,000 characters** (a `log show` terminal dump). The Case C fix only addressed candidates with *no* episodic signal; the dominant remaining driver was Case B: ordinary troubleshooting narration incidentally contains words from the episodic-verb list ("fixed", "started", "resolved", "updated") that were meant to recognize real decision language ("decided to switch databases"), combined with a date pulled from an embedded log timestamp.
-
-**`queued_for_review` (random 100) and `rejected` (random 30) both looked correct** — no clear false negatives found in the sample, `rejected` is 100% assistant-authored as the actor-type guard requires structurally.
-
-**Fix: a 500-character length guard**, applied as a hard override on top of the existing category logic (not a rewrite of it) — a candidate that would otherwise be `EPISODIC` is downgraded to `AMBIGUOUS` past 500 characters, since a genuine personal statement is concise and none of the good examples found in the queued/rejected samples ever needed to be longer. Bumped `HeuristicPatternPolicyV1` to `1.2`, reprocessed the full journal again: **`auto_accepted` dropped from 119 to 7.** Regression tests: `tests/test_regressions_baseline.py::TestClassifierLongPastedContentIsNotEpisodic`.
-
-**Inspected the final 7 individually — 4 genuinely good, 3 still wrong.** The 4 good ones are real personal state: a glasses-prescription change, an HSA/marital-status tax timing question, a Claude Pro subscription access issue, a payment confirmation email. The 3 still wrong are the *same* log-narration pattern as before, just short enough (under 500 characters) to clear the new guard — e.g. `"i'm still getting this error loop in the log\n[2026-06-02 11:11:01] watcher started\n..."`. **The length guard was necessary but not sufficient**: a short log snippet with an incidental episodic verb and an embedded timestamp is structurally indistinguishable from a short genuine episodic statement using only regex — telling them apart needs to understand *what the text is about*, not just its shape or length. This residual gap is now owned by **MS3.5 — Reasoning-episode consolidation** (ADR 0005): a model-based policy over topical windows, not another regex patch.
-
-### Not done / explicitly out of scope here
-
-Promoting the (now) 7 `auto_accepted` candidates — deferred into MS3.5. Building `ReasoningEpisodePolicyV1` first may supersede some of them with a derived reasoning episode rather than promoting the raw candidate as-is.
-
-### Resolved: deriving reasoning episodes instead of only suppressing pasted technical content
-
-Todd's question after the inspection — rather than only filtering out debugging/log-paste turns, can some become a genuinely useful memory ("investigated the OpenClaw gateway connection issue on the Mac Pro"), distinct from a decision and distinct from the raw paste? — is **answered by ADR 0005 (2026-09-05)** and scheduled as MS3.5, the next milestone. Two corrections to the original sketch recorded here so nobody builds the old version:
-
-- The result is **not a new memory type / not a new category**. It is the existing `episodic` category plus a `reasoning_kind` property (`investigation`, `finding`, `experiment`, …). The earlier "land it as a distinctly-tagged memory type, not `episodic`" idea is dropped — Todd wants the four categories kept.
-- It is **not a one-line label**. A label keeps that work happened but loses what was learned, tried, and why. MS3.5 derives a real synthesis over a window of turns (driving question, rationale, alternatives, finding).
-
-The triage instinct from the sketch carries forward: `HeuristicPatternPolicyV1` flags technical/log-shaped windows (the same signal currently causing false positives) as worth a model call; everything else is skipped. Extraction runs on the rate-limited Gemini path now, Spark local inference later.
-
-### The reasoning-episode path (MS3.6 proper) — DONE 2026-09-07
-
-MS3.5 is done. Its exit gate settled that **there is no auto-accept for reasoning episodes** — model confidence doesn't separate keep from drop (fixture: keep mean 0.95 vs. drop 0.94). So MS3.6 is entirely review-gated, structured by the **three tiers** the Phase D labeling surfaced (2026-09-07):
-
-- **Tier 1 — promote to the graph.** Durable facts, decisions, plans, findings with lasting relevance. `recall`/`get_context` return these. Roughly the `decision`/`plan`/`retrospective`/`rejected_alternative` episodes (≈301 in the Option B slice — Todd kept 63–78% of those kinds vs. ~15% of `investigation`/`experiment`/`hypothesis`/`finding`).
-- **Tier 2 — work journal.** The working-through: experiments, dead ends, transient troubleshooting that resolved. Stays in its `reasoning_thread` (659 exist), **not** promoted. Not lost — browsable, and promotable later if a thread turns out to matter. ≈942 episodes.
-- **Tier 3 — discard.** Thin fragments from windows that straddle topics (segmentation cost) and genuine trivia.
-
-Tasks:
-
-- [x] **`promote_reviewed(memory_ids)`** — no `promote_auto_accepted()` for reasoning episodes (there's no auto-accept). A human (MS6) marks episodes/threads tier-1; this promotes them. `remember()` gets the `statement` synthesis with `reasoning_kind` + `evidence_event_ids` as provenance metadata. `promote_auto_accepted()` kept for the heuristic path. *(`server/consolidation/promotion.py`; explicit ordered id-list, same `PromotionStore` ledger, per-row failure isolation, `GeminiQuotaExhaustedError` clean-stop, `not_found` reporting. 7 new tests in `tests/test_ms3_6_promotion.py`.)*
-- [x] **`reasoning_kind` → default tier routing** (a hint, not a gate): `default_tier()` — `decision`/`plan`/`retrospective`/`rejected_alternative` → tier 1; rest → tier 2. `tier1_review_queue()` returns the unpromoted, unrejected tier-1 episodes a reviewer should triage.
-- [x] **Coverage-based auto-resolve of the heuristic backlog.** `ConsolidationStore.mark_superseded_by_reasoning()` — a heuristic `queued_for_review` row whose `source_event_id` is cited by a reasoning episode's evidence → `approval_state='superseded_by_reasoning'`, `superseded_by=<episode memory_id>`. Idempotent, `revert_superseded_by_reasoning()` undoes it. **Applied to the real journal 2026-09-07: 3,251 of 9,833 v1.2 heuristic rows superseded (~33% cut) → 6,582 remain for review.**
-- [x] **First real promotion batch** — the **22 human-`keep` episodes from the Phase D fixture** → `memory-fabric` via live rate-limited `remember()` (3.5s inter-call). 21/22 first pass; 1 transient Gemini failure recorded `failed` in `PromotionStore` and cleanly picked up on a retry run (the 21 `succeeded` skipped — idempotency verified on real infra). **`memory-fabric`: 57 → 79 `Episodic` nodes.**
-- [x] **Verify retrieval.** `recall()` returns the promoted episodes with Graphiti's entity extraction done — a query for a tooling decision comes back as *"chose X over Y because Z"* decomposed into entity + relationship facts (not the raw statement), and a query for a planning thread returns its candidate-option decision facts. The journal → episode → keep → promote → retrievable loop is closed.
-- [x] **Deletion/correction propagation** — architecturally satisfied (same as MS2 acceptance test 4): the journal (`events`, SQLite) and `derived_memories` have no code path to FalkorDB; `graphiti.remove_episode` on a promoted episode cannot touch either. Becomes a tested cross-store invariant in MS6 when memory correction is wired to journal lineage.
-
-**Exit gate — ANSWERED 2026-09-07.** A promoted reasoning episode survives the round trip — `remember()` → `recall()` with the synthesis retrievable and Graphiti's entities/edges attached (verified above; `reasoning_kind`/thread key ride in `source_description` as provenance, not yet as first-class graph properties — that's MS5/MS6 when the knowledge contract formalizes). The coverage auto-resolve cut the v1.2 heuristic review pile **9,833 → 6,582 (−3,251, ~33%)**, and every superseded row keeps a `superseded_by` pointer to the episode that covered it, so nothing is hidden — a reviewer can always follow it back. Whether by-thread bulk review actually beats per-episode is a **MS6** question (the review surface doesn't exist yet); the tier structure and `tier1_review_queue()` are in place for it to build on.
-
----
-
-## MS4b — Claude Code adapter
-
-**Goal:** Highest-fidelity capture available in your stack.
-
-**Why now:** Second priority, and the mechanism is genuinely rich — unlike Claude Desktop, Claude Code writes full local transcripts and supports lifecycle hooks.
-
-### Available surfaces (verified)
-
-- **Transcripts:** `~/.claude/projects/<path-slug>/<session-uuid>.jsonl` — full turn-by-turn, including tool calls. 15 projects present; the current session file is ~400 KB.
-- **Hooks:** configured in `~/.claude/settings.json` (`hooks` block already in use for `Notification`). `SessionStart`, `Stop`, `PostToolUse`, and others are available.
-- **History:** `~/.claude/history.jsonl`.
-
-### Tasks
-
-- [ ] JSONL transcript parser producing canonical source events, preserving native session, turn, tool, and model ids.
-- [ ] Hook installer writing a CMF block into `~/.claude/settings.json` — **merging**, never overwriting the existing `Notification` hook and statusline config.
-- [ ] `SessionStart` hook: open a CMF session, optionally inject prior context.
-- [ ] `Stop` hook: enqueue the completed session's transcript for consolidation.
-- [ ] Backfill mode: ingest existing transcripts across all 15 project directories.
-- [ ] Per-project allow/deny — capture `context-memory-fabric` and `LLM_Wiki` work; exclude what you choose.
-- [ ] Never block Claude Code: hooks must complete fast and fail open.
-- [ ] Secret filtering over tool payloads, which in Claude Code frequently contain file contents and command output.
-
-### Files touched
-
-New: `server/adapters/claude_code/{parser,hooks,installer,backfill}.py`, `docs/adapters/claude-code.md`.
-
-### Acceptance tests
-
-1. A completed Claude Code session appears in the journal with native session/turn ids intact.
-2. Backfilling all existing transcripts is idempotent on re-run.
-3. Hook installation preserves the existing `Notification` hook and statusline.
-4. A session in a denied project produces zero events.
-5. Hook failure never blocks or slows a Claude Code turn (measured).
-
-### Exit gate
-
-**How much of a coding session is worth keeping?** A transcript is mostly file reads and tool output. Decide the retention class per event type — full turns, decisions only, or summaries — before backfilling 15 projects.
-
-> **Note (ADR 0005):** "summaries" is no longer a hand-wave — it is MS3.5's reasoning-episode derivation, which by this point already exists and runs on the journal. The MS4b decision is narrower: which raw Claude Code event types reach the journal at all (full turns vs. tool-output-elided), given that MS3.5's stage will derive the synthesis on top. Keep enough raw turns that reasoning extraction has substrate; elide pure file-read/tool-output noise.
-
-**Effort:** 3–4 sessions.
-**Risk:** Low-medium. Local files and documented hooks. The volume is the real risk: coding transcripts are large, and everything consolidated costs an extraction call.
-
----
-
-## MS4c — OpenClaw adapter and `cmf-http`
-
-**Goal:** Capture the Studio Network's operational events as project-state context.
-
-**Why now:** Third priority, and it is the first genuinely cross-host, cross-agent source — the strongest demonstration of the fabric thesis. OpenClaw runs on the 2013 Mac Pro; CMF runs on the MacBook. That gap forces `cmf-http`, which the roadmap leaves unscheduled, into MS4.
-
-### Tasks
-
-- [ ] **`cmf-http`**: HTTP ingest endpoint accepting canonical source events, with authentication, request validation, and idempotency keys.
-- [ ] Multi-actor event model — eleven named agents (Max, Aim, Quest, Forge, Shift, Pace, Vault, Sense, Kind, Lock, Coin), each with SPIFFE and `did:web` identity. `actor.id` should carry the agent identity, not just `type: agent`.
-- [ ] Map OpenClaw's Slack-mediated messages and approvals into canonical events.
-- [ ] Retry and queue on the OpenClaw side so a CMF outage drops nothing.
-- [ ] Scope model: which OpenClaw agents write to which context scope.
-- [ ] Decide the boundary with Interlock — CMF holds context; Interlock governs agent control. Record it as an ADR.
-
-### Files touched
-
-New: `server/http/{app,ingest,auth}.py`, `server/adapters/openclaw/`, `docs/adapters/openclaw.md`, `docs/adr/000X-cmf-interlock-boundary.md`.
-
-### Acceptance tests
-
-1. An OpenClaw agent event ingested over HTTP from the Mac Pro appears in the journal with agent identity preserved.
-2. Duplicate delivery with the same idempotency key produces one event.
-3. CMF down for 10 minutes loses zero OpenClaw events (queued and retried).
-4. An OpenClaw-originated memory is retrievable from Claude Desktop.
-
-### Exit gate
-
-**Authentication and tenancy for remote ingest.** Shared secret, mTLS, or SPIFFE-based? OpenClaw already runs SPIRE — reusing it is coherent but couples CMF to that infrastructure. Decide explicitly.
-
-**Effort:** 4–5 sessions (HTTP transport is most of it).
-**Risk:** Medium. First network-exposed surface. Threat-model it before it listens on anything beyond loopback.
-
----
-
-## MS4d — Codex and Gemini CLI
-
-**Goal:** Round out coding-harness coverage.
-
-**Why now:** Deliberately last per your priority. By this point the adapter pattern is proven three times and these should be largely mechanical.
-
-### Tasks
-
-- [ ] Survey each harness's actual local surfaces before designing — do not assume a Claude Code-shaped transcript exists.
-- [ ] Implement against the adapter development kit that falls out of 4a–4c.
-- [ ] Conformance tests shared with the other adapters.
-
-**Effort:** 2–3 sessions each.
-**Risk:** Low, assuming usable local surfaces. Survey first — if a harness offers no capture surface, say so and fall back to export ingestion rather than building something fragile.
-
----
-
-## MS5–MS9
-
-Detailed task breakdowns still to be written. **Per the 2026-09-06 resequencing, MS6 and MS7 move ahead of the MS4b–MS4d capture adapters and MS5** — they are the path from staged reasoning episodes to actually-useful retrieval, which is what needs proving next. MS6 now depends on MS3.6 (promotion), and MS7 no longer waits on MS5 (the LLM Wiki already serves retrieval; the file provider is enough to build and evaluate assembly against).
-
-| MS | Goal | Depends on | Effort | Order |
-|---|---|---|---:|---|
-| **6** | Review and governance — inspect evidence, approve/reject, correct, scopes, audit. **Must support bulk review by thread / by kind / by tier** (MS3.5 exit gate: ~1,243 reasoning episodes, three-tier routing, per-episode modals won't scale) | MS3.5, MS3.6 | 5–6 | **next after MS3.6** |
-| **7** | Context assembly quality — intent classification, time-aware modes, token budget, conflict signals | MS2, MS6 | 4–5 | **after MS6** |
-| **5** | Generalize knowledge providers; `propose_knowledge_change`; GitHub provider; Wiki becomes optional | MS1 | 3–4 | after the MS4 adapters |
-| **8** | Replay and evaluation — historical context snapshots, counterfactual policy comparison | MS2, MS6 | 4–5 | after MS5 |
-| **9** | Distribution — Docker Compose, SDK, OpenAPI, adapter/provider DKs, migration and backup | All | 4–6 | last |
-
-Two notes carried forward:
-
-- **MS6 is the differentiation milestone.** "Why does the system believe this?" is the capability competitors do not offer. It should not slip indefinitely behind adapter work.
-- **MS7 needs a baseline first.** "Evaluation shows improvement over memory-only and knowledge-only baselines" requires that those baselines be measured — do that during MS7, not after.
+| **MS3.6** | Does a promoted reasoning episode survive `remember()` → `recall()` with provenance + entities intact? Does coverage auto-resolve shrink the heuristic pile safely? | Yes — round trip verified, Graphiti entities attached. Coverage auto-resolve: heuristic `queued_for_review` **9,833 → 6,582**, each superseded row keeps a `superseded_by` pointer. By-thread bulk-review speed is an MS6 question. (2026-09-07) |
+| **MS3.5** | What is the reasoning-episode auto-accept threshold? Backlog burn-down plan? | **No threshold** — model confidence does not separate keep from drop (fixture: keep 0.95 vs drop 0.94). Auto-accept stays off; promotion is fully review-gated. Backlog handled by **three-tier routing** (promote / work-journal-in-thread / discard), reviewed **by thread** in MS6. `reasoning_kind` is a routing hint (`decision`/`plan` kept 63–78%, `experiment`/`hypothesis`/`finding` ~15%). Assistant-only-substance rate ~5% Claude / ~13–26% ChatGPT-Gemini — follow-on ("can assistant turns seed an episode") is a scoped-later mini-milestone. (2026-09-07) |
+| **MS4a** | Privacy & cost for MCP-boundary capture | Gemini-only (no local routing yet), no content-class filtering, journal-everything / auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate (`server/core/rate_limiter.py`). Capture registered unconditionally. (2026-09-04) |
+| **MS3** | Which memories may be auto-accepted (per-event / lexical)? | Threshold **0.75** — requires *both* an episodic-shaped statement *and* an exact/day-precision date. Measured 100% precision on the fixture. Loosened for MS3.5 reasoning episodes (which then found no threshold works at all). (2026-09-03) |
+| **MS2** | SQLite sufficient, or PostgreSQL? | **SQLite** — 19,012 events across 3 real sources, sub-second `stats`/`query`/`replay`. Revisit if MS4 volume grows an order of magnitude or MS4c cross-host writes make single-writer awkward. (2026-09-04) |
+| **MS1** | Can a second memory provider be stubbed against the protocol without changing core? | **Yes** — `FakeMemoryProvider`/`FakeKnowledgeProvider` satisfy the protocols `isinstance`-verified, `get_context()` runs end-to-end against both with zero live deps, no Graphiti semantics leaked. (2026-09-03) |
+| **MS0.5** | Which FalkorDB graph is production? | **`memory-fabric`**, pinned as `FALKORDB_DATABASE` in `.env`. `default_db` cleared, `cmf_chatgpt_000` deleted (snapshots taken first). (2026-09-03) |
 
 ---
 
 ## Cross-cutting concerns
 
-### Privacy and cost — the gate before MS4a
+### Privacy and cost
 
-Today, Graphiti sends every ingested episode to the Gemini Developer API for entity extraction and embedding. At 57 curated episodes that is a bounded, deliberate exposure. Continuous capture across Claude Desktop, Claude Code, and OpenClaw changes the posture materially:
+Graphiti sends every ingested episode to the Gemini Developer API for entity extraction + embedding. At curated volume that's a bounded, deliberate exposure; continuous capture across Claude Desktop / Claude Code / OpenClaw changes the posture (every turn becomes an extraction call; the corpus already holds medical, financial, legal material; cost is unbounded and unmeasured).
 
-- **Volume:** every captured turn becomes an extraction call. Claude Code transcripts alone are hundreds of KB per session.
-- **Sensitivity:** your existing corpus already contains medical (`MRI Neck Injury`, `Thyroid Nodule FNA`), financial (`Crypto Sale Tax Reporting`), and legal (`Post-Closing Agreement Concerns`) material. Continuous capture will pull in more, unreviewed, and route it to a third-party API.
-- **Cost:** unbounded and unmeasured today.
-
-Three questions must be answered before capture is enabled by default:
-
-1. **Local extraction?** Route consolidation to a local model (the Spark, or a local Ollama/LM Studio endpoint) for sensitive content classes, keeping Gemini for the rest. The wiki records that LM Studio was the original plan before the Phase-1 switch to Gemini — that decision is worth revisiting now that the data volume is changing.
-2. **Sampling or triage?** Capture everything to the journal (cheap, local) but consolidate selectively (expensive, remote). This is the natural shape given the MS2/MS3 split and is the recommended default.
-3. **Budget ceiling?** A hard monthly cap on extraction spend, with capture continuing to the journal after the cap is hit so nothing is lost.
-
-**Recommendation:** journal everything locally; consolidate under an explicit policy with a spend ceiling; route sensitive content classes to local inference or hold them unconsolidated pending review.
-
-**Addendum 2026-09-05 (ADR 0005).** MS3.5's reasoning extraction adds a second model call site (multi-turn windows, larger prompts than per-event classification). Todd's direction: run it on the existing rate-limited hosted Gemini path in the interim, no content-class filtering yet — the same posture the MS4a gate settled on, not a reopened decision. The reasoning workload is the intended **first tenant of the Spark local-inference stack** once that stack's validation sequence runs; sensitive-class routing is revisited then, not before.
+**Standing policy (answered at the MS4a gate, 2026-09-04):**
+1. **Journal everything locally** (cheap), **consolidate selectively** (expensive, remote) — the natural shape of the MS2/MS3 split, and the default.
+2. **Budget ceiling** — a hard free-tier RPM/RPD gate (`server/core/rate_limiter.py`), not a soft dollar estimate; capture continues to the journal after the cap so nothing is lost.
+3. **Local extraction** for sensitive content classes — deferred. The reasoning workload (MS3.5) is the intended first tenant of the Spark local-inference stack once its validation sequence runs; content-class routing is revisited then, not before.
 
 ### Observability
 
-Add from MS2 onward, not retrofitted: capture success and lag, consolidation latency and failure, extraction precision and rejection rate, duplicate and conflict rates, retrieval relevance, temporal correctness, provenance coverage, token cost per harness, provider latency, deletion and correction propagation.
+Track from MS2 onward, not retrofitted: capture success/lag, consolidation latency/failure, extraction precision/rejection rate, duplicate/conflict rates, retrieval relevance, temporal correctness, provenance coverage, token cost per harness, provider latency, deletion/correction propagation.
 
 ### Compatibility
 
@@ -697,34 +100,9 @@ Version every canonical schema. Maintain backward-compatible MCP tool aliases th
 
 ---
 
-## Exporting Claude and Gemini history
-
-**Request both exports now. Ingest them after MS2.**
-
-**Request now, because:**
-
-- Delivery is asynchronous and not instant — Claude's export arrives by email; Google Takeout for Gemini Apps activity can take hours to days.
-- Having the real archives in hand lets the `cmf-import-claude` and `cmf-import-gemini` parsers be written against actual data rather than assumed structure. The ChatGPT parser is ~2k lines precisely because the format's edge cases only surface against real exports.
-- Exports are point-in-time snapshots and re-requesting is free, so an early request costs nothing and can be refreshed at ingest time.
-
-**Ingest after MS2, because:**
-
-- MS2 defines the canonical event envelope. Importing before it exists repeats exactly the situation the 57 ChatGPT episodes are now in — memories with no source events, requiring the backfill task already scheduled in MS2. Doing that twice more is avoidable rework.
-- MS3 versions the classification policies. Importing under an unversioned classifier means no clean reprocessing path when the policy improves.
-- The privacy gate above is unanswered. Claude and Gemini histories will contain the same sensitive categories as the ChatGPT corpus, and there is no reason to route them to a third-party extractor before deciding whether that is what you want.
-
-**Where to get them:**
-
-- **Claude:** Settings → Privacy → Export data (conversations and projects). Memory is exported separately via the memory import/export feature. Note that the CMF-relevant Claude Desktop history is exactly what MS4a *cannot* capture going forward, so this export is the backfill for that gap — worth requesting a fresh copy again right before MS4a ships.
-- **Gemini:** Google Takeout → "Gemini Apps" (formerly Bard) activity.
-
-**Concretely: request both this week; park the archives in a gitignored location; write the parsers during MS2; ingest at the end of MS2 alongside the ChatGPT backfill, so all four sources land in the journal under one schema.**
-
----
-
 ## Effort summary
 
-Rows in **execution order** (2026-09-06 resequencing), not milestone-number order.
+Rows in **execution order**, not milestone-number order. Estimates assume agent-assisted implementation with review at each milestone boundary.
 
 | Milestone | Sessions | Cumulative | Status |
 |---|---:|---:|---|
@@ -732,9 +110,9 @@ Rows in **execution order** (2026-09-06 resequencing), not milestone-number orde
 | MS1 | 3–4 | 6 | done |
 | MS2 | 5–7 | 13 | done |
 | MS3 | 4–5 | 18 | done |
-| MS3.5 (reasoning-episode consolidation) | 5–7 | ~24 | **done 2026-09-07** — 1,243 episodes / 659 threads staged; no auto-accept threshold; three-tier review routing |
-| MS3.6 (promotion → retrievable graph) | 2–3 | ~27 | **done 2026-09-07** — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251 heuristic rows), 22 keeps promoted (graph 57→79), retrieval verified |
-| MS6 (review and governance) | 5–6 | ~33 | |
+| MS3.5 | 5–7 | ~24 | done — 1,243 episodes / 659 threads; no auto-accept threshold; three-tier routing |
+| MS3.6 | 2–3 | ~27 | done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251), 22 keeps promoted, retrieval verified |
+| MS6 (review & governance) | 5–6 | ~33 | **next** |
 | MS7 (context assembly quality) | 4–5 | ~38 | |
 | MS4a (live cross-harness verification) | 1 | ~39 | built; needs a live Claude Desktop session |
 | MS4b (Claude Code) | 3–4 | ~43 | |
@@ -742,23 +120,3 @@ Rows in **execution order** (2026-09-06 resequencing), not milestone-number orde
 | MS4d (Codex, Gemini CLI) | 4–6 | ~54 | |
 | MS5 (knowledge-provider generalization) | 3–4 | ~58 | |
 | MS8–MS9 (replay/eval, distribution) | 8–11 | ~68 | |
-
-Estimates assume agent-assisted implementation with review at each milestone boundary.
-
----
-
-## Immediate next step
-
-**MS4a — MCP-boundary capture (Claude Desktop) is implemented and unit-tested, pending live interactive verification.** MS0.5 through MS3 are all complete (2026-09-04; see each milestone's status notes above for corrections found while doing the work — two in MS1, two significant ones in MS2 about `default_db`'s real composition and the Gemini export's actual coverage, and one in MS3 about which classifier was actually reusable, plus a real date-injection bug caught by the memory-quality fixture before it could reach production).
-
-MS4a's exit gate — the privacy/cost decision — is answered (2026-09-04, with Todd): Gemini-only for now, no content-class filtering, consolidation stays journal-everything/auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate. Capture middleware, harness/session identity, secret filtering, the `capture_note`/`capture_health` tools, and the rate limiter are all built and passing (183 tests, full suite). What's left before calling MS4a fully done: the roadmap's five-step live cross-harness test (record in Claude Desktop → consolidates with provenance → retrieve from a second harness → correct → Desktop sees current state) — genuinely interactive, needs a live Claude Desktop connection this implementation session doesn't have.
-
-**MS3.5 — Reasoning-episode consolidation (ADR 0005) — DONE 2026-09-07.** Build (schema, `ReasoningEpisodePolicyV1` v0.2, windowing, triage + min-window floor, cross-harness thread index, tests); full Option B reprocess (1,291 windows → **1,243 episodes / 659 threads**, all `queued_for_review`); Phase D fixture (51 labels) and exit gate. Exit-gate result: **no auto-accept threshold** — model confidence does not separate keep from drop; promotion is entirely review-gated, with a **three-tier** routing (promote to graph / keep in thread as work-journal / discard) so the ~1,243-episode backlog is reviewed by thread in MS6, not per-episode.
-
-**MS3.6 — Promotion — DONE 2026-09-07.** `promote_reviewed(memory_ids)` (no auto-accept — explicit human-approved list), `default_tier()`/`tier1_review_queue()` kind routing, `mark_superseded_by_reasoning()` coverage auto-resolve (applied: **9,833 → 6,582** v1.2 heuristic queued). First batch: the **22 Phase-D `keep` episodes promoted into `memory-fabric`** (57 → 79 `Episodic` nodes), retrieval verified end-to-end via `recall()` with Graphiti entity extraction.
-
-**Current: MS6 — Review and governance.** The staging tables now hold everything the retrieval loop needs; MS6 builds the surface to review/approve/correct it — **bulk by thread / kind / tier** (per the MS3.5 exit gate; ~942 tier-2 episodes + ~301 tier-1 + 6,582 heuristic rows). Then MS7 (assembly quality).
-
-**Then, per the 2026-09-06 resequencing (with Todd):** MS3.6 (promotion — get staged episodes into the graph so retrieval works) → MS6 (review/governance to drain the queued backlog) → MS7 (context-assembly quality). Only after that retrieval loop is proven end-to-end do the deferred items run: MS4a live verification, MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI), MS5 (knowledge-provider generalization — the LLM Wiki already works for retrieval today; MS5 only makes it replaceable). Rationale: more capture is dead weight while the retrievable graph is near-empty; drive one harness's history all the way to useful context first.
-
-**MS4a — MCP-boundary capture — remains implemented and unit-tested, pending only the live interactive cross-harness test**, which is not a blocker for the resequenced path above.
