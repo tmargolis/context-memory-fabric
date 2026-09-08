@@ -196,6 +196,37 @@ class ReviewStore:
             self._conn.commit()
         return audit_id
 
+    def note(
+        self,
+        memory_id: str,
+        action: str,
+        actor: str,
+        reason: str,
+        prior_state: dict[str, Any],
+        new_state: dict[str, Any],
+    ) -> str:
+        """An audit-only entry for a mutation that isn't a review verdict.
+
+        `expand_evidence` (server.review.actions) widens an episode's
+        evidence_event_ids_json — a data-completeness fix, not a keep/drop
+        decision — so it has no business upserting `reviews.review_state`.
+        Routes through the same append-only `review_audit` table as every
+        other mutation in this package, without touching `reviews` at all.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        audit_id = uuid.uuid4().hex
+        self._conn.execute(
+            """
+            INSERT INTO review_audit (audit_id, memory_id, action, actor, at, reason,
+                                      prior_state_json, new_state_json, batch_id, affected_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)
+            """,
+            (audit_id, memory_id, action, actor, now, reason,
+             json.dumps(prior_state, default=str), json.dumps(new_state, default=str)),
+        )
+        self._conn.commit()
+        return audit_id
+
     def record_bulk(
         self,
         memory_ids: list[str],

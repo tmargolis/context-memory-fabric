@@ -1,15 +1,24 @@
-"""Tests for server.providers.memory_graphiti's transient-Gemini-error classification.
+"""Tests for server.core.rate_limiter's transient-Gemini-error classification.
 
 Added alongside the MS4a rate limiter after two concurrent sessions on this
 project independently observed 503 UNAVAILABLE ("high demand") on different
 Gemini models and reached opposite conclusions about which model was
 "reliable" — the actual gap was that 503s were never retried at all (only
 429/quota-shaped errors were), regardless of which model was configured.
+
+Originally lived in, and was tested via, server.providers.memory_graphiti;
+moved here (server.core.rate_limiter re-exports the same names under the
+same underscore-prefixed aliases, so every existing call site — including
+production_import_runner.py — kept working unchanged) so
+server.consolidation.promotion could reach the same classifier without
+importing a provider-internal name, for its own wait-and-retry treatment
+of a real API 429 that survives remember()'s bounded retry budget.
 """
 
 import unittest
 
-from server.providers.memory_graphiti import _classify_transient_error, _is_transient_gemini_error
+from server.core.rate_limiter import classify_transient_error as _classify_transient_error
+from server.core.rate_limiter import is_transient_gemini_error as _is_transient_gemini_error
 
 
 class TestTransientErrorClassification(unittest.TestCase):

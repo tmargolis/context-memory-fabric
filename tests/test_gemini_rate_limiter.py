@@ -13,6 +13,7 @@ from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     GeminiRateLimiter,
     ModelBudget,
+    _seconds_until_next_pacific_midnight,
 )
 
 # Small synthetic budgets so tests exhaust a model in a handful of calls
@@ -158,6 +159,87 @@ class TestGeminiRateLimiter(unittest.TestCase):
         self.assertEqual(status_before, status_after)
         self.assertEqual(status_before["models"]["model-a"]["rpd_used"], 1)
         self.assertEqual(status_before["models"]["model-a"]["rpd_limit"], 3)
+
+    def test_seconds_until_headroom_is_zero_when_fresh(self):
+        limiter = self._limiter()
+        self.assertEqual(limiter.seconds_until_headroom(now=BASE_NOW), 0.0)
+
+    def test_seconds_until_headroom_zero_while_any_chain_model_has_room(self):
+        # Exhaust model-a's RPM (2/min); model-b (5/min) still has room, so
+        # the promotion caller should be told "no wait" — reserve() would
+        # transparently fall through to model-b.
+        limiter = self._limiter()
+        limiter.reserve(now=BASE_NOW)
+        limiter.reserve(now=BASE_NOW)
+        self.assertEqual(limiter.seconds_until_headroom(now=BASE_NOW), 0.0)
+
+    def test_seconds_until_headroom_matches_when_the_blocking_reservation_ages_out(self):
+        # Both models' RPM exhausted (model-a: 2/min, model-b: 5/min — 5
+        # calls total spread as 2+3). The wait must be governed by
+        # whichever model's RPM window frees up SOONEST, not the average
+        # or the last reservation.
+        limiter = self._limiter()
+        limiter.reserve(now=BASE_NOW)       # model-a, 1/2
+        limiter.reserve(now=BASE_NOW)       # model-a, 2/2 — exhausted
+        for _ in range(5):
+            limiter.reserve(now=BASE_NOW)   # falls through to model-b, fills it too
+        with self.assertRaises(GeminiQuotaExhaustedError):
+            limiter.reserve(now=BASE_NOW)
+
+        wait = limiter.seconds_until_headroom(now=BASE_NOW)
+        self.assertAlmostEqual(wait, 60.0, delta=0.05)
+        # And it must actually be correct, not just plausible-looking:
+        # advancing exactly that far must yield real headroom again —
+        # `_prune_minute_window`'s `t >= cutoff` means landing exactly on
+        # the un-padded boundary would still be blocked, which is exactly
+        # the bug this end-to-end check catches.
+        self.assertEqual(limiter.seconds_until_headroom(now=BASE_NOW + wait), 0.0)
+        chosen = limiter.reserve(now=BASE_NOW + wait)
+        self.assertIn(chosen, ("model-a", "model-b"))
+
+    def test_seconds_until_headroom_is_the_pacific_day_boundary_when_rpd_exhausted(self):
+        limiter = self._limiter(chain=("model-a",))
+        t = BASE_NOW
+        for _ in range(3):  # model-a's whole RPD (3), spaced past the RPM window
+            limiter.reserve(now=t)
+            t += 61
+        wait = limiter.seconds_until_headroom(now=t)
+        expected = _seconds_until_next_pacific_midnight(t)
+        self.assertAlmostEqual(wait, expected, delta=1.0)
+        self.assertGreater(wait, 3600, "an RPD wall should report hours, not the ~60s an RPM wall would")
+
+    def test_seconds_until_headroom_does_not_mutate_state(self):
+        limiter = self._limiter()
+        limiter.reserve(now=BASE_NOW)
+        limiter.reserve(now=BASE_NOW)
+        before = limiter.status(now=BASE_NOW)
+        limiter.seconds_until_headroom(now=BASE_NOW)
+        limiter.seconds_until_headroom(now=BASE_NOW)
+        after = limiter.status(now=BASE_NOW)
+        self.assertEqual(before, after)
+
+    def test_seconds_until_headroom_respects_estimated_calls_override(self):
+        # model-a (rpm=2) has room for 2 back-to-back; asking for exactly
+        # its ceiling up front is satisfiable now, but a THIRD call after
+        # those 2 are reserved is genuinely blocked until the RPM window
+        # frees up — this is what `estimated_calls` should let a caller
+        # check ahead of an actual reserve().
+        limiter = self._limiter(chain=("model-a",), calls_per_operation=1)
+        self.assertEqual(limiter.seconds_until_headroom(estimated_calls=2, now=BASE_NOW), 0.0)
+        limiter.reserve(now=BASE_NOW)
+        limiter.reserve(now=BASE_NOW)
+        wait = limiter.seconds_until_headroom(estimated_calls=1, now=BASE_NOW)
+        self.assertAlmostEqual(wait, 60.0, delta=0.05)
+
+    def test_seconds_until_headroom_falls_back_to_day_boundary_when_structurally_unsatisfiable(self):
+        # Requesting more calls at once than a model's entire RPM ceiling
+        # can ever hold (3 > rpm=2) can never be satisfied by waiting out
+        # the window — no matter how empty the window is, at most `rpm`
+        # entries fit. This must degrade to the day-boundary wait rather
+        # than crash or falsely claim "no wait needed."
+        limiter = self._limiter(chain=("model-a",), calls_per_operation=1)
+        wait = limiter.seconds_until_headroom(estimated_calls=3, now=BASE_NOW)
+        self.assertAlmostEqual(wait, _seconds_until_next_pacific_midnight(BASE_NOW), delta=1.0)
 
 
 class TestGetDefaultRateLimiter(unittest.TestCase):

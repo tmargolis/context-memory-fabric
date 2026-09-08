@@ -11,6 +11,7 @@
     python -m server.review.cli confirm-superseded [--apply]
     python -m server.review.cli sample-audit <batch_id> [-n 100]
     python -m server.review.cli revert-batch <batch_id> [--apply]
+    python -m server.review.cli expand-evidence <memory_id> --event-ids ID [ID ...] --reason "..." [--apply]
     python -m server.review.cli promote [--apply] [--limit N]
 
 The CLI owns the *machine* half of review — building the queue, exporting
@@ -158,6 +159,16 @@ def cmd_sample_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_expand_evidence(args: argparse.Namespace) -> int:
+    with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs:
+        result = actions.expand_evidence(
+            cs._conn, rs, args.memory_id, args.event_ids, reason=args.reason,
+            reviewer=args.reviewer, dry_run=not args.apply,
+        )
+    _print_json(result)
+    return 0
+
+
 def cmd_revert(args: argparse.Namespace) -> int:
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs:
         _print_json(actions.revert_batch(cs._conn, rs, args.batch_id, reviewer=args.reviewer, dry_run=not args.apply))
@@ -170,7 +181,8 @@ def cmd_promote(args: argparse.Namespace) -> int:
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs, PromotionStore(args.db) as ps, \
             SqliteEventStore(args.db) as js:
         result = asyncio.run(
-            actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply, limit=args.limit)
+            actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply, limit=args.limit,
+                                      wait_through_rate_limit=not args.no_wait)
         )
     _print_json(result)
     return 0
@@ -237,6 +249,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_sa.add_argument("-n", type=int, default=100)
     p_sa.set_defaults(func=cmd_sample_audit)
 
+    p_ee = sub.add_parser("expand-evidence", help="Widen an episode's evidence with connecting journal turns")
+    p_ee.add_argument("memory_id")
+    p_ee.add_argument("--event-ids", nargs="+", required=True, dest="event_ids")
+    p_ee.add_argument("--reason", required=True)
+    p_ee.add_argument("--apply", action="store_true")
+    p_ee.set_defaults(func=cmd_expand_evidence)
+
     p_rev = sub.add_parser("revert-batch", help="Undo a bulk action, restoring the prior approval_state")
     p_rev.add_argument("batch_id")
     p_rev.add_argument("--apply", action="store_true")
@@ -245,6 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_prom = sub.add_parser("promote", help="Promote approved episodes into the graph")
     p_prom.add_argument("--apply", action="store_true")
     p_prom.add_argument("--limit", type=int, default=None)
+    p_prom.add_argument("--no-wait", action="store_true",
+                         help="Stop immediately on a rate-limit wall instead of sleeping through it (old behavior)")
     p_prom.set_defaults(func=cmd_promote)
 
     return parser

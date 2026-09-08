@@ -48,7 +48,16 @@ MISC = "misc"
 # `misc` — the reviewer can see and fix `misc`.
 #
 # Format (order matters — first match wins):
-#   {"rules": [["bucket-name", "regex"], ...]}
+#   {"rules":     [["bucket-name", "regex"], ...],
+#    "overrides": {"exact-thread-slug": "bucket-name", ...}}
+#
+# `overrides` is an exact thread_key -> bucket map consulted BEFORE the
+# rules. It exists because a reviewer's correction is often not a pattern:
+# "tartan-weaving-mill-order-delay belongs in writing" is a judgement about
+# one thread, and forcing it into a regex would either encode a word that
+# misfires elsewhere or fail to express the decision at all. Overrides are
+# exact-match, so they cannot misfire, and human corrections outrank
+# heuristics by construction.
 DEFAULT_TAXONOMY_FILENAME = "taxonomy.local.json"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -66,16 +75,10 @@ def taxonomy_path(path: Optional[Path] = None) -> Optional[Path]:
     return local if local.exists() else None
 
 
-def load_rules(
-    path: Optional[Path] = None, rules: Optional[list] = None
-) -> list[tuple[str, re.Pattern[str]]]:
-    """Compile the ordered (bucket, pattern) rules. Cached per file path."""
-    if rules is not None:
-        return [(b, re.compile(pat, re.I)) for b, pat in rules]
-
+def _load(path: Optional[Path]) -> tuple[list[tuple[str, re.Pattern[str]]], dict[str, str]]:
     resolved = taxonomy_path(path)
     if resolved is None:
-        return []
+        return [], {}
     key = str(resolved)
     if key not in _cache:
         try:
@@ -83,8 +86,23 @@ def load_rules(
         except (OSError, json.JSONDecodeError) as e:
             raise ValueError(f"could not read taxonomy at {resolved}: {e}") from e
         entries = raw.get("rules", raw) if isinstance(raw, dict) else raw
-        _cache[key] = [(b, re.compile(pat, re.I)) for b, pat in entries]
+        overrides = raw.get("overrides", {}) if isinstance(raw, dict) else {}
+        _cache[key] = ([(b, re.compile(pat, re.I)) for b, pat in entries], dict(overrides))
     return _cache[key]
+
+
+def load_rules(
+    path: Optional[Path] = None, rules: Optional[list] = None
+) -> list[tuple[str, re.Pattern[str]]]:
+    """Compile the ordered (bucket, pattern) rules. Cached per file path."""
+    if rules is not None:
+        return [(b, re.compile(pat, re.I)) for b, pat in rules]
+    return _load(path)[0]
+
+
+def load_overrides(path: Optional[Path] = None) -> dict[str, str]:
+    """Exact thread_key -> bucket corrections, consulted before the rules."""
+    return _load(path)[1]
 
 
 def clear_cache() -> None:
@@ -112,17 +130,32 @@ def classify(
     thread_key: Optional[str],
     statement: Optional[str] = None,
     compiled: Optional[list[tuple[str, re.Pattern[str]]]] = None,
+    overrides: Optional[dict[str, str]] = None,
 ) -> str:
-    """Assign one project bucket. Slug wins over statement — the slug is the
-    model's own topic label and is far less noisy than prose."""
+    """Assign one project bucket from the thread slug.
+
+    The statement is used ONLY when there is no slug at all. It reads like a
+    useful fallback and is not: the slug is the model's own topic label for
+    the window, while the statement is prose that mentions words in passing.
+    Matching prose put `condo-art-lighting` in context-memory-fabric on the
+    word "wiki", `astroalert-mock-data-testing` in career-navigator on
+    "application", and `neurologist-follow-up-prep` in mac-infra on
+    "recovery". An episode landing in `misc` costs a reviewer nothing —
+    `misc` is reviewed like any other bucket — while a confidently wrong
+    bucket costs them the whole point of batching.
+    """
     compiled = load_rules() if compiled is None else compiled
-    for haystack in (thread_key or "", statement or ""):
-        if not haystack:
-            continue
-        text = haystack.replace("_", "-")
-        for bucket, pattern in compiled:
-            if pattern.search(text):
-                return bucket
+    overrides = load_overrides() if overrides is None else overrides
+    # A reviewer's exact-match correction outranks every heuristic.
+    if thread_key and thread_key in overrides:
+        return overrides[thread_key]
+    haystack = (thread_key or "").strip() or (statement or "")
+    if not haystack:
+        return MISC
+    text = haystack.replace("_", "-")
+    for bucket, pattern in compiled:
+        if pattern.search(text):
+            return bucket
     return MISC
 
 
@@ -154,10 +187,13 @@ def backfill(
     ).fetchall()
 
     compiled = load_rules(taxonomy, rules)
+    overrides = {} if rules is not None else load_overrides(taxonomy)
     updates: list[tuple[str, str, str]] = []
     for row in rows:
         thread_key = row["thread_key"] or parse_thread_key(row["reason"])
-        updates.append((thread_key or "", classify(thread_key, row["statement"], compiled), row["memory_id"]))
+        updates.append(
+            (thread_key or "", classify(thread_key, row["statement"], compiled, overrides), row["memory_id"])
+        )
 
     if not dry_run and updates:
         conn.executemany(
@@ -172,6 +208,7 @@ def backfill(
     return {
         "taxonomy": str(taxonomy_path(taxonomy)) if rules is None else "<explicit rules>",
         "rule_count": len(compiled),
+        "override_count": len(overrides),
         "rows_considered": len(rows),
         "rows_updated": 0 if dry_run else len(updates),
         "dry_run": dry_run,

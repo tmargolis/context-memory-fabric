@@ -75,10 +75,56 @@ class GeminiQuotaExhaustedError(RuntimeError):
     """
 
 
+# Transient-error classification, originally local to
+# server.providers.memory_graphiti's remember()/recall() retry loops, moved
+# here so server.consolidation.promotion can reach it too without importing
+# a provider-internal name: `promote_reviewed`'s wait-and-retry treatment
+# for GeminiQuotaExhaustedError (this LOCAL ledger's own pre-emptive block)
+# needs the identical treatment for a REAL Gemini API 429/503 that survived
+# remember()'s own bounded retry budget and reached promote_reviewed as a
+# plain exception — a distinct failure path this ledger cannot see coming,
+# since the local reservation believed there was headroom when the call was
+# allowed through. memory_graphiti re-exports these names unchanged so
+# every existing call site keeps working without modification.
+#
+# "429"/"resource_exhausted"/"quota"/"rate limit" catch real quota errors
+# (which get_graphiti_for_operation()'s rate-limit reservation should mostly
+# prevent from happening at all, but a call outside this process's own
+# ledger — e.g. concurrent AI Studio usage — can still trigger one).
+# "503"/"unavailable"/"high demand" catch transient server-side capacity
+# errors, unrelated to quota, observed independently on more than one
+# Gemini model during MS4a's own testing. Neither category implies a
+# specific model is permanently broken; both are worth a backoff retry.
+TRANSIENT_ERROR_MARKERS = {
+    "quota": ("429", "resource_exhausted", "quota", "rate limit"),
+    "unavailable": ("503", "unavailable", "high demand", "overloaded"),
+}
+
+
+def classify_transient_error(exc: Exception) -> Optional[str]:
+    err_msg = str(exc).lower()
+    for label, markers in TRANSIENT_ERROR_MARKERS.items():
+        if any(marker in err_msg for marker in markers):
+            return label
+    return None
+
+
+def is_transient_gemini_error(exc: Exception) -> bool:
+    return classify_transient_error(exc) is not None
+
+
 def _date_str(epoch_seconds: float) -> str:
     from datetime import datetime
 
     return datetime.fromtimestamp(epoch_seconds, tz=_PACIFIC).strftime("%Y-%m-%d")
+
+
+def _seconds_until_next_pacific_midnight(epoch_seconds: float) -> float:
+    from datetime import datetime, timedelta
+
+    now = datetime.fromtimestamp(epoch_seconds, tz=_PACIFIC)
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (tomorrow - now).total_seconds()
 
 
 def _default_state_path() -> Path:
@@ -209,6 +255,62 @@ class GeminiRateLimiter:
                 "journal; consolidation must wait for the next RPM window or "
                 "day boundary (midnight Pacific)."
             )
+
+    def seconds_until_headroom(self, estimated_calls: Optional[int] = None, now: Optional[float] = None) -> float:
+        """How long until `reserve(estimated_calls)` would succeed, best-effort.
+
+        0.0 means it would succeed right now. Added for MS6's promotion run:
+        `promote_reviewed` previously treated `GeminiQuotaExhaustedError` as
+        "stop the whole batch" even when the exhaustion was RPM-bound and
+        would clear within `_RPM_WINDOW_SECONDS` on its own — this is the
+        piece that lets a caller wait the actual right amount instead of
+        giving up. Distinguishes the two real cases: an RPM wall clears
+        within a minute (wait for the specific reservation that must age
+        out); an RPD wall does not clear until the Pacific day rolls over,
+        which can be hours — callers that don't want to block that long
+        should compare the return value against their own ceiling rather
+        than assume this is always short.
+
+        Does not mutate state — a plain read, not a reservation.
+        """
+        calls = estimated_calls if estimated_calls is not None else self._calls_per_operation
+        now = now if now is not None else time.time()
+
+        with self._lock:
+            state = self._load()
+            self._roll_day_if_needed(state, now)
+            best: Optional[float] = None
+            for model in self._chain:
+                budget = self._budgets[model]
+                bucket = self._model_bucket(state, model)
+                self._prune_minute_window(bucket, now)
+
+                # `calls > budget.rpm` is structurally unsatisfiable by this
+                # model at ANY point via RPM alone — the sliding window can
+                # never hold more than `rpm` entries, so no wait fixes it.
+                # Treat it the same as RPD exhaustion (this model is out
+                # until the day rolls over) rather than indexing before the
+                # start of `reqs` below. Real callers never hit this: every
+                # model in KNOWN_MODEL_BUDGETS has rpm >= DEFAULT_CALLS_PER_OPERATION.
+                if bucket["rpd_count"] + calls > budget.rpd or calls > budget.rpm:
+                    wait = _seconds_until_next_pacific_midnight(now)
+                else:
+                    reqs = sorted(bucket["minute_requests"])
+                    if len(reqs) + calls <= budget.rpm:
+                        return 0.0
+                    overflow = len(reqs) + calls - budget.rpm
+                    oldest_relevant = reqs[overflow - 1]
+                    # `_prune_minute_window` keeps `t >= now - WINDOW`, i.e.
+                    # a reservation is still counted exactly at the boundary
+                    # (>=, not >). Landing exactly on `oldest_relevant + WINDOW`
+                    # would therefore NOT prune it — a caller sleeping for
+                    # exactly the un-padded value would find itself still
+                    # blocked. The epsilon guarantees "strictly past."
+                    wait = max(0.0, (oldest_relevant + _RPM_WINDOW_SECONDS) - now) + 0.01
+
+                best = wait if best is None else min(best, wait)
+            self._save(state)  # persist the day-roll/pruning even on a pure read
+            return best if best is not None else 0.0
 
     def status(self, now: Optional[float] = None) -> dict:
         """Report current usage vs. ceiling for every model in the chain."""

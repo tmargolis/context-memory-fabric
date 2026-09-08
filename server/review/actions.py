@@ -21,6 +21,7 @@ because call 41 exhausted the Gemini free tier.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Optional
 
@@ -74,6 +75,82 @@ def apply_verdicts(
         fn(review_store, memory_id, reviewer=reviewer, reason=v.get("reason"))
         applied[verdict] = applied.get(verdict, 0) + 1
     return {"applied": applied, "total": sum(applied.values()), "errors": errors}
+
+
+def expand_evidence(
+    conn: sqlite3.Connection,
+    review_store: ReviewStore,
+    memory_id: str,
+    additional_event_ids: list[str],
+    reason: str,
+    reviewer: str = DEFAULT_REVIEWER,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Widen an episode's evidence citation with connecting journal turns.
+
+    A reasoning episode's `why` text sometimes references "turn N" — the
+    extractor's own position within the window it processed, not a link to
+    anything citable — while `evidence_event_ids_json` only ever names the
+    single anchor turn the episode was built from. The turns that actually
+    connect that anchor to the surrounding narrative are frequently never
+    captured, which is exactly the shape that made
+    openclaw-morning-briefing-overwrite's "turn 17" episode unreadable in
+    isolation: three sibling episodes from one 144-turn Mac Pro setup
+    conversation, each with exactly one evidence turn, sharing a thread_key
+    that (separately) turned out to span five unrelated conversations too.
+
+    Every `additional_event_ids` entry must exist and share the target
+    episode's own source conversation_id — this cannot attach turns from a
+    different conversation, which is the failure mode a "just add more
+    evidence" tool would otherwise invite. Existing citations are never
+    removed, only appended to, in citation order.
+
+    Audited via `ReviewStore.note()`, not `record()`: this changes what
+    evidence a reviewer sees, not a keep/drop verdict, so it has no reason
+    to touch `reviews.review_state`.
+    """
+    row = conn.execute(
+        "SELECT source_event_id, evidence_event_ids_json FROM derived_memories WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
+    if row is None:
+        return {"error": f"no derived_memories row for memory_id={memory_id!r}"}
+
+    anchor_conv = conn.execute(
+        "SELECT conversation_id FROM events WHERE event_id = ?", (row["source_event_id"],)
+    ).fetchone()
+    conv_id = anchor_conv["conversation_id"] if anchor_conv else None
+
+    bad: list[str] = []
+    for eid in additional_event_ids:
+        e = conn.execute("SELECT conversation_id FROM events WHERE event_id = ?", (eid,)).fetchone()
+        if e is None or e["conversation_id"] != conv_id:
+            bad.append(eid)
+    if bad:
+        return {
+            "error": "one or more event_ids do not exist or belong to a different conversation",
+            "bad_event_ids": bad,
+            "expected_conversation_id": conv_id,
+        }
+
+    prior = json.loads(row["evidence_event_ids_json"] or "[]")
+    added = [e for e in additional_event_ids if e not in prior]
+    merged = prior + added
+
+    if dry_run or not added:
+        return {"dry_run": True, "memory_id": memory_id, "prior_count": len(prior), "would_add": added}
+
+    conn.execute(
+        "UPDATE derived_memories SET evidence_event_ids_json = ? WHERE memory_id = ?",
+        (json.dumps(merged), memory_id),
+    )
+    conn.commit()
+    audit_id = review_store.note(
+        memory_id, "expand_evidence", reviewer, reason,
+        prior_state={"evidence_event_ids": prior},
+        new_state={"evidence_event_ids": merged, "added": added},
+    )
+    return {"dry_run": False, "memory_id": memory_id, "prior_count": len(prior), "new_count": len(merged),
+            "added": added, "audit_id": audit_id}
 
 
 def bulk_reject(
@@ -357,13 +434,18 @@ async def promote_approved(
     graph_name: Optional[str] = None,
     limit: Optional[int] = None,
     inter_call_delay: float = 3.5,
+    wait_through_rate_limit: bool = True,
+    max_single_wait_seconds: float = 6 * 3600,
 ) -> dict[str, Any]:
     """Promote everything currently `approved` and not already promoted.
 
     Thin wrapper over MS3.6's `promote_reviewed`, which already owns the
-    idempotency ledger, per-row failure isolation and the clean stop on
-    Gemini quota exhaustion. Re-running after a quota stop resumes exactly
-    where it left off, because approval lives in `reviews` and promotion
+    idempotency ledger and per-row failure isolation. By default it now
+    also waits out RPM-bound rate-limit stalls rather than aborting the
+    whole batch — see `promote_reviewed`'s docstring for why. Re-running
+    after a genuine stop (an RPD wall past `max_single_wait_seconds`, or
+    `wait_through_rate_limit=False`) still resumes exactly where it left
+    off either way, because approval lives in `reviews` and promotion
     lives in `promotions` — two ledgers, neither lost.
     """
     approved = [
@@ -387,4 +469,6 @@ async def promote_approved(
         dry_run=dry_run,
         graph_name=graph_name,
         inter_call_delay=inter_call_delay,
+        wait_through_rate_limit=wait_through_rate_limit,
+        max_single_wait_seconds=max_single_wait_seconds,
     )

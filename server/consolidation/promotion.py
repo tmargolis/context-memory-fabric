@@ -27,12 +27,28 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from server.consolidation.store import ConsolidationStore
-from server.core.rate_limiter import GeminiQuotaExhaustedError
+from server.core.rate_limiter import (
+    GeminiQuotaExhaustedError,
+    GeminiRateLimiter,
+    get_default_rate_limiter,
+    is_transient_gemini_error,
+)
 from server.journal.store import SqliteEventStore, DEFAULT_JOURNAL_PATH
 
 logger = logging.getLogger(__name__)
 
 RememberFn = Callable[..., Awaitable[dict[str, Any]]]
+
+# Fixed backoff for a real Gemini API 429/503 that survives remember()'s own
+# retry budget — see promote_reviewed's matching except block for why this
+# is a flat constant rather than rate_limiter.seconds_until_headroom(): the
+# local ledger already believed there was headroom (that's why the call was
+# attempted), so asking it again would just repeat the same wrong answer.
+# 65s rather than a bare 60s gives a small cushion past the RPM window's
+# own boundary, matching the epsilon GeminiRateLimiter.seconds_until_headroom
+# already adds for the same reason (landing exactly on the boundary is not
+# reliably past it).
+_API_TRANSIENT_ERROR_BACKOFF_SECONDS = 65.0
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS promotions (
@@ -262,6 +278,15 @@ def _reasoning_source_description(row: sqlite3.Row, harness: str) -> str:
     bits = [f"Promoted from {harness} via {row['policy_name']}@{row['policy_version']}"]
     if row["reasoning_kind"]:
         bits.append(f"reasoning_kind={row['reasoning_kind']}")
+    # MS6's project taxonomy (server.review.projects), threaded through as
+    # plain key=value text rather than Graphiti's group_id — group_id is a
+    # hard partition boundary for entity resolution/search, and this fabric's
+    # whole thesis is cross-cutting personal context; a per-project partition
+    # would stop e.g. "Todd's Mac Pro" from resolving as one entity across
+    # openclaw and career-navigator-dev. This is BM25-searchable free text,
+    # nothing more, deliberately.
+    if "project" in row.keys() and row["project"]:
+        bits.append(f"project={row['project']}")
     ev = _json.loads(row["evidence_event_ids_json"] or "[]") if "evidence_event_ids_json" in row.keys() else []
     if ev:
         bits.append(f"evidence={len(ev)} turn(s): {','.join(ev[:6])}")
@@ -278,14 +303,35 @@ async def promote_reviewed(
     dry_run: bool = True,
     graph_name: Optional[str] = None,
     inter_call_delay: float = 3.5,
+    wait_through_rate_limit: bool = True,
+    max_single_wait_seconds: float = 6 * 3600,
+    rate_limiter: Optional[GeminiRateLimiter] = None,
 ) -> dict[str, Any]:
     """Promote an explicit, human-approved list of `derived_memories` rows
     (any policy — reasoning-episode or heuristic) into episodic memory.
 
-    Same idempotency ledger, per-row failure isolation and
-    `GeminiQuotaExhaustedError` clean-stop as `promote_auto_accepted`. The
-    only difference is the candidate set: exactly `memory_ids`, in order,
-    rather than an `approval_state` query.
+    Same idempotency ledger and per-row failure isolation as
+    `promote_auto_accepted`. The candidate set is exactly `memory_ids`, in
+    order, rather than an `approval_state` query.
+
+    `GeminiQuotaExhaustedError` handling, when `wait_through_rate_limit`
+    (the default): sleep for exactly as long as
+    `GeminiRateLimiter.seconds_until_headroom()` says is needed, then
+    retry the SAME episode — it is never skipped or counted as failed for
+    a quota stall. A real 283-episode run hit this in practice: the local
+    ledger's rate estimate is deliberately conservative (`DEFAULT_CALLS_PER_OPERATION
+    = 3` reserved per remember() call, since Graphiti's add_episode() may
+    issue more than one underlying LLM call), so it can — and did — judge
+    the chain "exhausted" well before the account's real dashboard showed
+    a hard wall (19-20 RPM against a 15 RPM cap, not remotely a full-day
+    block), and an RPM wall clears on its own within about a minute. The
+    previous behavior (`stopped_early=True; break`) turned a ~60s wait
+    into "abandon the rest of the batch, needs a manual re-run" — this is
+    the fix. `max_single_wait_seconds` bounds any ONE wait (an RPD wall
+    can be hours from a Pacific-midnight boundary) so a genuinely
+    pathological config still stops instead of hanging indefinitely;
+    normal RPM stalls never come close to it. Set
+    `wait_through_rate_limit=False` to restore the old fail-fast behavior.
     """
     requested = list(dict.fromkeys(memory_ids))  # dedupe, keep order
     rows = consolidation_store.get_derived_memories(requested)
@@ -318,6 +364,12 @@ async def promote_reviewed(
         ]
         return result
 
+    result["waited_seconds"] = 0.0
+    result["quota_stalls"] = 0
+    result["api_stalls"] = 0
+    if rate_limiter is None and wait_through_rate_limit:
+        rate_limiter = get_default_rate_limiter()
+
     for row in candidates:
         memory_id = row["memory_id"]
         source_event = journal_store.get(row["source_event_id"])
@@ -325,25 +377,65 @@ async def promote_reviewed(
         episode_name = _episode_name_for(memory_id, row["event_date"])
         reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
 
-        try:
-            await remember_fn(
-                content=row["statement"],
-                name=episode_name,
-                source_description=_reasoning_source_description(row, harness),
-                reference_time=reference_time,
-            )
-            promotion_store.record_success(memory_id, episode_name, graph_name or "")
-            result["promoted"].append({"memory_id": memory_id, "episode_name": episode_name,
-                                       "reasoning_kind": row["reasoning_kind"]})
-        except GeminiQuotaExhaustedError as e:
-            logger.warning(f"promote_reviewed stopped early — rate limiter exhausted: {e}")
-            result["stopped_early"] = True
-            break
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to promote {memory_id}: {e}")
-            promotion_store.record_failure(memory_id, str(e))
-            result["failed"].append({"memory_id": memory_id, "error": str(e)})
-            continue
+        row_waited = 0.0
+        while True:
+            try:
+                await remember_fn(
+                    content=row["statement"],
+                    name=episode_name,
+                    source_description=_reasoning_source_description(row, harness),
+                    reference_time=reference_time,
+                )
+                promotion_store.record_success(memory_id, episode_name, graph_name or "")
+                result["promoted"].append({"memory_id": memory_id, "episode_name": episode_name,
+                                           "reasoning_kind": row["reasoning_kind"]})
+                break
+            except GeminiQuotaExhaustedError as e:
+                if not wait_through_rate_limit or row_waited >= max_single_wait_seconds:
+                    logger.warning(f"promote_reviewed stopped early — rate limiter exhausted: {e}")
+                    result["stopped_early"] = True
+                    return result
+                wait = rate_limiter.seconds_until_headroom()
+                wait = min(wait, max_single_wait_seconds - row_waited)
+                logger.warning(
+                    f"Rate limiter exhausted for {memory_id}; waiting {wait:.0f}s for headroom, "
+                    f"then retrying (not skipping, not counted as failed): {e}"
+                )
+                await asyncio.sleep(wait)
+                row_waited += wait
+                result["waited_seconds"] += wait
+                result["quota_stalls"] += 1
+                continue
+            except Exception as e:  # noqa: BLE001
+                # A real Gemini API 429/503 that survived remember()'s own
+                # bounded retry budget (2-3 attempts) is NOT a
+                # GeminiQuotaExhaustedError — that type is only raised by
+                # this process's own LOCAL pre-emptive reservation check,
+                # which believed there was headroom (that belief is exactly
+                # why the call was allowed through in the first place). A
+                # 283-episode run hit this directly: stopped_early stayed
+                # False the whole run (the local ledger never blocked
+                # pre-emptively) while 21 episodes still failed on genuine
+                # 429/RESOURCE_EXHAUSTED responses from Google. Calling
+                # rate_limiter.seconds_until_headroom() here would be
+                # self-deceiving — the local ledger is the thing that was
+                # just proven wrong — so this uses a fixed backoff instead,
+                # long enough to cover a real RPM-shaped wall.
+                if wait_through_rate_limit and is_transient_gemini_error(e) and row_waited < max_single_wait_seconds:
+                    wait = min(_API_TRANSIENT_ERROR_BACKOFF_SECONDS, max_single_wait_seconds - row_waited)
+                    logger.warning(
+                        f"Real API-side transient error for {memory_id} survived remember()'s own "
+                        f"retries; waiting {wait:.0f}s and retrying (not counted as failed): {e}"
+                    )
+                    await asyncio.sleep(wait)
+                    row_waited += wait
+                    result["waited_seconds"] += wait
+                    result["api_stalls"] += 1
+                    continue
+                logger.error(f"Failed to promote {memory_id}: {e}")
+                promotion_store.record_failure(memory_id, str(e))
+                result["failed"].append({"memory_id": memory_id, "error": str(e)})
+                break
 
         if inter_call_delay > 0:
             await asyncio.sleep(inter_call_delay)

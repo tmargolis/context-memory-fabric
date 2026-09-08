@@ -55,6 +55,21 @@ def episode(kind="decision", evidence=("e0",), statement="Chose SQLite for the j
     )
 
 
+class _FakeRateLimiter:
+    """A rate limiter test double whose wait is fixed and near-instant, so
+    tests exercise the real wait-and-retry loop in promote_reviewed
+    without actually sleeping or touching the real, process-global
+    persisted ledger (imports/state/gemini_rate_limiter_state.json)."""
+
+    def __init__(self, wait: float):
+        self.wait = wait
+        self.calls = 0
+
+    def seconds_until_headroom(self, *args, **kwargs) -> float:
+        self.calls += 1
+        return self.wait
+
+
 class MS36Base(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -115,10 +130,29 @@ class TestPromoteReviewed(MS36Base):
         self.assertIn("reasoning_kind=decision", self.calls[0]["source_description"])
         self.assertIn("evidence=1 turn(s)", self.calls[0]["source_description"])
 
-        again = await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember, ids, dry_run=False, inter_call_delay=0)
-        self.assertEqual(again["already_promoted"], 2)
-        self.assertEqual(again["eligible_this_run"], 0)
-        self.assertEqual(len(self.calls), 2)  # no new calls
+    async def test_source_description_carries_the_ms6_project_label(self):
+        """MS6's taxonomy (server.review.projects) tags derived_memories.project;
+        that label rides along as BM25-searchable text in source_description —
+        deliberately NOT Graphiti's group_id, which is a hard partition
+        boundary and would fragment entity resolution across projects."""
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        self.cons._conn.execute(
+            "UPDATE derived_memories SET project = 'openclaw' WHERE memory_id = ?",
+            ("r:0::reasoning-episode@0.2",),
+        )
+        self.cons._conn.commit()  # left open, this holds the writer lock and
+        # blocks PromotionStore's separate connection to the same file below
+        await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember,
+                                ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0)
+        self.assertIn("project=openclaw", self.calls[0]["source_description"])
+
+    async def test_source_description_omits_project_when_unset(self):
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember,
+                                ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0)
+        self.assertNotIn("project=", self.calls[-1]["source_description"])
 
     async def test_not_found_ids_reported(self):
         self.journal.append(ev("e0"))
@@ -149,7 +183,9 @@ class TestPromoteReviewed(MS36Base):
         self.assertEqual(len(run["failed"]), 1)
         self.assertIn("r:1::reasoning-episode@0.2", run["failed"][0]["memory_id"])
 
-    async def test_quota_exhaustion_stops_clean(self):
+    async def test_quota_exhaustion_stops_clean_when_wait_disabled(self):
+        # wait_through_rate_limit=False restores the pre-fix behavior:
+        # stop the whole batch immediately rather than sleep through it.
         for i in range(3):
             self.journal.append(ev(f"e{i}"))
             self._reason_row(f"r:{i}::reasoning-episode@0.2", episode(evidence=[f"e{i}"]))
@@ -165,6 +201,7 @@ class TestPromoteReviewed(MS36Base):
         run = await promote_reviewed(
             self.cons, self.journal, self.prom, limited,
             [f"r:{i}::reasoning-episode@0.2" for i in range(3)], dry_run=False, inter_call_delay=0,
+            wait_through_rate_limit=False,
         )
         self.assertTrue(run["stopped_early"])
         self.assertEqual(len(run["promoted"]), 1)
@@ -174,6 +211,115 @@ class TestPromoteReviewed(MS36Base):
             [f"r:{i}::reasoning-episode@0.2" for i in range(3)], dry_run=True,
         )
         self.assertEqual(again["eligible_this_run"], 2)
+
+    async def test_default_waits_through_an_rpm_stall_and_retries_the_same_episode(self):
+        # The real bug this fixes: a 283-episode run hit local rate-limit
+        # exhaustion (a conservative estimate, not the account's real
+        # dashboard limit) and the old code abandoned the rest of the
+        # batch rather than waiting the ~60s an RPM wall actually needs.
+        for i in range(2):
+            self.journal.append(ev(f"e{i}"))
+            self._reason_row(f"r:{i}::reasoning-episode@0.2", episode(evidence=[f"e{i}"]))
+
+        attempts = {"e0": 0}
+
+        async def flaky(**kw):
+            name = kw["name"]
+            if "r:0" in kw.get("source_description", "") and attempts["e0"] < 2:
+                attempts["e0"] += 1
+                raise GeminiQuotaExhaustedError("no headroom")
+            self.calls.append(kw)
+            return {}
+
+        fake_limiter = _FakeRateLimiter(wait=0.001)
+        run = await promote_reviewed(
+            self.cons, self.journal, self.prom, flaky,
+            ["r:0::reasoning-episode@0.2", "r:1::reasoning-episode@0.2"],
+            dry_run=False, inter_call_delay=0, rate_limiter=fake_limiter,
+        )
+        # r:0 stalled twice and STILL succeeded — never skipped, never
+        # counted as failed, no early stop.
+        self.assertFalse(run["stopped_early"])
+        self.assertEqual(len(run["promoted"]), 2)
+        self.assertEqual(len(run["failed"]), 0)
+        self.assertEqual(run["quota_stalls"], 2)
+        self.assertGreater(run["waited_seconds"], 0)
+        self.assertEqual(fake_limiter.calls, 2)
+
+    async def test_waits_through_a_real_api_429_that_survives_remembers_own_retries(self):
+        # This is the actual gap a real 283-episode run exposed:
+        # stopped_early stayed False the whole run (the LOCAL ledger never
+        # pre-emptively blocked — it believed there was headroom) while 21
+        # episodes still failed on genuine 429/RESOURCE_EXHAUSTED responses
+        # from Google, because that exception is a plain Exception from the
+        # Gemini SDK, never a GeminiQuotaExhaustedError, so the old code
+        # routed it straight to record_failure() with no retry at all.
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        attempts = {"n": 0}
+
+        async def real_api_429_then_ok(**kw):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise RuntimeError("429 RESOURCE_EXHAUSTED. You exceeded your current quota.")
+            self.calls.append(kw)
+            return {}
+
+        import server.consolidation.promotion as promotion_mod
+        original = promotion_mod._API_TRANSIENT_ERROR_BACKOFF_SECONDS
+        promotion_mod._API_TRANSIENT_ERROR_BACKOFF_SECONDS = 0.001
+        try:
+            run = await promote_reviewed(
+                self.cons, self.journal, self.prom, real_api_429_then_ok,
+                ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0,
+            )
+        finally:
+            promotion_mod._API_TRANSIENT_ERROR_BACKOFF_SECONDS = original
+
+        self.assertFalse(run["stopped_early"])
+        self.assertEqual(len(run["promoted"]), 1)
+        self.assertEqual(len(run["failed"]), 0)
+        self.assertEqual(run["api_stalls"], 1)
+        self.assertEqual(attempts["n"], 2)
+
+    async def test_a_genuinely_unrelated_error_is_not_retried_as_transient(self):
+        # A real bug (bad statement content, a schema mismatch, ...) must
+        # still fail fast — only the specific transient-shaped messages
+        # should ever trigger a wait.
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+
+        async def broken(**kw):
+            raise ValueError("content cannot be empty")
+
+        run = await promote_reviewed(
+            self.cons, self.journal, self.prom, broken,
+            ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0,
+        )
+        self.assertEqual(len(run["failed"]), 1)
+        self.assertEqual(run["api_stalls"], 0)
+
+    async def test_stops_and_reports_when_a_single_wait_exceeds_the_cap(self):
+        # A pathological case (or a genuine RPD wall many hours away) must
+        # still terminate rather than hang forever.
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+
+        async def always_exhausted(**kw):
+            raise GeminiQuotaExhaustedError("no headroom")
+
+        # The cap is only checked BEFORE each wait, so the first stall
+        # still sleeps in full before the (now-exceeded) budget stops the
+        # next one — keep both numbers small so the test itself is fast.
+        fake_limiter = _FakeRateLimiter(wait=0.05)
+        run = await promote_reviewed(
+            self.cons, self.journal, self.prom, always_exhausted,
+            ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0,
+            rate_limiter=fake_limiter, max_single_wait_seconds=0.03,
+        )
+        self.assertTrue(run["stopped_early"])
+        self.assertEqual(len(run["promoted"]), 0)
+        self.assertEqual(len(run["failed"]), 0, "a quota stall is not a failure, even when capped out")
 
 
 class TestTier1ReviewQueue(MS36Base):

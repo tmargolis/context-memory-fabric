@@ -129,7 +129,14 @@ class TestProjects(unittest.TestCase):
         self.rules = projects.load_rules(TAXONOMY)
 
     def classify(self, slug, statement=None):
-        return projects.classify(slug, statement, self.rules)
+        # `overrides` must be pinned too — `classify()` defaults it to the
+        # REAL taxonomy.local.json's overrides when omitted, same as it
+        # defaults `compiled` to the real rules. Passing `self.rules` but
+        # leaving overrides implicit made this fixture-based test silently
+        # pick up production overrides (caught when adding the
+        # career-navigator-dev split: this test started reading the real
+        # taxonomy.local.json instead of the fixture).
+        return projects.classify(slug, statement, self.rules, {})
 
     def test_first_match_wins_ordering(self):
         # career-navigator must beat the bare `claude` rule
@@ -148,14 +155,49 @@ class TestProjects(unittest.TestCase):
     def test_unknown_falls_back_to_misc_not_none(self):
         self.assertEqual(self.classify("zzz-unmatched-topic", "nothing relevant here"), projects.MISC)
 
-    def test_statement_is_a_fallback_when_slug_is_missing(self):
+    def test_statement_is_used_only_when_there_is_no_slug(self):
         self.assertEqual(self.classify(None, "The user decided to reconfigure the Synology NAS"), "mac-infra")
+
+    def test_statement_never_overrides_a_slug_that_matches_nothing(self):
+        """Prose mentions words in passing; the slug is the model's own label.
+
+        Matching the statement as a fallback put `condo-art-lighting` in
+        context-memory-fabric on the word "wiki" and `neurologist-follow-up-prep`
+        in mac-infra on "recovery". A slug that matches no rule means `misc`,
+        which is reviewed like any other bucket — a confidently wrong bucket
+        is the expensive outcome, not an honest unknown.
+        """
+        self.assertEqual(
+            self.classify("neurologist-follow-up-prep", "planning data recovery after the appointment"),
+            projects.MISC,
+        )
 
     def test_interlock_wins_over_openclaw_when_both_appear(self):
         # OpenClaw is its own project except when the subject is testing
         # Interlock on it, so the interlock rule is ordered first.
         self.assertEqual(self.classify("openclaw-interlock-integration-test"), "interlock")
         self.assertEqual(self.classify("openclaw-gateway-connection"), "openclaw")
+
+    def test_override_beats_every_rule(self):
+        """A reviewer's exact-match correction outranks the heuristics.
+
+        Corrections are frequently not patterns —
+        "tartan-weaving-mill-order-delay belongs in writing" is a judgement
+        about one thread. Forcing it into a regex would encode a word that
+        misfires elsewhere; an exact-match override cannot misfire.
+        """
+        rules = projects.load_rules(TAXONOMY)
+        self.assertEqual(projects.classify("openclaw-gateway-connection", None, rules), "openclaw")
+        self.assertEqual(
+            projects.classify("openclaw-gateway-connection", None, rules, {"openclaw-gateway-connection": "interlock"}),
+            "interlock",
+        )
+
+    def test_override_only_matches_the_exact_slug(self):
+        rules = projects.load_rules(TAXONOMY)
+        ov = {"condo-board-letter": "writing"}
+        self.assertEqual(projects.classify("condo-board-letter", None, rules, ov), "writing")
+        self.assertEqual(projects.classify("condo-board-letter-v2", None, rules, ov), "condo")
 
     def test_no_taxonomy_file_classifies_everything_misc(self):
         # Deliberate: a shipped default would be someone else's project list
@@ -368,6 +410,82 @@ class TestAuditChokepoint(MS6Base):
         self.assertEqual(len(result["errors"]), 1)
         self.assertEqual(self.rev.state_of(ids[0]), APPROVED)
         self.assertEqual(self.rev.state_of(ids[1]), PENDING)
+
+
+# ---------------------------------------------------------------------------
+# expand_evidence — widening a citation without touching a review verdict
+# ---------------------------------------------------------------------------
+class TestExpandEvidence(MS6Base):
+    def test_appends_connecting_turns_in_order(self):
+        for eid in ("e0", "e1", "e2"):
+            self.journal.append(ev(eid))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e1"]))
+        result = actions.expand_evidence(
+            self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["e0", "e2"],
+            reason="connecting turns for a fragmented narrative", dry_run=False,
+        )
+        self.assertFalse(result["dry_run"])
+        self.assertEqual(result["added"], ["e0", "e2"])
+        row = self.cons._conn.execute(
+            "SELECT evidence_event_ids_json FROM derived_memories WHERE memory_id='r:0::reasoning-episode@0.2'"
+        ).fetchone()
+        self.assertEqual(json.loads(row["evidence_event_ids_json"]), ["e1", "e0", "e2"])
+
+    def test_does_not_touch_review_state(self):
+        ids = self._seed(1)
+        actions.expand_evidence(self.cons._conn, self.rev, ids[0], [], reason="x", dry_run=False)
+        self.assertEqual(self.rev.state_of(ids[0]), PENDING)
+
+    def test_writes_an_audit_entry_without_a_reviews_row(self):
+        self.journal.append(ev("e0")); self.journal.append(ev("e5"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        actions.expand_evidence(
+            self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["e5"], reason="x", dry_run=False
+        )
+        self.assertIsNone(self.rev.get("r:0::reasoning-episode@0.2"))
+        audit = self.rev.audit_for("r:0::reasoning-episode@0.2")
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(audit[0]["action"], "expand_evidence")
+        self.assertEqual(json.loads(audit[0]["prior_state_json"])["evidence_event_ids"], ["e0"])
+        self.assertEqual(json.loads(audit[0]["new_state_json"])["added"], ["e5"])
+
+    def test_refuses_an_event_from_a_different_conversation(self):
+        self.journal.append(ev("e0"))
+        self.journal.append(SourceEvent(
+            schema_version="1.0", event_id="foreign", event_type="turn.completed",
+            source=SourceProvenance(harness="claude", conversation_id="other-conv", turn_id="foreign"),
+            observed_at=BASE, content={"text": "x"}, content_hash=compute_content_hash({"text": "x"}),
+            actor_type="user",
+        ))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        result = actions.expand_evidence(
+            self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["foreign"], reason="x", dry_run=False
+        )
+        self.assertIn("error", result)
+        self.assertEqual(result["bad_event_ids"], ["foreign"])
+        row = self.cons._conn.execute(
+            "SELECT evidence_event_ids_json FROM derived_memories WHERE memory_id='r:0::reasoning-episode@0.2'"
+        ).fetchone()
+        self.assertEqual(json.loads(row["evidence_event_ids_json"]), ["e0"])
+
+    def test_dry_run_by_default_and_deduplicates(self):
+        self.journal.append(ev("e0")); self.journal.append(ev("e1"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        dry = actions.expand_evidence(self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["e1"], reason="x")
+        self.assertTrue(dry["dry_run"])
+        row = self.cons._conn.execute(
+            "SELECT evidence_event_ids_json FROM derived_memories WHERE memory_id='r:0::reasoning-episode@0.2'"
+        ).fetchone()
+        self.assertEqual(json.loads(row["evidence_event_ids_json"]), ["e0"], "dry run must not write")
+
+        actions.expand_evidence(self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["e0", "e1"],
+                                 reason="x", dry_run=False)
+        already = actions.expand_evidence(self.cons._conn, self.rev, "r:0::reasoning-episode@0.2", ["e0", "e1"],
+                                           reason="x", dry_run=False)
+        self.assertEqual(already["dry_run"], True, "nothing new to add should short-circuit as a no-op")
+
+    def test_unknown_memory_id_is_reported_not_raised(self):
+        self.assertIn("error", actions.expand_evidence(self.cons._conn, self.rev, "nope", [], reason="x"))
 
 
 # ---------------------------------------------------------------------------

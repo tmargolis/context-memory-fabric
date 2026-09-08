@@ -32,7 +32,12 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
-from server.core.rate_limiter import GeminiQuotaExhaustedError, get_default_rate_limiter
+from server.core.rate_limiter import (
+    GeminiQuotaExhaustedError,
+    classify_transient_error as _classify_transient_error,
+    get_default_rate_limiter,
+    is_transient_gemini_error as _is_transient_gemini_error,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -40,32 +45,10 @@ logger = logging.getLogger(__name__)
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
 
-# Transient-error classification for remember()/recall()'s retry loops.
-# "429"/"resource_exhausted"/"quota"/"rate limit" catch real quota errors
-# (which get_graphiti_for_operation()'s rate-limit reservation should mostly
-# prevent from happening at all, but a call outside this process's own
-# ledger — e.g. concurrent AI Studio usage — can still trigger one).
-# "503"/"unavailable"/"high demand" catch transient server-side capacity
-# errors, unrelated to quota, observed independently on more than one
-# Gemini model during this milestone's own testing — see the MS4a section
-# of IMPLEMENTATION-PLAN.md for the specifics. Neither category implies a
-# specific model is permanently broken; both are worth a backoff retry.
-_TRANSIENT_ERROR_MARKERS = {
-    "quota": ("429", "resource_exhausted", "quota", "rate limit"),
-    "unavailable": ("503", "unavailable", "high demand", "overloaded"),
-}
-
-
-def _classify_transient_error(exc: Exception) -> Optional[str]:
-    err_msg = str(exc).lower()
-    for label, markers in _TRANSIENT_ERROR_MARKERS.items():
-        if any(marker in err_msg for marker in markers):
-            return label
-    return None
-
-
-def _is_transient_gemini_error(exc: Exception) -> bool:
-    return _classify_transient_error(exc) is not None
+# _classify_transient_error / _is_transient_gemini_error, used by
+# remember()/recall()'s retry loops below, are imported (and re-exported
+# under these same names, for every existing call site) from
+# server.core.rate_limiter — see that module for the full rationale.
 
 
 class MissingGraphConfigurationError(RuntimeError):
