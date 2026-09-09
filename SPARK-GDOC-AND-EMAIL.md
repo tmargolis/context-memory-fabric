@@ -31,8 +31,8 @@ The short version of what CMF will actually use:
 Mac                                    Spark (nanospark)
   CMF server                             LM Studio :1234
   FalkorDB (Docker, localhost:6379)  <-- SSH tunnel -->  GLM-4.7-Flash  (extraction)
-    graph `memory-fabric`       (Gemini-era, kept)       nomic-embed-text-v1.5 (embeddings)
-    graph `mem-fabric` (new, 768-dim)
+    graph `mem-fabric-gemini`       (Gemini-era, kept)       nomic-embed-text-v1.5 (embeddings)
+    graph `mem-fabric-local` (new, 768-dim)
   BGE reranker (local, sentence-transformers)
 ```
 

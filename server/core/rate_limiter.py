@@ -97,7 +97,23 @@ class GeminiQuotaExhaustedError(RuntimeError):
 # specific model is permanently broken; both are worth a backoff retry.
 TRANSIENT_ERROR_MARKERS = {
     "quota": ("429", "resource_exhausted", "quota", "rate limit"),
-    "unavailable": ("503", "unavailable", "high demand", "overloaded"),
+    # "model unloaded" is LM Studio's, not Google's: with Auto-Evict enabled a
+    # request to a different model can evict the one mid-generation, and the
+    # in-flight call dies with {"error": "Model unloaded."}. Observed live on
+    # the Spark. It is not an HTTP 5xx and matches none of the other markers,
+    # so without this entry it surfaces as a hard failure and aborts a batch
+    # run that a single retry would have carried through.
+    "unavailable": (
+        "503",
+        "unavailable",
+        "high demand",
+        "overloaded",
+        "model unloaded",
+        # Carried over from ReasoningEpisodePolicyV1's own marker tuple when
+        # that was folded into this shared classifier; Gemini uses this
+        # phrasing for capacity pushback.
+        "try again later",
+    ),
 }
 
 
@@ -160,20 +176,34 @@ class GeminiRateLimiter:
         budgets: dict[str, ModelBudget],
         state_path: Path,
         calls_per_operation: int = DEFAULT_CALLS_PER_OPERATION,
+        unmetered: bool = False,
     ) -> None:
         if not chain:
             raise ValueError("Model chain must contain at least one model.")
-        unknown = [m for m in chain if m not in budgets]
-        if unknown:
-            raise ValueError(
-                f"Model(s) {unknown} in the chain have no known budget in KNOWN_MODEL_BUDGETS. "
-                "Add them (with real numbers read from AI Studio) before including them in the chain."
-            )
+        if not unmetered:
+            unknown = [m for m in chain if m not in budgets]
+            if unknown:
+                raise ValueError(
+                    f"Model(s) {unknown} in the chain have no known budget in KNOWN_MODEL_BUDGETS. "
+                    "Add them (with real numbers read from AI Studio) before including them in the chain."
+                )
         self._chain = list(chain)
         self._budgets = budgets
         self._state_path = state_path
         self._calls_per_operation = max(1, calls_per_operation)
+        self._unmetered = unmetered
         self._lock = threading.Lock()
+
+    @property
+    def unmetered(self) -> bool:
+        """True when this limiter enforces nothing (local inference).
+
+        Not implemented as "budgets so large they never bind": that would
+        still load, mutate and re-save the JSON ledger on every reserve(),
+        and a 1,243-episode backfill issues thousands of reservations. An
+        unmetered limiter does no disk I/O at all.
+        """
+        return self._unmetered
 
     @property
     def chain(self) -> list[str]:
@@ -226,6 +256,9 @@ class GeminiRateLimiter:
         (defaults to calls_per_operation). Raises GeminiQuotaExhaustedError
         if no model in the chain has room.
         """
+        if self._unmetered:
+            return self._chain[0]
+
         calls = estimated_calls if estimated_calls is not None else self._calls_per_operation
         now = now if now is not None else time.time()
 
@@ -256,6 +289,54 @@ class GeminiRateLimiter:
                 "day boundary (midnight Pacific)."
             )
 
+    def reserve_model(self, model: str, calls: int = 1, now: Optional[float] = None) -> None:
+        """Reserve headroom against one *named* model, with no chain fallback.
+
+        `reserve()` answers "which model should I use", walking the chain
+        until one has room. That question is meaningless for the embedder:
+        there is exactly one embedding model and nothing to fall through to,
+        so the only useful answer is "yes" or GeminiQuotaExhaustedError.
+
+        This exists because the embedding quota is the ceiling CMF actually
+        hits. A measured `add_episode` issues 3 generation calls and ~20
+        embedding calls -- every entity name and edge fact is embedded
+        individually -- so the free tier's 1,000/day embedding limit caps
+        throughput near 50 episodes/day, well below what the 500 RPD
+        generation limit implies. Until this method existed nothing counted
+        those calls at all, and the ledger reported ample headroom right up
+        to a live 429.
+        """
+        if self._unmetered:
+            return
+
+        budget = self._budgets.get(model)
+        if budget is None:
+            raise ValueError(
+                f"No known budget for {model!r}; refusing to meter a model whose ceilings "
+                "are unknown. Add it to KNOWN_MODEL_BUDGETS with real numbers first."
+            )
+
+        now = now if now is not None else time.time()
+        with self._lock:
+            state = self._load()
+            self._roll_day_if_needed(state, now)
+            bucket = self._model_bucket(state, model)
+            self._prune_minute_window(bucket, now)
+
+            would_be_rpd = bucket["rpd_count"] + calls
+            would_be_rpm = len(bucket["minute_requests"]) + calls
+            if would_be_rpd > budget.rpd or would_be_rpm > budget.rpm:
+                self._save(state)
+                raise GeminiQuotaExhaustedError(
+                    f"{model} has no free-tier headroom for {calls} more call(s): "
+                    f"{bucket['rpd_count']}/{budget.rpd} today, "
+                    f"{len(bucket['minute_requests'])}/{budget.rpm} this minute."
+                )
+
+            bucket["rpd_count"] = would_be_rpd
+            bucket["minute_requests"].extend([now] * calls)
+            self._save(state)
+
     def seconds_until_headroom(self, estimated_calls: Optional[int] = None, now: Optional[float] = None) -> float:
         """How long until `reserve(estimated_calls)` would succeed, best-effort.
 
@@ -273,6 +354,9 @@ class GeminiRateLimiter:
 
         Does not mutate state — a plain read, not a reservation.
         """
+        if self._unmetered:
+            return 0.0
+
         calls = estimated_calls if estimated_calls is not None else self._calls_per_operation
         now = now if now is not None else time.time()
 
@@ -313,14 +397,32 @@ class GeminiRateLimiter:
             return best if best is not None else 0.0
 
     def status(self, now: Optional[float] = None) -> dict:
-        """Report current usage vs. ceiling for every model in the chain."""
+        """Report current usage vs. ceiling for every model with a ledger entry.
+
+        Reports the union of the chain and whatever the ledger has actually
+        recorded, not the chain alone. The chain-only version had a blind
+        spot exactly where it mattered: `gemini-embedding-001` is metered via
+        `reserve_model()` and is deliberately *not* in the chain (it has no
+        fallback sibling to walk to), so an operator checking status saw no
+        embedding usage at all -- right up to a live 429 on a quota nothing
+        was reporting.
+        """
+        if self._unmetered:
+            return {"day": None, "unmetered": True, "models": {}}
+
         now = now if now is not None else time.time()
         with self._lock:
             state = self._load()
             self._roll_day_if_needed(state, now)
-            report = {"day": state.get("day"), "models": {}}
-            for model in self._chain:
-                budget = self._budgets[model]
+            report: dict = {"day": state.get("day"), "unmetered": False, "models": {}}
+            tracked = list(dict.fromkeys([*self._chain, *state.get("models", {})]))
+            for model in tracked:
+                budget = self._budgets.get(model)
+                if budget is None:
+                    # A ledger entry with no budget can only come from a
+                    # hand-edited state file or a removed model; surface it
+                    # rather than raising KeyError on a reporting call.
+                    continue
                 bucket = self._model_bucket(state, model)
                 self._prune_minute_window(bucket, now)
                 report["models"][model] = {
@@ -328,6 +430,7 @@ class GeminiRateLimiter:
                     "rpm_limit": budget.rpm,
                     "rpd_used": bucket["rpd_count"],
                     "rpd_limit": budget.rpd,
+                    "in_chain": model in self._chain,
                 }
             self._save(state)
             return report
@@ -349,6 +452,29 @@ def get_default_rate_limiter() -> GeminiRateLimiter:
     global _DEFAULT_LIMITER
     with _DEFAULT_LIMITER_LOCK:
         if _DEFAULT_LIMITER is None:
+            # Imported here rather than at module scope purely to keep this
+            # module importable on its own; server.core.config has no
+            # dependency on it, so there is no cycle either way.
+            from server.core.config import load_config
+
+            config = load_config()
+            if config.llm_is_local:
+                # Local inference has no quota to enforce, so the ledger has
+                # nothing to protect. It is switched off rather than given
+                # unreachable ceilings: every reserve() would otherwise load,
+                # mutate and re-save a JSON file, and a full backfill issues
+                # thousands of them. The object still exists, and still
+                # raises the same exception type, so every caller's
+                # GeminiQuotaExhaustedError handling stays wired up for a
+                # later switch back to Gemini.
+                _DEFAULT_LIMITER = GeminiRateLimiter(
+                    chain=[config.local_llm_model],
+                    budgets={},
+                    state_path=_default_state_path(),
+                    unmetered=True,
+                )
+                return _DEFAULT_LIMITER
+
             chain_env = os.getenv("CMF_GEMINI_MODEL_CHAIN")
             chain = [m.strip() for m in chain_env.split(",") if m.strip()] if chain_env else list(DEFAULT_MODEL_CHAIN)
             calls_env = os.getenv("CMF_GEMINI_CALLS_PER_OPERATION")

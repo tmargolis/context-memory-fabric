@@ -32,6 +32,7 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
+from server.core.config import CMFConfig, load_config
 from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     classify_transient_error as _classify_transient_error,
@@ -91,28 +92,135 @@ def resolve_target_database(graph_name: Optional[str] = None) -> str:
     )
 
 
-def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
-    """Instantiate a Graphiti client configured with FalkorDB and Gemini.
-
-    `model` selects the LLM used for entity/fact extraction and reranking
-    (the embedder always uses gemini-embedding-001, which has ample
-    free-tier headroom and isn't part of the rate-limited fallback chain).
-    Defaults to the first model in the configured chain when omitted — used
-    for construction paths (edit_memory, reconcile_memories' Cypher access)
-    that need a Graphiti instance but never actually invoke the LLM client,
-    so no rate-limit reservation applies there. Callers that DO invoke the
-    LLM (remember/recall) must go through get_graphiti_for_operation()
-    instead, which reserves a model from the rate limiter first.
-    """
+def _require_gemini_key() -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set. Add it to the project-root .env file.")
+    return api_key
+
+
+def _build_llm_client(config: CMFConfig, resolved_model: str):
+    """LLM client for entity/fact extraction, per CMF_LLM_PROVIDER."""
+    if not config.llm_is_local:
+        api_key = _require_gemini_key()
+        return GeminiClient(
+            config=LLMConfig(api_key=api_key, model=resolved_model, small_model=resolved_model)
+        )
+
+    from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+
+    from server.providers.lmstudio_client import LMStudioCompatClient
+
+    # OpenAIGenericClient, not OpenAIClient: the generic one targets arbitrary
+    # OpenAI-compatible endpoints. The injected client applies LM Studio's two
+    # required fixups — see server/providers/lmstudio_client.py.
+    return OpenAIGenericClient(
+        config=LLMConfig(
+            api_key=config.local_api_key,
+            base_url=config.local_base_url,
+            model=resolved_model,
+            small_model=resolved_model,
+        ),
+        client=LMStudioCompatClient(config.local_base_url, config.local_api_key),
+        structured_output_mode=config.local_structured_mode,
+    )
+
+
+def _build_embedder(config: CMFConfig):
+    """Embedder, per CMF_EMBED_PROVIDER.
+
+    The explicit `embedding_dim` is load-bearing in both branches:
+    OpenAIEmbedder slices every vector to `embedding[: embedding_dim]`, so a
+    value wider than the model actually returns is a silent no-op while a
+    narrower one silently truncates. Neither raises. `assert_embedding_width`
+    below is the guard that turns that into a real failure.
+    """
+    if not config.embed_is_local:
+        from server.providers.metered_embedder import maybe_meter
+
+        api_key = _require_gemini_key()
+        # Wrapped so embedding calls are debited against the free tier. They
+        # were not, and at ~20 embeddings per episode they are the ceiling CMF
+        # reaches first — see server/providers/metered_embedder.py.
+        return maybe_meter(
+            GeminiEmbedder(
+                config=GeminiEmbedderConfig(
+                    api_key=api_key,
+                    embedding_model="gemini-embedding-001",
+                )
+            ),
+            embed_is_local=False,
+        )
+
+    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+
+    return OpenAIEmbedder(
+        config=OpenAIEmbedderConfig(
+            api_key=config.local_api_key,
+            base_url=config.local_base_url,
+            embedding_model=config.local_embed_model,
+            embedding_dim=config.embedding_dim,
+        )
+    )
+
+
+def _build_cross_encoder(config: CMFConfig, resolved_model: str):
+    """Reranker. Local deployments cannot use a Gemini or OpenAI reranker.
+
+    `OpenAIRerankerClient` is specifically unusable against LM Studio: it
+    scores via `logit_bias` on hardcoded OpenAI BPE token ids, which map to
+    unrelated tokens under GLM's or Qwen's tokenizer. See
+    server/providers/reranker.py.
+    """
+    if not config.llm_is_local:
+        api_key = _require_gemini_key()
+        return GeminiRerankerClient(config=LLMConfig(api_key=api_key, model=resolved_model))
+
+    from server.providers.reranker import PASSTHROUGH, make_cross_encoder
+
+    return make_cross_encoder(os.getenv("CMF_RERANKER", PASSTHROUGH))
+
+
+def resolve_llm_model(config: Optional[CMFConfig] = None, model: Optional[str] = None) -> str:
+    """The model id for extraction, from whichever provider is configured.
+
+    The rate limiter's chain is a list of *Gemini* model ids, so it is only a
+    meaningful default when extraction actually runs on Gemini. On the local
+    path the model comes from CMF_LOCAL_LLM_MODEL instead.
+    """
+    if model:
+        return model
+    config = config or load_config()
+    if config.llm_is_local:
+        return config.local_llm_model
+    return get_default_rate_limiter().chain[0]
+
+
+def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+    """Instantiate a Graphiti client configured with FalkorDB and the configured providers.
+
+    `model` selects the LLM used for entity/fact extraction and reranking.
+    Defaults to the first model in the rate limiter's chain on the Gemini
+    path, or CMF_LOCAL_LLM_MODEL on the local one — used for construction
+    paths (edit_memory, reconcile_memories' Cypher access) that need a
+    Graphiti instance but never actually invoke the LLM client, so no
+    rate-limit reservation applies there. Callers that DO invoke the LLM
+    (remember/recall) must go through get_graphiti_for_operation() instead,
+    which reserves a model from the rate limiter first.
+
+    Extraction and embedding are selected independently (CMF_LLM_PROVIDER /
+    CMF_EMBED_PROVIDER) so the hybrid — local embeddings, Gemini extraction —
+    is a config change. That is not hypothetical: the Gemini embedding quota
+    (1,000/day) is unmetered by the rate limiter and is the ceiling CMF hits
+    first. See SPARK-MIGRATION-PLAN.md.
+    """
+    config = load_config()
 
     falkor_host = os.getenv("FALKORDB_HOST", "localhost")
     falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
     falkor_password = os.getenv("FALKORDB_PASSWORD") or None
     target_database = resolve_target_database(graph_name)
-    resolved_model = model or get_default_rate_limiter().chain[0]
+    resolved_model = resolve_llm_model(config, model)
 
     driver = FalkorDriver(
         host=falkor_host,
@@ -121,34 +229,35 @@ def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = Non
         database=target_database,
     )
 
-    llm_client = GeminiClient(
-        config=LLMConfig(
-            api_key=api_key,
-            model=resolved_model,
-            small_model=resolved_model,
-        )
-    )
-
-    embedder = GeminiEmbedder(
-        config=GeminiEmbedderConfig(
-            api_key=api_key,
-            embedding_model="gemini-embedding-001",
-        )
-    )
-
-    cross_encoder = GeminiRerankerClient(
-        config=LLMConfig(
-            api_key=api_key,
-            model=resolved_model,
-        )
-    )
-
     return Graphiti(
         graph_driver=driver,
-        llm_client=llm_client,
-        embedder=embedder,
-        cross_encoder=cross_encoder,
+        llm_client=_build_llm_client(config, resolved_model),
+        embedder=_build_embedder(config),
+        cross_encoder=_build_cross_encoder(config, resolved_model),
     )
+
+
+async def assert_embedding_width(graphiti: Graphiti, expected: Optional[int] = None) -> int:
+    """Embed a probe string and fail loudly if the width is not as configured.
+
+    Exists because every layer here fails silently on a width mismatch:
+    OpenAIEmbedder slices rather than raises, FalkorDB accepts whatever it is
+    handed, and graphiti_core.search falls back to `[0.0] * EMBEDDING_DIM`
+    from a module constant frozen at import. A graph can therefore be built
+    entirely from vectors of the wrong width with nothing raised anywhere —
+    and the symptom is merely poor recall, which is easy to misread as a
+    model-quality problem. Call this once after switching providers.
+    """
+    expected = expected if expected is not None else load_config().embedding_dim
+    vector = await graphiti.embedder.create(input_data="cmf embedding width probe")
+    actual = len(vector)
+    if actual != expected:
+        raise RuntimeError(
+            f"Embedder returned {actual}-dimension vectors but EMBEDDING_DIM is {expected}. "
+            f"Writing these into a {expected}-dimension graph would corrupt it silently. "
+            f"Set EMBEDDING_DIM={actual} and point FALKORDB_DATABASE at a fresh graph."
+        )
+    return actual
 
 
 def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:

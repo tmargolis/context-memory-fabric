@@ -433,7 +433,7 @@ async def promote_approved(
     dry_run: bool = True,
     graph_name: Optional[str] = None,
     limit: Optional[int] = None,
-    inter_call_delay: float = 3.5,
+    inter_call_delay: Optional[float] = None,
     wait_through_rate_limit: bool = True,
     max_single_wait_seconds: float = 6 * 3600,
 ) -> dict[str, Any]:

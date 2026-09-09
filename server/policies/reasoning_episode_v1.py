@@ -38,7 +38,12 @@ import os
 from typing import Callable, Optional
 
 from server.core.models import REASONING_KINDS, DatePrecision, SourceEvent
-from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter, get_default_rate_limiter
+from server.core.rate_limiter import (
+    GeminiQuotaExhaustedError,
+    GeminiRateLimiter,
+    classify_transient_error,
+    get_default_rate_limiter,
+)
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
 
 logger = logging.getLogger(__name__)
@@ -100,7 +105,30 @@ Respond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...
 "confidence": 0.0, "turn_numbers": [1], "substance_in_assistant_turns": false } ] }"""
 
 
-_TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "high demand", "overloaded", "try again later")
+# Retained as a module constant because several modules key their queries on
+# "the current reasoning policy version"; a literal repeated in four files is
+# how a version bump silently stops matching rows. Import this instead.
+#
+# 0.3 (2026-09-08): extraction can now run on a Spark-local model
+# (CMF_LLM_PROVIDER=local) instead of Gemini. A different extraction model is
+# a different policy: episodes derived by GLM-4.7-Flash and by Gemini must not
+# share a version bucket, or the Phase 7 quality comparison has nothing to
+# compare. Nothing is re-extracted by the bump itself -- existing rows stay at
+# their own version and remain reviewable via --policy-version.
+REASONING_POLICY_VERSION = "0.3"
+
+
+def _is_retryable_capacity_error(exc: Exception) -> bool:
+    """True for a provider-side capacity blip worth retrying, quota aside.
+
+    Delegates to server.core.rate_limiter's shared classification rather than
+    keeping a private marker tuple, so LM Studio's `{"error": "Model
+    unloaded."}` -- Auto-Evict killing an in-flight request -- is recognised
+    here too. Quota rejections are deliberately excluded: evaluate_window
+    re-raises those as GeminiQuotaExhaustedError so the pipeline stops clean
+    rather than burning its retry budget on a wall that will not move.
+    """
+    return classify_transient_error(exc) == "unavailable"
 
 
 def _default_generate(model: str, prompt: str) -> str:
@@ -129,14 +157,123 @@ def _default_generate(model: str, prompt: str) -> str:
             )
             return resp.text or "{}"
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            transient = any(m in msg for m in _TRANSIENT_MARKERS) and "RESOURCE_EXHAUSTED" not in msg
-            if transient and attempt < 2:
+            if _is_retryable_capacity_error(exc) and attempt < 2:
                 _time.sleep(2 * (attempt + 1))
                 continue
             raise
 
     raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
+
+
+# JSON Schema for the reply, used only in json_schema mode. Mirrors the shape
+# the prompt already describes and _to_episode already reads; kept permissive
+# (every field nullable, nothing beyond `episodes` required) because the
+# grammar's job here is to guarantee *parseable* output, not to second-guess
+# the prompt's own instructions about when a field should be null.
+_EPISODES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "episodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "reasoning_kind": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "driving_question": {"type": ["string", "null"]},
+                    "rationale": {"type": ["string", "null"]},
+                    "alternatives": {"type": ["string", "null"]},
+                    "status": {"type": ["string", "null"]},
+                    # Required and non-nullable, unlike the prompt's "or null".
+                    # Gemini populated thread_key on 1,242 of 1,243 real rows;
+                    # GLM under constrained decoding returned null whenever the
+                    # grammar permitted it. The field is load-bearing — it is
+                    # what consolidation/threads.py matches conversations on and
+                    # what review/projects.py buckets by — so a nullable slot
+                    # here is a silent regression in thread continuity rather
+                    # than a harmless omission.
+                    "thread_key": {"type": "string"},
+                    "thread_title": {"type": ["string", "null"]},
+                    "confidence": {"type": "number"},
+                    "turn_numbers": {"type": "array", "items": {"type": "integer"}},
+                    "substance_in_assistant_turns": {"type": "boolean"},
+                },
+                "required": [
+                    "reasoning_kind",
+                    "statement",
+                    "confidence",
+                    "turn_numbers",
+                    "thread_key",
+                ],
+            },
+        }
+    },
+    "required": ["episodes"],
+}
+
+
+def _local_generate(model: str, prompt: str) -> str:
+    """Same contract as _default_generate, against LM Studio on the Spark.
+
+    Routed through LMStudioCompatClient rather than a bare AsyncOpenAI so the
+    two LM Studio quirks are handled in one place: `json_object` is rewritten
+    to `text` (LM Studio accepts only `json_schema` or `text`), and a reply
+    whose JSON landed in `reasoning_content` with an empty `content` is
+    rescued. The latter is not an edge case -- GLM-4.7-Flash does it on every
+    constrained-decoding call.
+
+    Synchronous by contract (GenerateFn returns str, and evaluate_window is
+    sync), so the async client is driven with asyncio.run. Safe because this
+    policy is only ever called from the synchronous consolidation pipeline;
+    if that ever moves onto an event loop this needs an async sibling.
+    """
+    import asyncio
+    import time as _time
+
+    from server.core.config import load_config
+    from server.providers.lmstudio_client import LMStudioCompatClient
+
+    config = load_config()
+    client = LMStudioCompatClient(config.local_base_url, config.local_api_key)
+
+    if config.local_structured_mode == "json_schema":
+        response_format: dict = {
+            "type": "json_schema",
+            "json_schema": {"name": "reasoning_episodes", "schema": _EPISODES_SCHEMA},
+        }
+    else:
+        response_format = {"type": "text"}
+
+    async def _call() -> str:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format=response_format,
+            temperature=0.2,
+            # Generous: reasoning models spend most of their output budget in
+            # the thinking channel (GLM measured at ~3,000-5,800 tokens per
+            # extraction), and a truncated reply is an unparseable one.
+            max_tokens=16384,
+        )
+        return resp.choices[0].message.content or "{}"
+
+    for attempt in range(3):
+        try:
+            return asyncio.run(_call())
+        except Exception as exc:  # noqa: BLE001
+            if _is_retryable_capacity_error(exc) and attempt < 2:
+                _time.sleep(2 * (attempt + 1))
+                continue
+            raise
+
+    raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
+
+
+def _select_generate_fn() -> GenerateFn:
+    """Pick the model call for the configured provider, at construction time."""
+    from server.core.config import load_config
+
+    return _local_generate if load_config().llm_is_local else _default_generate
 
 
 class ReasoningEpisodePolicyV1:
@@ -151,14 +288,14 @@ class ReasoningEpisodePolicyV1:
     # turn, not just the first), (b) a real bar for "is this reasoning"
     # (explicit exclusions for task requests / lookups / wording tweaks),
     # (c) graded confidence guidance instead of a de-facto flat 0.9-1.0.
-    version = "0.2"
+    version = REASONING_POLICY_VERSION
 
     def __init__(
         self,
         generate_fn: Optional[GenerateFn] = None,
         rate_limiter: Optional[GeminiRateLimiter] = None,
     ) -> None:
-        self._generate = generate_fn or _default_generate
+        self._generate = generate_fn or _select_generate_fn()
         self._rate_limiter = rate_limiter or get_default_rate_limiter()
         # MS3.5 exit-gate instrumentation — read by the reprocess probe.
         self.episodes_total = 0

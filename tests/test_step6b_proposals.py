@@ -17,6 +17,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import pytest
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -183,6 +184,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         all_props = list_proposals(proposals_dir=self.proposals_dir)
         self.assertIn(prop.proposal_id, [p.proposal_id for p in all_props])
 
+    @pytest.mark.live
     async def test_full_five_tool_mcp_contract(self):
         """Verify the complete 5-tool semantic contract."""
         # 1. MCP Tool Registration

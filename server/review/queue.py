@@ -24,6 +24,7 @@ import sqlite3
 from typing import Any, Optional
 
 from server.consolidation.promotion import PromotionStore, default_tier
+from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
 from server.review.explain import parse_reason, resolve_evidence
 from server.review.store import PENDING, ReviewStore
 
@@ -35,7 +36,7 @@ def review_queue(
     conn: sqlite3.Connection,
     review_store: ReviewStore,
     promotion_store: PromotionStore,
-    policy_version: str = "0.2",
+    policy_version: str = REASONING_POLICY_VERSION,
     tier: Optional[int] = 1,
     projects: Optional[list[str]] = None,
     harness: Optional[str] = None,

@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import pytest
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -74,6 +75,7 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(tool.annotations.idempotent_hint)
         self.assertFalse(tool.annotations.destructive_hint)
 
+    @pytest.mark.live
     async def test_edit_memory_dry_run(self):
         """Verify dry_run previews changes without modifying state."""
         # Seed a synthetic fixture episode so this test is self-contained and
@@ -115,6 +117,7 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await edit_memory(target_query="   ", new_reference_time="2025-01-13")
 
+    @pytest.mark.live
     async def test_reconcile_memories_registration_and_dry_run(self):
         """Verify reconcile_memories is registered in server.mcp and works with dry_run."""
         tools = await app.list_tools()
@@ -154,6 +157,7 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
         self.assertIn("- **Candidates Discarded / Rejected:** 1", md_reject)
         self.assertIn("Test rejection reason.", md_reject)
 
+    @pytest.mark.live
     async def test_mcp_boundary_protocol_calls(self):
         """Verify calling reconcile_memories, import_memories, and edit_memory over the MCP protocol boundary."""
         # 1. Reconcile memories tool call

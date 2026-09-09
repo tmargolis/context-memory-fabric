@@ -61,6 +61,14 @@ source exports → journal (19,012 events) → per-event classification (heurist
 
 **Next: MS6 — Review and governance** ([plan-active.md](plan-active.md#ms6--review-and-governance)). Build the surface to move the staged backlog into the graph — **bulk review by thread / kind / tier**, plus evidence-trace ("why does this memory exist"), correction, audit, and scopes.
 
+### Parallel track — Spark local-inference migration (2026-09-09)
+
+Tracked in its own file: [SPARK-MIGRATION-PLAN.md](../SPARK-MIGRATION-PLAN.md). Replaces the Gemini Developer API as CMF's LLM + embedding backend with models served from the DGX Spark. **Phases 0-6 complete; Phase 7 (quality A/B) outstanding.** What changed that the milestone docs depend on:
+
+- **The production graph is now split.** `memory-fabric` was renamed to **`mem-fabric-gemini`** (retained untouched, 1024-dim, 337/337/187) and a fresh **`mem-fabric-local`** built (768-dim; 559 Entity / 567 RELATES_TO). Its content is the **MS6a tier-1-approved set** — 295 episodes (reviewer todd, 2026-09-08, 295 approved / 6 rejected of ~301 routed to tier 1) re-promoted on GLM-4.7-Flash + `nomic-embed-text`, the same set that was also promoted into `mem-fabric-gemini`. `.env` still points at `mem-fabric-gemini` — flipping is a deliberate step, not yet taken.
+- **The MS4a cost gate is superseded** (D5). Local inference has no per-call cost, so `server/core/rate_limiter.py` is now a *throughput* control on the Gemini path and unmetered on the local path — see "Privacy and cost" below.
+- **Phase 7 is where the GLM-vs-Gemini extraction-quality decision gets made.** A first-look inspection (2026-09-09) found entity/edge quality below Gemini's — pronoun entities, self-referential and duplicate edges, surface-fragment entities. If GLM can't be recovered, the fallback is the hybrid (Gemini extraction, local embeddings), which Phase 1's split provider vars already allow.
+
 ---
 
 ## Exit-gate decisions log
@@ -89,6 +97,8 @@ Graphiti sends every ingested episode to the Gemini Developer API for entity ext
 1. **Journal everything locally** (cheap), **consolidate selectively** (expensive, remote) — the natural shape of the MS2/MS3 split, and the default.
 2. **Budget ceiling** — a hard free-tier RPM/RPD gate (`server/core/rate_limiter.py`), not a soft dollar estimate; capture continues to the journal after the cap so nothing is lost.
 3. **Local extraction** for sensitive content classes — deferred. The reasoning workload (MS3.5) is the intended first tenant of the Spark local-inference stack once its validation sequence runs; content-class routing is revisited then, not before.
+
+**Amended 2026-09-09 (Spark migration D5).** The Spark local-inference stack is now built (Phases 0-6). On `CMF_LLM_PROVIDER=local` there is no per-call cost, so the item-2 ceiling stops being a spend control and becomes a pure throughput control; the ledger is not touched at all on the local path. On the Gemini path the ceiling stands, and Phase 4 closed a real gap — the embedder was never metered, and ~20 embeddings/episode (not the assumed ~3 LLM calls) was the constraint that actually exhausted the free tier. Content-class routing is still deferred; the whole reasoning workload now runs local regardless of class.
 
 ### Observability
 

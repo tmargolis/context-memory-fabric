@@ -26,6 +26,7 @@ from server.consolidation.store import ConsolidationStore
 from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 from server.journal.identity import compute_content_hash
 from server.journal.store import SqliteEventStore
+from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
 from server.review import actions, projects
 from server.review.explain import explain, parse_reason, resolve_evidence
@@ -91,7 +92,7 @@ class MS6Base(unittest.IsolatedAsyncioTestCase):
     def _reason_row(self, mid, epi):
         self.cons.record_reasoning_episode(
             job_id=f"job:{mid}", memory_id=mid, episode=epi,
-            policy_name="reasoning-episode", policy_version="0.2",
+            policy_name="reasoning-episode", policy_version=REASONING_POLICY_VERSION,
             approval_state="queued_for_review", supersedes=None,
         )
 

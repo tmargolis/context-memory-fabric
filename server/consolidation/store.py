@@ -34,6 +34,7 @@ from typing import Any, Optional
 
 from server.journal.store import DEFAULT_JOURNAL_PATH
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
+from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS derived_memories (
@@ -400,7 +401,7 @@ class ConsolidationStore:
         ).fetchall()
 
     def mark_superseded_by_reasoning(
-        self, heuristic_version: str, reasoning_version: str = "0.2", dry_run: bool = False
+        self, heuristic_version: str, reasoning_version: str = REASONING_POLICY_VERSION, dry_run: bool = False
     ) -> dict[str, Any]:
         """MS3.6 coverage-based auto-resolve: a heuristic `queued_for_review`
         row whose `source_event_id` is already cited by a reasoning episode's
