@@ -118,6 +118,55 @@ both models resident.
   rate-limiter path writes no ledger; the promotion path is not used).
 
 **Undo:** `docker exec context-memory-fabric-falkordb redis-cli GRAPH.DELETE spark-phase7-q122`
+*(kept for now — may append more episodes for a wider miss-rate sample)*
+
+Run: 8/8 ingested, **6–56 s/episode, ~27 s avg** (≈ 2.2 h for 295, ≈ 9 h for 1,243 —
+comparable to GLM, not the feared multi-minute-per-episode).
+
+### 4a. 3-way result — Gemini / GLM / qwen3.5-122b, 8 episodes — [READ-ONLY]
+
+| | ent/ep | edge/ep | pronoun | self-loop | garbage | dup |
+|---|--:|--:|--:|--:|--:|--:|
+| Gemini | 2.12 | 1.12 | 0 | 0 | 0 | 0 |
+| GLM | 2.62 | 2.25 | 2 | 0 | 0 | 4 |
+| **qwen-122b** | 2.25 | 0.75 | **0** | **0** | **0** | **0** |
+
+**qwen-122b is clean on every defect class GLM failed** — no pronoun entities, no
+self-loops, no paraphrase-spam, no garbage. On hygiene it matches Gemini.
+
+Per-episode vs Gemini:
+- **≥ Gemini:** obsidian (caught `.obsidian/workspace*` + coherent edges), Spain/Morocco
+  (best edges of the three), openclaw (`OpenClaw`, = Gemini), career-nav (also caught
+  `Phase 1`/`Phase 3`), condo (both correctly empty).
+- **< Gemini — under-extraction:** **0 entities on 3 of 8** (astro-exposures, 3d,
+  and no edges on exhibition) where Gemini pulled real entities + edges every time.
+  qwen-122b's failure mode is Gemini's (conservatism) but more often — 3/8 here vs
+  Gemini's ~1/8.
+
+vs GLM: **qwen-122b wins on all 8** — no hallucination (GLM invented `Product Manager`
+on the 3d episode), no fragments (`configuration`, `corrupted session state`), no
+pronoun subjects, no 7-edge spam clusters.
+
+Side note: none of the three extract `Spain` / `Morocco` on `promoted_20260830…` —
+because the *promoted statement* only says "Morocco zones toggle layer" (a UI element)
+and never mentions the trip. That is a **reasoning-episode synthesis** gap, not an
+extraction-model gap.
+
+### Verdict — revised
+
+- **qwen3.5-122b fixes GLM's disqualifying defects.** All-local extraction is back on
+  the table — the earlier "GLM sinks it, go hybrid" no longer holds.
+- **But qwen-122b under-extracts more than Gemini** (0/8 → 3/8 total misses on this
+  small set). 8 episodes is too few to trust 37% vs ~12%; needs a wider sample to
+  decide if that miss rate is acceptable for a memory graph.
+- Throughput is fine (~27 s/episode).
+
+**Options for Todd:**
+1. Wider confirmation run (~25–30 more episodes through qwen-122b into the same
+   throwaway graph) to pin the real miss rate, then decide all-local-qwen vs hybrid.
+2. Adopt qwen-122b now, accept the miss rate, full re-promotion (~2 h for 295).
+3. Hybrid (Gemini extraction + local embed) — safest recall, config-only, ~2 days
+   for the 295 (limiter-paced).
 
 ---
 
