@@ -1,6 +1,6 @@
 # Migrating CMF off Gemini onto Spark-local models
 
-**Status:** Phases 0-6 complete. Only Phase 7 (quality A/B) remains. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 5 — Phases 0-6 built and verified; graph rebuilt into `mem-fabric-local`; first-look inspection findings folded into Phase 7).
+**Status:** Phases 0-6 complete. Phase 7 quality gate **answered** — extraction model changed from GLM-4.7-Flash to **qwen3.5-122b-a10b + an extraction-instructions nudge** (D1 revised; see [docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md)). Re-promotion of the 295 tier-1 episodes into a fresh `mem-fabric-local` on the new extractor is the remaining execution step. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 6 — Phase 7 A/B done: GLM rejected, qwen3.5-122b adopted; GLM graph renamed `mem-fabric-local-glm`).
 **Scope:** replace the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint.
 
 Related: [plan-active.md](plan-active.md) · [adr/0002-provider-boundaries.md](adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
@@ -209,14 +209,17 @@ One caution: all three burn **4,000–5,800 completion tokens per extraction cal
 
 ## 4. Decisions — resolved
 
-**D1 — Extraction model: GLM-4.7-Flash, via the client proxy, in Mode B.** ✅ *Resolved: durable route preferred over switching to `qwen3-coder-30b`.*
+**D1 — Extraction model: ~~GLM-4.7-Flash~~ → `unsloth/qwen3.5-122b-a10b`, Mode A (`json_schema`), + `EXTRACTION_INSTRUCTIONS`.** ✅ *Revised 2026-09-09 after the Phase 7 A/B ([docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md)).*
 
-GLM is verified working on a realistic extraction prompt (12 entities, 10 edges). The proxy carries both behaviours so the mode is a config flag rather than a rewrite:
+The A/B compared Gemini vs GLM extraction of the same 275 tier-1 statements (both already in the two graphs — no new inference), then re-ran a 38-episode subset through qwen3.5-122b:
 
-1. **Request side (Mode B, primary):** rewrite `response_format: {"type":"json_object"}` → `{"type":"text"}` (§3.2). Graphiti has already appended the schema to the prompt in that mode, so nothing is lost.
-2. **Response side (Mode A fallback, guarded):** when `content` is empty and `reasoning_content` parses as JSON, promote it into `content` (§3.1).
+- **GLM rejected.** Over the 275: 47 pronoun entities (`user` / `The user`), 8 self-referential edges, paraphrase-spam (one pair carried 12 near-dup facts + leaked prompt fragments), and on the 38-hand-scored, an outright hallucination (`Product Manager`). Gemini: **zero** on all defect classes. GLM's 2×/4× entity/edge volume was noise.
+- **qwen3.5-122b, no instructions:** clean like Gemini (0 pronoun / 0 self-loop / 0 dup) but under-extracted — **0 entities on 45%** of statements vs Gemini's 24%.
+- **qwen3.5-122b + `EXTRACTION_INSTRUCTIONS`** (a `custom_extraction_instructions` nudge on `add_episode`, [`memory_graphiti.py`](../server/providers/memory_graphiti.py)): miss rate **45% → 29%**, still 0 on every defect class, recall volume now ≥ Gemini. 7 of the 11 residual misses are statements Gemini also can't extract.
 
-In Mode B the response-side shim is not actually exercised — it is retained only so Mode A remains selectable. **All three of your preferred models are verified working**, so if GLM disappoints on the Phase 7 quality gate, switching to Qwen3.5-35B-A3B or Gemma-4-26B-A4B is a one-variable change. `qwen3-coder-30b` is no longer merely an escape hatch: it is 3.4x cheaper in output tokens on the identical prompt (Phase 7), which is the difference between ~15 h and ~50 h on the full 1,243-row backlog. It joins the quality A/B rather than sitting in reserve.
+The proxy (`LMStudioCompatClient`) and the Mode-A `reasoning_content` rescue are unchanged — qwen3.5-122b is a reasoning model with the same empty-`content` behaviour GLM had. `CMF_LOCAL_STRUCTURED_MODE` stays `json_schema`. Escape hatches unchanged: Qwen3.5-35B-A3B / `qwen3-coder-30b` remain one-variable swaps, and the hybrid (Gemini extraction + local embed) via the split provider vars is the fallback if qwen3.5-122b regresses at scale.
+
+Throughput: ~25 s/episode on the 38-episode probe (one ~600 s stall, recovered) — ≈ 2 h for 295, ≈ 9 h for the 1,243-row backlog.
 
 **D2 — New graph.** ✅ *Resolved: fresh graph, full re-promotion, not more writes into `mem-fabric-gemini`.*
 
@@ -227,9 +230,10 @@ Target `mem-fabric-local`. `FALKORDB_DATABASE` has no default and refuses to gue
 ```
 Mac                                    Spark (nanospark)
   CMF server                             LM Studio :1234
-  FalkorDB (Docker, 127.0.0.1:6379)  <-- SSH tunnel -->  GLM-4.7-Flash
+  FalkorDB (Docker, 127.0.0.1:6379)  <-- SSH tunnel -->  qwen3.5-122b-a10b  (D1, revised)
     graph `mem-fabric-gemini`      (kept, untouched)         nomic-embed-text
-    graph `mem-fabric-local` (new, 768-dim)
+    graph `mem-fabric-local-glm`   (Phase 6 GLM build, kept for the A/B record)
+    graph `mem-fabric-local` (768-dim, qwen3.5-122b — re-promotion pending)
   BGE reranker (sentence-transformers)
 ```
 
@@ -726,7 +730,8 @@ Worth raising, in rough priority:
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| GLM extraction quality below Gemini | **High** — the real gate; 2026-09-09 first-look inspection (Phase 7) found specific symptoms — generic-pronoun entities, self-referential (8) and duplicate parallel edges (`RELATES_TO` 50 pairs / `MENTIONS` 7 pairs), paraphrase-spam facts with leaked template tokens (`SOURCE_ENTITY_0`, `The_CURRENT_MESSAGE`), and surface-fragment entities missing the real referents (`Spain`/`Morocco`) | Phase 7 A/B against the retained graph, now with those symptoms as explicit scored metrics; mechanical fixes (self-edges, edge dedup, episode naming) separable from the model choice; hybrid fallback via the split provider vars if the extraction prompt can't recover items 1, 4 and 6 |
+| ~~GLM extraction quality below Gemini~~ | **Resolved 2026-09-09** — GLM was materially below Gemini (pronoun entities, self-loops, paraphrase-spam, one hallucination). Replaced by **qwen3.5-122b + `EXTRACTION_INSTRUCTIONS`**: Gemini-class hygiene, ~5-pt recall gap. See [spark-phase7-ab-log.md](spark-phase7-ab-log.md). | Residual: qwen3.5-122b's 29% zero-entity rate vs Gemini's 24% — watched on the full re-promotion; hybrid via split provider vars is the fallback if it regresses at scale. |
+| qwen3.5-122b throughput / mid-run stall | **Low-Medium** — one ~600 s stall in the 38-episode probe, recovered on its own | ~25 s/episode nominal (≈ 2 h for 295). Phase 4's `"model unloaded"` retry marker covers an Auto-Evict; watch the full run for repeats. |
 | Reasoning-model throughput | **Medium** — measured; passes for the 285-row run, marginal for the 1,243-row backlog | GLM ~12 h / 285 episodes (vs ~2 days on the free tier) but **~50 h for the full backlog**. `qwen3-coder-30b` is 3.4x cheaper in output tokens (~15 h) — promoted from escape hatch to a Phase 7 quality candidate |
 | Auto-Evict swaps the model out mid-run | **High** — observed live: two probe requests died with `{"error": "Model unloaded."}` mid-generation | Ask Alex to pin (see "What needs Alex" #1). Note `"Model unloaded."` matches none of `classify_transient_error`'s markers and is not an HTTP 5xx, so **graphiti will not retry it** — add it to `TRANSIENT_ERROR_MARKERS` in Phase 4 |
 | 8192 loaded context truncates extraction prompts | Medium | Raise to 32K; until then, watch for truncated/empty extractions on long episodes |

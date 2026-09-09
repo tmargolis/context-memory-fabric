@@ -57,6 +57,8 @@ The `reviews` table records reviewer `todd`, 2026-09-08: **295 tier-1 episodes a
 - **Wall-clock exit gate.** Verdicts were bulk-written from the review artifact (all 301 `reviewed_at` within ~0.05s), so measured review time isn't in the journal — read it off the artifact's own instrumentation if the number still matters.
 - **Verdicts are graph-independent.** They live in `reviews` / `derived_memories`, not FalkorDB, so re-promoting the same set into whichever graph wins the Phase 7 A/B is cheap (`promote_reviewed`, local models, no quota).
 - **Open decision: which graph is production.** `.env` still points at `mem-fabric-gemini`. Making `mem-fabric-local` the live graph needs the deliberate `CMF_LLM_PROVIDER` + `CMF_EMBED_PROVIDER` + `FALKORDB_DATABASE` + `EMBEDDING_DIM` flip (they move together — SPARK plan §"Note for Phase 6"), and Phase 7's A/B is what settles whether to make it.
+
+**Update 2026-09-09 (Phase 7 answered).** The A/B ([docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md)) rejected GLM-4.7-Flash (pronoun entities, self-loops, paraphrase-spam, a hallucination — Gemini had zero of any) and adopted **`unsloth/qwen3.5-122b-a10b` + an `EXTRACTION_INSTRUCTIONS` nudge**: Gemini-class hygiene, ~5-pt recall gap, fully local. The GLM `mem-fabric-local` was renamed `mem-fabric-local-glm`; a fresh `mem-fabric-local` is being re-promoted from the 295 tier-1 episodes on qwen3.5-122b + nomic. The `.env` flip to the local graph is the last step, after that re-promotion verifies.
 - **MS6a and Spark Phase 7 share a sample.** Both want a hand-graded set of promoted episodes compared across the two graphs — run them together.
 
 ---
