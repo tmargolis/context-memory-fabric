@@ -241,42 +241,63 @@ nudge.** It matches Gemini on hygiene (and crushes GLM), and closes to ~5 pts of
 Gemini on recall — most of that residual being statements no model can extract from.
 Fully local: no quota, no per-call cost, ~25 s/episode.
 
-**Execution (2026-09-09):**
+## Execution — 2026-09-09 — COMPLETE
+
 1. **DONE** — `EXTRACTION_INSTRUCTIONS` + `custom_extraction_instructions=` on
-   `remember()`'s `add_episode`; `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b` in
-   `.env` / `.env.example`. Suite 363 passed. Commit `feat(spark): adopt qwen3.5-122b…`.
-2. **DONE (docs)** — Phase 7 D1 gate marked answered across SPARK-MIGRATION-PLAN /
-   plan-history / plan-active / IMPLEMENTATION-PLAN.
-3. **Blocked on Todd** — rename GLM graph + re-point its ledger rows (raw `redis-cli
-   RENAME` / `sqlite3 UPDATE`, classifier-gated):
-   ```
-   docker exec context-memory-fabric-falkordb redis-cli RENAME mem-fabric-local mem-fabric-local-glm
-   docker exec context-memory-fabric-falkordb redis-cli RENAME 'telemetry{mem-fabric-local}' 'telemetry{mem-fabric-local-glm}'
-   sqlite3 imports/journal/journal.db "UPDATE promotions SET graph_name='mem-fabric-local-glm' WHERE graph_name='mem-fabric-local';"
-   ```
+   `remember()`'s `add_episode`; `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b`.
+   Commit `feat(spark): adopt qwen3.5-122b…`. Suite 363 passed.
+2. **DONE** — Phase 7 D1 gate marked answered across the four plan docs.
+3. **DONE (Todd ran)** — `RENAME mem-fabric-local → mem-fabric-local-glm` (no
+   `telemetry{}` companion key existed); `UPDATE promotions SET
+   graph_name='mem-fabric-local-glm' WHERE graph_name='mem-fabric-local'` (295 rows).
    Journal backed up: `imports/journal/journal.db.pre-qwen-20260909`.
-4. **Next** — re-promote 295 into fresh `mem-fabric-local` on qwen-122b + nomic
-   (run env only, `.env` untouched): `--limit 3 --apply` checkpoint, then full
-   (~2 h, background). Verify 295 Episodic / 768-dim / hygiene spot-check.
-5. **Then** — flip `.env` (`CMF_LLM_PROVIDER`/`CMF_EMBED_PROVIDER`=local,
-   `EMBEDDING_DIM=768`, `FALKORDB_DATABASE=mem-fabric-local`).
-6. **Then** — `GRAPH.DELETE spark-phase7-q122` and `-r1`.
-7. **Later** — mechanical fixes (self-edge drop, edge dedup, semantic episode names)
-   — lower priority now (qwen r1 emits 0 self-loops / 0 dups). Watch the full run
-   for a repeat of the ~600 s stall.
+4. **DONE** — re-promoted 295 into fresh `mem-fabric-local` on qwen-122b + nomic
+   (`python -m server.review.cli promote --apply`, run-env only). Checkpoint
+   `--limit 3` first, then full: **295/295 succeeded, 0 failed**, ~2.5 h, no quota
+   stalls, no `model unloaded` retries. Final graph:
+
+   | | mem-fabric-local (qwen) | mem-fabric-local-glm (GLM) | mem-fabric-gemini |
+   |---|--:|--:|--:|
+   | Episodic / Entity / RELATES_TO | 295 / 393 / 263 | 295 / 559 / 567 | 337 / 337 / 187 |
+   | embedding dim | 768 | 768 | 1024 |
+   | pronoun ents / self-loops / echo-facts / dup-facts | 0 / 0 / 0 / 4 | 3 / 8 / — / ~53 | 0 / 0 / 0 / 0 |
+   | 0-entity episodes | 83 (28%) | 16 (5%) | 75 (22%) |
+
+   Hygiene = Gemini. Miss rate 28% vs Gemini's 22% — as the probe predicted. 56
+   edges dropped by graphiti (`Source/Target entity not found`) over 295 (~1 per 5).
+5. **DONE** — episode rename migration `promoted_<date>_<hash>` →
+   `<harness>-<project>-NNN` (e.g. `chatgpt-astrophotography-001`): 295 graph nodes
+   + 295 ledger rows. Reversible map: `imports/journal/episode_rename_map.pre-qwen-20260909.json`.
+6. **DONE** — semantic naming wired into `promote_reviewed`
+   (`_semantic_episode_name` + `PromotionStore.max_semantic_seq`, 3 tests). Commit
+   `feat: semantic episode names…`. Suite 366 passed.
+7. **DONE** — `.env` flipped: `CMF_LLM_PROVIDER`/`CMF_EMBED_PROVIDER=local`,
+   `EMBEDDING_DIM=768`, `FALKORDB_DATABASE=mem-fabric-local`. Backup:
+   `.env.pre-qwen-flip-20260909`. `recall()` verified live against `mem-fabric-local`
+   (768-dim, local nomic embeddings; scores non-uniform, top hits on-topic).
+8. **DONE** — probe graphs `spark-phase7-q122` / `-r1` deleted.
+
+**Still open (not blocking; MS7 / mechanical):**
+- qwen-122b's 28% zero-entity rate — the hybrid (Gemini extraction + local embed) is
+  the fallback if this proves too lossy in real MS7 retrieval evaluation.
+- Item 3 mechanical dedup (4 dup facts, 4 parallel-edge pairs — trivial now).
+- One ~600 s stall was seen on the 38-episode probe; the full 295 run had none.
 
 ---
 
 ## Rollback ledger
 
-| Step | State change | Undo |
-|---|---|---|
-| 1–3, 4a, 4b | none (all `GRAPH.RO_QUERY`) | n/a |
-| 4 | FalkorDB graph `spark-phase7-q122` created (qwen-122b, 38 eps) | `redis-cli GRAPH.DELETE spark-phase7-q122` |
-| 4c | FalkorDB graph `spark-phase7-q122-r1` created (qwen-122b + instr, 38 eps) | `redis-cli GRAPH.DELETE spark-phase7-q122-r1` |
+| What changed | Undo |
+|---|---|
+| `mem-fabric-local` graph renamed → `mem-fabric-local-glm` | `redis-cli RENAME mem-fabric-local-glm mem-fabric-local` |
+| `promotions.graph_name` `mem-fabric-local` → `mem-fabric-local-glm` (295) | `UPDATE promotions SET graph_name='mem-fabric-local' WHERE graph_name='mem-fabric-local-glm'` |
+| new `mem-fabric-local` graph built (qwen-122b, 295 eps, 768-dim) | `redis-cli GRAPH.DELETE mem-fabric-local` |
+| `promotions` rows for the new `mem-fabric-local` (295) | delete rows `WHERE graph_name='mem-fabric-local'` |
+| episode names → `<harness>-<project>-NNN` (graph + ledger) | reverse `imports/journal/episode_rename_map.pre-qwen-20260909.json` (new→old) |
+| `.env` flipped to local / 768 / `mem-fabric-local` | `cp .env.pre-qwen-flip-20260909 .env` |
+| code: `EXTRACTION_INSTRUCTIONS`, semantic naming | `git revert f41bed4 c7466d4` |
+| probe graphs deleted | (throwaway — nothing to restore) |
 
-Both probe graphs kept for now (comparison / possible round 2). Delete both once the
-re-promotion decision is executed.
-
-Production graphs `mem-fabric-gemini` / `mem-fabric-local` and `imports/journal/journal.db`
-were never written to. Scratch under `scratchpad/phase7/` is session-isolated / auto-cleaned.
+`mem-fabric-gemini` was never written to — the whole-graph rollback path.
+Journal backup: `imports/journal/journal.db.pre-qwen-20260909`.
+Scratch under `scratchpad/phase7/` is session-isolated / auto-cleaned.
