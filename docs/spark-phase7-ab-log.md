@@ -241,15 +241,29 @@ nudge.** It matches Gemini on hygiene (and crushes GLM), and closes to ~5 pts of
 Gemini on recall — most of that residual being statements no model can extract from.
 Fully local: no quota, no per-call cost, ~25 s/episode.
 
-**Next steps (each milestone-gated):**
-1. Wire the `INSTR` string into `remember()`'s `add_episode` call (small; benign no-op
-   on the Gemini path — verify once). Set `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b`.
-2. Fresh-graph re-promotion of the 295 tier-1 episodes on qwen-122b + nomic (~2 h).
-   `mem-fabric-gemini` retained for rollback.
-3. Mechanical fixes (self-edge drop, edge dedup, semantic episode names) — lower
-   priority now (qwen r1 already emits 0 self-loops / 0 dups) but still worth doing.
-4. Watch for the ~600 s mid-run stall recurring; Phase 4's `"model unloaded"` retry
-   marker should cover an Auto-Evict.
+**Execution (2026-09-09):**
+1. **DONE** — `EXTRACTION_INSTRUCTIONS` + `custom_extraction_instructions=` on
+   `remember()`'s `add_episode`; `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b` in
+   `.env` / `.env.example`. Suite 363 passed. Commit `feat(spark): adopt qwen3.5-122b…`.
+2. **DONE (docs)** — Phase 7 D1 gate marked answered across SPARK-MIGRATION-PLAN /
+   plan-history / plan-active / IMPLEMENTATION-PLAN.
+3. **Blocked on Todd** — rename GLM graph + re-point its ledger rows (raw `redis-cli
+   RENAME` / `sqlite3 UPDATE`, classifier-gated):
+   ```
+   docker exec context-memory-fabric-falkordb redis-cli RENAME mem-fabric-local mem-fabric-local-glm
+   docker exec context-memory-fabric-falkordb redis-cli RENAME 'telemetry{mem-fabric-local}' 'telemetry{mem-fabric-local-glm}'
+   sqlite3 imports/journal/journal.db "UPDATE promotions SET graph_name='mem-fabric-local-glm' WHERE graph_name='mem-fabric-local';"
+   ```
+   Journal backed up: `imports/journal/journal.db.pre-qwen-20260909`.
+4. **Next** — re-promote 295 into fresh `mem-fabric-local` on qwen-122b + nomic
+   (run env only, `.env` untouched): `--limit 3 --apply` checkpoint, then full
+   (~2 h, background). Verify 295 Episodic / 768-dim / hygiene spot-check.
+5. **Then** — flip `.env` (`CMF_LLM_PROVIDER`/`CMF_EMBED_PROVIDER`=local,
+   `EMBEDDING_DIM=768`, `FALKORDB_DATABASE=mem-fabric-local`).
+6. **Then** — `GRAPH.DELETE spark-phase7-q122` and `-r1`.
+7. **Later** — mechanical fixes (self-edge drop, edge dedup, semantic episode names)
+   — lower priority now (qwen r1 emits 0 self-loops / 0 dups). Watch the full run
+   for a repeat of the ~600 s stall.
 
 ---
 
