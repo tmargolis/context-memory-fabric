@@ -3,7 +3,7 @@
 **Status:** Phases 0-6 complete. Only Phase 7 (quality A/B) remains. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 5 — Phases 0-6 built and verified; graph rebuilt into `mem-fabric-local`; first-look inspection findings folded into Phase 7).
 **Scope:** replace the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint.
 
-Related: [docs/plan-active.md](docs/plan-active.md) · [docs/adr/0002-provider-boundaries.md](docs/adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
+Related: [plan-active.md](plan-active.md) · [adr/0002-provider-boundaries.md](adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
 
 ---
 
@@ -23,7 +23,7 @@ Two further items are new rather than corrected:
 
 ## 0. Why this is worth doing, and what it costs
 
-Today every `remember()`, `recall()`, reasoning-episode extraction and promotion goes through Gemini's free tier, gated by a hard local ledger in [`server/core/rate_limiter.py`](server/core/rate_limiter.py). That ledger exists because the free tier's ceilings are low — `gemini-3.5-flash-lite` allows 500 requests/day, and CMF conservatively reserves 3 calls per operation, so a promotion run realistically gets ~160 episodes/day before it stalls until midnight Pacific.
+Today every `remember()`, `recall()`, reasoning-episode extraction and promotion goes through Gemini's free tier, gated by a hard local ledger in [`server/core/rate_limiter.py`](../server/core/rate_limiter.py). That ledger exists because the free tier's ceilings are low — `gemini-3.5-flash-lite` allows 500 requests/day, and CMF conservatively reserves 3 calls per operation, so a promotion run realistically gets ~160 episodes/day before it stalls until midnight Pacific.
 
 There are **1,243 `reasoning-episode@0.2` rows queued for review** and 285 already promoted. At free-tier throughput a full re-promotion is a multi-day affair paced by a rate limiter. On the Spark it is bounded only by inference speed.
 
@@ -111,10 +111,10 @@ Every Gemini dependency lands in one of four places. Nothing else in the codebas
 
 | # | Location | What it does | Change |
 |---|---|---|---|
-| 1 | [`server/providers/memory_graphiti.py:94`](server/providers/memory_graphiti.py) `create_graphiti()` | builds `GeminiClient` (L124), `GeminiEmbedder` (L132), `GeminiRerankerClient` (L139) | swap for OpenAI-compatible clients + the §4 proxy |
-| 2 | [`server/core/rate_limiter.py:52`](server/core/rate_limiter.py) `KNOWN_MODEL_BUDGETS` | hard free-tier ledger; **rejects any model not in the dict** (constructor raises `ValueError`) | give local models effectively-infinite budgets |
-| 3 | [`server/policies/reasoning_episode_v1.py:106`](server/policies/reasoning_episode_v1.py) `_default_generate()` | direct `google.genai` call, bypasses Graphiti entirely | second implementation against the OpenAI endpoint |
-| 4 | [`server/consolidation/promotion.py:145`](server/consolidation/promotion.py) `inter_call_delay=3.5` | polite spacing for Gemini quota | drop to ~0.2 for local |
+| 1 | [`server/providers/memory_graphiti.py:94`](../server/providers/memory_graphiti.py) `create_graphiti()` | builds `GeminiClient` (L124), `GeminiEmbedder` (L132), `GeminiRerankerClient` (L139) | swap for OpenAI-compatible clients + the §4 proxy |
+| 2 | [`server/core/rate_limiter.py:52`](../server/core/rate_limiter.py) `KNOWN_MODEL_BUDGETS` | hard free-tier ledger; **rejects any model not in the dict** (constructor raises `ValueError`) | give local models effectively-infinite budgets |
+| 3 | [`server/policies/reasoning_episode_v1.py:106`](../server/policies/reasoning_episode_v1.py) `_default_generate()` | direct `google.genai` call, bypasses Graphiti entirely | second implementation against the OpenAI endpoint |
+| 4 | [`server/consolidation/promotion.py:145`](../server/consolidation/promotion.py) `inter_call_delay=3.5` | polite spacing for Gemini quota | drop to ~0.2 for local |
 
 Seam 2 fails loudly and immediately: `GeminiRateLimiter.__init__` raises `ValueError` for any chain member missing from `KNOWN_MODEL_BUDGETS`, so setting `CMF_GEMINI_MODEL_CHAIN=zai-org/glm-4.7-flash` without touching the budgets dict crashes at startup.
 
@@ -133,7 +133,7 @@ result = response.choices[0].message.content or ''
 if not result:
     raise EmptyResponseError('LLM returned an empty response')
 ```
-— [`openai_generic_client.py:162`](.venv/lib/python3.12/site-packages/graphiti_core/llm_client/openai_generic_client.py)
+— [`openai_generic_client.py:162`](../.venv/lib/python3.12/site-packages/graphiti_core/llm_client/openai_generic_client.py)
 
 Measured on a realistic extraction prompt (long text, nested entity+edge schema, `json_schema` response format):
 
@@ -220,7 +220,7 @@ In Mode B the response-side shim is not actually exercised — it is retained on
 
 **D2 — New graph.** ✅ *Resolved: fresh graph, full re-promotion, not more writes into `mem-fabric-gemini`.*
 
-Target `mem-fabric-local`. `FALKORDB_DATABASE` has no default and refuses to guess ([`resolve_target_database`](server/providers/memory_graphiti.py)), so switching is a one-line `.env` change and the Gemini-era graph survives untouched for the §9 comparison and for rollback.
+Target `mem-fabric-local`. `FALKORDB_DATABASE` has no default and refuses to guess ([`resolve_target_database`](../server/providers/memory_graphiti.py)), so switching is a one-line `.env` change and the Gemini-era graph survives untouched for the §9 comparison and for rollback.
 
 **Confirmed split:** the graph lives on Todd's machine; only the *inference* runs on the Spark.
 

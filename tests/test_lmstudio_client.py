@@ -1,4 +1,4 @@
-"""LM Studio compatibility proxy (SPARK-MIGRATION-PLAN.md Phase 3).
+"""LM Studio compatibility proxy (docs/SPARK-MIGRATION-PLAN.md Phase 3).
 
 Runs against recorded response shapes, never a live Spark, so the suite stays
 fast and offline.

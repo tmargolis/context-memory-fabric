@@ -30,7 +30,7 @@ VALID_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER)
 # stays "gemini" so importing this module can never silently re-point a
 # running server at a backend whose code path (Phase 2) does not exist yet.
 # Flipping to local is a deliberate .env edit, made together with
-# FALKORDB_DATABASE and EMBEDDING_DIM — see SPARK-MIGRATION-PLAN.md Phase 6.
+# FALKORDB_DATABASE and EMBEDDING_DIM — see docs/SPARK-MIGRATION-PLAN.md Phase 6.
 DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:12345/v1"
 DEFAULT_LOCAL_API_KEY = "lm-studio"  # LM Studio ignores it; the OpenAI SDK requires non-empty
 DEFAULT_LOCAL_LLM_MODEL = "zai-org/glm-4.7-flash"
@@ -79,7 +79,7 @@ class CMFConfig:
     falkordb_database: Optional[str]
     cmf_state_dir: Path
 
-    # Spark-local inference (SPARK-MIGRATION-PLAN.md Phase 1). Provider
+    # Spark-local inference (docs/SPARK-MIGRATION-PLAN.md Phase 1). Provider
     # selection is split in two deliberately: extraction and embedding have
     # very different cost/quality profiles, and the migration's fallback
     # position is the hybrid — local embeddings (high volume, low judgment)

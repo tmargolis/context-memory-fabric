@@ -63,7 +63,7 @@ source exports → journal (19,012 events) → per-event classification (heurist
 
 ### Parallel track — Spark local-inference migration (2026-09-09)
 
-Tracked in its own file: [SPARK-MIGRATION-PLAN.md](../SPARK-MIGRATION-PLAN.md). Replaces the Gemini Developer API as CMF's LLM + embedding backend with models served from the DGX Spark. **Phases 0-6 complete; Phase 7 (quality A/B) outstanding.** What changed that the milestone docs depend on:
+Tracked in its own file: [SPARK-MIGRATION-PLAN.md](SPARK-MIGRATION-PLAN.md). Replaces the Gemini Developer API as CMF's LLM + embedding backend with models served from the DGX Spark. **Phases 0-6 complete; Phase 7 (quality A/B) outstanding.** What changed that the milestone docs depend on:
 
 - **The production graph is now split.** `memory-fabric` was renamed to **`mem-fabric-gemini`** (retained untouched, 1024-dim, 337/337/187) and a fresh **`mem-fabric-local`** built (768-dim; 559 Entity / 567 RELATES_TO). Its content is the **MS6a tier-1-approved set** — 295 episodes (reviewer todd, 2026-09-08, 295 approved / 6 rejected of ~301 routed to tier 1) re-promoted on GLM-4.7-Flash + `nomic-embed-text`, the same set that was also promoted into `mem-fabric-gemini`. `.env` still points at `mem-fabric-gemini` — flipping is a deliberate step, not yet taken.
 - **The MS4a cost gate is superseded** (D5). Local inference has no per-call cost, so `server/core/rate_limiter.py` is now a *throughput* control on the Gemini path and unmetered on the local path — see "Privacy and cost" below.

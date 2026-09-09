@@ -212,7 +212,7 @@ def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = Non
     CMF_EMBED_PROVIDER) so the hybrid — local embeddings, Gemini extraction —
     is a config change. That is not hypothetical: the Gemini embedding quota
     (1,000/day) is unmetered by the rate limiter and is the ceiling CMF hits
-    first. See SPARK-MIGRATION-PLAN.md.
+    first. See docs/SPARK-MIGRATION-PLAN.md.
     """
     config = load_config()
 
