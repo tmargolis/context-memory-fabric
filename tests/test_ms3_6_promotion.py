@@ -15,6 +15,7 @@ import unittest
 
 from server.consolidation.promotion import (
     PromotionStore,
+    _semantic_episode_name,
     default_tier,
     promote_reviewed,
     tier1_review_queue,
@@ -371,6 +372,54 @@ class TestCoverageAutoResolve(MS36Base):
         self.assertEqual(self.cons.revert_superseded_by_reasoning(), 1)
         self.assertEqual(state("h:0::heuristic-pattern@1.2"), "queued_for_review")
         self.assertIsNone(self.cons.get_derived_memory("h:0::heuristic-pattern@1.2")["superseded_by"])
+
+
+class TestSemanticEpisodeNames(MS36Base):
+    async def test_harness_project_sequence_names(self):
+        for i in range(3):
+            self.journal.append(ev(f"e{i}"))
+        # two chatgpt/astrophotography, one claude/condo
+        self._reason_row("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        self._reason_row("reason:c1:chatgpt:x:y:1::reasoning-episode@0.2", episode(kind="plan", evidence=["e1"]))
+        self._reason_row("reason:c2:claude:x:y:0::reasoning-episode@0.2", episode(evidence=["e2"]))
+        for mid, proj in (
+            ("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", "astrophotography"),
+            ("reason:c1:chatgpt:x:y:1::reasoning-episode@0.2", "astrophotography"),
+            ("reason:c2:claude:x:y:0::reasoning-episode@0.2", "condo"),
+        ):
+            self.cons._conn.execute("UPDATE derived_memories SET project=? WHERE memory_id=?", (proj, mid))
+        self.cons._conn.commit()
+
+        ids = [
+            "reason:c1:chatgpt:x:y:0::reasoning-episode@0.2",
+            "reason:c1:chatgpt:x:y:1::reasoning-episode@0.2",
+            "reason:c2:claude:x:y:0::reasoning-episode@0.2",
+        ]
+        await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember,
+                               ids, dry_run=False, inter_call_delay=0)
+        self.assertEqual(
+            [c["name"] for c in self.calls],
+            ["chatgpt-astrophotography-001", "chatgpt-astrophotography-002", "claude-condo-001"],
+        )
+
+    async def test_sequence_continues_across_runs(self):
+        self.journal.append(ev("e0")); self.journal.append(ev("e1"))
+        self._reason_row("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        self._reason_row("reason:c1:chatgpt:x:y:1::reasoning-episode@0.2", episode(kind="plan", evidence=["e1"]))
+        for mid in ("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", "reason:c1:chatgpt:x:y:1::reasoning-episode@0.2"):
+            self.cons._conn.execute("UPDATE derived_memories SET project='obsidian' WHERE memory_id=?", (mid,))
+        self.cons._conn.commit()
+
+        await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember,
+                               ["reason:c1:chatgpt:x:y:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0)
+        await promote_reviewed(self.cons, self.journal, self.prom, self.ok_remember,
+                               ["reason:c1:chatgpt:x:y:1::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0)
+        self.assertEqual([c["name"] for c in self.calls],
+                         ["chatgpt-obsidian-001", "chatgpt-obsidian-002"])
+
+    def test_missing_project_falls_back_to_misc(self):
+        name = _semantic_episode_name("reason:c1:gemini:apps:x:y:0::reasoning-episode@0.2", None, self.prom, "g")
+        self.assertEqual(name, "gemini-misc-001")
 
 
 if __name__ == "__main__":

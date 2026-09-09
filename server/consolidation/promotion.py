@@ -22,6 +22,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -225,6 +226,25 @@ class PromotionStore:
             ).fetchall()
         ]
 
+    def max_semantic_seq(self, prefix: str, graph_name: Optional[str] = None) -> int:
+        """Highest NNN already used for episode names `<prefix>-NNN` in one graph.
+
+        Backs the `<harness>-<project>-NNN` episode naming in `promote_reviewed`.
+        Reads the ledger (not the graph) so it stays correct across separate
+        promotion runs; 0 when the bucket is empty.
+        """
+        graph = graph_name or _configured_graph()
+        rows = self._conn.execute(
+            "SELECT episode_name FROM promotions WHERE graph_name = ? AND episode_name LIKE ?",
+            (graph, f"{prefix}-%"),
+        ).fetchall()
+        best = 0
+        for r in rows:
+            tail = (r["episode_name"] or "").rsplit("-", 1)[-1]
+            if tail.isdigit():
+                best = max(best, int(tail))
+        return best
+
     def record_success(self, memory_id: str, episode_name: str, graph_name: str) -> None:
         self._conn.execute(
             """
@@ -265,6 +285,38 @@ def _episode_name_for(memory_id: str, event_date: Optional[str]) -> str:
     date_part = (event_date or "undated")[:10].replace("-", "")
     short_hash = hashlib.sha256(memory_id.encode("utf-8")).hexdigest()[:8]
     return f"promoted_{date_part}_{short_hash}"
+
+
+def _slug(value: Optional[str]) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
+    return s or "misc"
+
+
+def _harness_of(memory_id: str) -> str:
+    """Originating harness from a reasoning-episode memory_id
+    (`reason:<conv>:<harness>:...`; gemini ids are `reason:<hex>:gemini:apps:...`)."""
+    parts = memory_id.split(":")
+    return _slug(parts[2]) if len(parts) > 2 else "unknown"
+
+
+def _semantic_episode_name(
+    memory_id: str,
+    project: Optional[str],
+    promotion_store: "PromotionStore",
+    graph_name: Optional[str],
+) -> str:
+    """`<harness>-<project>-NNN`, e.g. `chatgpt-astrophotography-001`.
+
+    NNN is the next free sequence for that bucket in the target graph's
+    ledger — stable across runs, sequential within a run (each
+    `record_success` lands before the next name is built). Falls back to
+    `_episode_name_for` if the pieces are missing.
+    """
+    harness = _harness_of(memory_id)
+    if harness == "unknown":
+        return _episode_name_for(memory_id, None)
+    prefix = f"{harness}-{_slug(project)}"
+    return f"{prefix}-{promotion_store.max_semantic_seq(prefix, graph_name) + 1:03d}"
 
 
 async def promote_auto_accepted(
@@ -508,7 +560,9 @@ async def promote_reviewed(
         memory_id = row["memory_id"]
         source_event = journal_store.get(row["source_event_id"])
         harness = source_event.source.harness if source_event else "unknown"
-        episode_name = _episode_name_for(memory_id, row["event_date"])
+        episode_name = _semantic_episode_name(
+            memory_id, row["project"], promotion_store, graph_name
+        )
         reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
 
         row_waited = 0.0
