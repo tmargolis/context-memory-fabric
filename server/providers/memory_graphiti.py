@@ -46,6 +46,24 @@ logger = logging.getLogger(__name__)
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
 
+# Passed to graphiti's add_episode() as `custom_extraction_instructions`, which
+# it splices into the extract_nodes / extract_edges prompts. CMF's episodes are
+# terse synthesized reasoning-episode summaries; without this nudge a reasoning
+# model (qwen3.5-122b) over-applies the prompt's "explicitly mentioned" rule and
+# returns an empty entity list on ~45% of them. The nudge cut that to ~29% (near
+# Gemini's ~24%) with zero new pronoun / self-loop / duplicate defects — see
+# docs/spark-phase7-ab-log.md §4c. Benign on the Gemini path (Gemini is not
+# timid); kept unconditional so the two extractors stay comparable.
+EXTRACTION_INSTRUCTIONS = (
+    "The CURRENT MESSAGE is a concise, deliberately terse third-person summary of a single "
+    "decision, plan, finding, or troubleshooting outcome. It still names concrete things. "
+    "Extract every specific named entity it references — tools, software, files and path "
+    "patterns, projects, people, places, hardware, product names, settings or parameters, "
+    "artifacts, techniques, organizations — even when mentioned only briefly or in passing. "
+    "Returning an empty entity list should be rare, only when the summary genuinely names "
+    "nothing concrete. Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity."
+)
+
 # _classify_transient_error / _is_transient_gemini_error, used by
 # remember()/recall()'s retry loops below, are imported (and re-exported
 # under these same names, for every existing call site) from
@@ -370,6 +388,7 @@ async def remember(
                 source_description=source_description,
                 reference_time=ref_time,
                 source=EpisodeType.text,
+                custom_extraction_instructions=EXTRACTION_INSTRUCTIONS,
             )
             break
         except Exception as e:
