@@ -257,8 +257,12 @@ Fully local: no quota, no per-call cost, ~25 s/episode.
 
 | Step | State change | Undo |
 |---|---|---|
-| 1–3 | none (all `GRAPH.RO_QUERY`) | n/a |
-| 4 | FalkorDB graph `spark-phase7-q122` created | `redis-cli GRAPH.DELETE spark-phase7-q122` |
+| 1–3, 4a, 4b | none (all `GRAPH.RO_QUERY`) | n/a |
+| 4 | FalkorDB graph `spark-phase7-q122` created (qwen-122b, 38 eps) | `redis-cli GRAPH.DELETE spark-phase7-q122` |
+| 4c | FalkorDB graph `spark-phase7-q122-r1` created (qwen-122b + instr, 38 eps) | `redis-cli GRAPH.DELETE spark-phase7-q122-r1` |
+
+Both probe graphs kept for now (comparison / possible round 2). Delete both once the
+re-promotion decision is executed.
 
 Production graphs `mem-fabric-gemini` / `mem-fabric-local` and `imports/journal/journal.db`
 were never written to. Scratch under `scratchpad/phase7/` is session-isolated / auto-cleaned.
