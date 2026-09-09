@@ -1,6 +1,6 @@
 # Migrating CMF off Gemini onto Spark-local models
 
-**Status:** Phases 0-5 complete — all code phases done. Phase 6 (graph rebuild) next. **Written:** 2026-09-08. **Revised:** 2026-09-08 (rev 4 — Phases 0-3 built and verified against the Spark).
+**Status:** Phases 0-6 complete. Only Phase 7 (quality A/B) remains. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 5 — Phases 0-6 built and verified; graph rebuilt into `mem-fabric-local`; first-look inspection findings folded into Phase 7).
 **Scope:** replace the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint.
 
 Related: [docs/plan-active.md](docs/plan-active.md) · [docs/adr/0002-provider-boundaries.md](docs/adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
@@ -539,42 +539,62 @@ Cause: the prompt describes `thread_key` as nullable, so the permissive schema a
 
 ---
 
-## Phase 6 — Fresh graph and rebuild
+## Phase 6 — Fresh graph and rebuild — **complete**
 
-**Back up before anything here.**
+**295 of 295 promoted, 0 failed**, into `mem-fabric-local` on Spark-local models. Roughly 3.2 hours at 38.6s/episode.
 
-- [ ] Journal + ledgers:
-```bash
-cp imports/journal/journal.db imports/journal/journal.db.pre-spark-20260908
+The 295 are **the MS6a tier-1-approved set** — reviewer `todd`, 2026-09-08, 295 approved / 6 rejected of the ~301 episodes `reasoning_kind` routed to tier 1 (`reviews` table). The same 295 were promoted into `mem-fabric-gemini` earlier (285 succeeded + 24 transient-failed). So `mem-fabric-local` is not raw output — it is the human-reviewed tier-1 corpus re-extracted and re-embedded on GLM-4.7-Flash + `nomic-embed`, which is exactly what makes it comparable to `mem-fabric-gemini` in Phase 7.
+
 ```
-- [ ] FalkorDB:
-```bash
-docker exec context-memory-fabric-falkordb redis-cli --rdb /data/pre-spark-20260908.rdb
+mem-fabric-local    295 Episodic · 559 Entity · 567 RELATES_TO · 768-dim vectors
+mem-fabric-gemini   337 Episodic · 337 Entity · 187 RELATES_TO · 1024-dim  (untouched)
+
+promotions ledger
+  mem-fabric-gemini   285 succeeded, 24 failed
+  mem-fabric-local    295 succeeded
 ```
 
-- [ ] Point `.env` at `mem-fabric-local`. Graphiti builds indexes at the new dimension on first use; the old graph is untouched.
+Both graphs are live in the same ledger — the composite primary key from earlier makes the A/B repeatable rather than one-shot.
 
-- [ ] **Reset the promotion ledger.** `promote_reviewed` skips any row where `promotion_store.is_promoted(memory_id)` is true, and `promotions.memory_id` is the primary key with **no graph column in it** — so all 285 prior promotions would be skipped and the new graph would come up empty. After confirming the backup exists:
-```bash
-sqlite3 imports/journal/journal.db "DELETE FROM promotions;"
-```
-Better: add `graph_name` to that primary key so both graphs coexist in one ledger, making the §9 A/B repeatable rather than one-shot.
+### What was done differently from the written plan
 
-- [ ] Re-promote, small first:
-```bash
-python -m server.review.cli promote --limit 5 --apply
-```
-Inspect before going further:
-```bash
-docker exec context-memory-fabric-falkordb redis-cli GRAPH.RO_QUERY mem-fabric-local "MATCH (n) RETURN labels(n)[0], count(*)"
-```
-- [ ] Then the full run. No `--no-wait` needed — after Phase 4 there is nothing to wait for.
+- **The graph was renamed, not replaced.** `memory-fabric` → `mem-fabric-gemini` via a Redis `RENAME` (verified on a throwaway graph first; FalkorDB moves the companion `telemetry{...}` key itself). Data intact: 337/337/187, embeddings still 1024-wide.
+- **The `promotions` ledger was never cleared.** The plan called for `DELETE FROM promotions` because the old single-column key would otherwise skip every previously-promoted row. Widening the key to `(memory_id, graph_name)` made that unnecessary — nothing was destroyed, and the Gemini promotion history is fully intact.
+- **The rename left 22 rows pointing at `memory-fabric`.** Those would have been re-promoted into the Gemini graph as duplicates. Checked for collisions (none), then re-pointed.
+- **`.env` was left on `mem-fabric-gemini`.** The run took its settings from its own process environment, so the MCP server and concurrent sessions kept working against Gemini throughout. Flipping is a separate, deliberate step.
 
-Watch for Auto-Evict swapping GLM out mid-run (§1 shows this happening already). If throughput collapses, check residency first — `lms ps` as `nano`.
+### Health
+
+- **0 failures.** 4 empty responses across 295 episodes, all recovered by graphiti's retry.
+- **0 model evictions.** The `"model unloaded"` marker added in Phase 4 never had to fire — GLM stayed resident for the full run.
+- **Every entity has a 768-dimension embedding**; none missing, none truncated.
+- Recall works against the new graph and returns relevant facts.
+
+### Two observations for Phase 7
+
+1. **The local graph is much denser.** 559 entities and 567 edges from 295 episodes, versus 337 and 187 from 337 episodes on Gemini — roughly 2x the entities and 3x the edges per episode. This is *not* self-evidently better. It could be richer extraction or it could be over-extraction that dilutes retrieval, and only a graded query set can say which.
+2. **155 edges were discarded** with `"Source/Target entity not found in nodes for edge relation"` — GLM proposed relationships whose endpoints it had not extracted as entities, so graphiti dropped them. That is roughly one dropped edge every two episodes, silently. Worth measuring against Gemini's rate; it may be a real quality gap or simply a different extraction style.
+
+**Rate observations were noisy.** Per-episode time swung between 24s and 58s depending on episode content, not graph size — cumulative-average ETAs swung with it and repeatedly suggested trends that were not there.
 
 ---
 
 ## Phase 7 — Verification
+
+### First-look inspection of `mem-fabric-local` (2026-09-09)
+
+A visual pass over the rebuilt graph in the FalkorDB browser, before any graded scoring. Impression: **GLM's entities and edges look noticeably lower-quality than Gemini's** — the density observation from Phase 6 now has specific symptoms attached. Each item below is either an **A/B scoring input** (the graded query set has to measure it) or a **concrete fix** with a location. None of it is yet quantified against the retained Gemini graph — that is the Phase 7 job.
+
+Counts below are from `GRAPH.RO_QUERY mem-fabric-local` on 2026-09-09; the Gemini-graph comparison is the Phase 7 job and is not yet done.
+
+1. **Generic-pronoun entities.** `user` and `The user` exist as two separate `Entity` nodes (2 nodes total). Where either refers to **Todd as the actual actor** — a real decision or action he took — they should resolve to a single canonical `Todd` node. **But not always:** where the text is generic or hypothetical ("if a user does X, then Y"), the pronoun is not Todd and arguably should not be a personal entity at all. So this is context-sensitive resolution, not a string replace — the fix has to read the surrounding claim. *Fix candidates:* an extraction-prompt instruction to name the first-person participant explicitly when it is the corpus owner and to leave generic/hypothetical actors unpromoted; or a promotion-time canonicalization that keys off whether the episode records a concrete action. Measure first: how many pronoun nodes exist, how many are Todd-as-actor vs. generic, and Gemini's rate (Gemini appears to have named people directly).
+2. **Self-referential `RELATES_TO` edges.** 8 edges whose source and target are the same node (`Interlock`→`Interlock` among them). A node related to itself carries no information and pollutes neighbourhood expansion. *Fix:* drop edges where `source == target` at the promotion/extraction boundary, before the write. Check whether Gemini's extraction produced any at all.
+3. **Redundant parallel edges — both relation types.** `RELATES_TO`: 50 ordered node pairs carry 140 edges between them (the `Mac`↔`Windows 11` / `Mac`↔`VMware` / `Mac`↔`virtual machine` cluster). `MENTIONS`: 7 episode↔entity pairs carry 18 edges where 7 would do. Distinct facts on parallel `RELATES_TO` edges are legitimate; exact- or near-duplicate ones are not, and duplicate `MENTIONS` never are. *Fix:* dedupe `MENTIONS` on `(episode, entity)`; dedupe/merge `RELATES_TO` on `(source, target, relation, fact)` with near-duplicate fact collapsing. Quantify both rates on the Gemini graph.
+4. **Paraphrase-spam and template-token leakage in `RELATES_TO` facts.** Worse than item 3 and not mechanical. The single pair `legal strategy`→`board` carries **9** edges, and the fact strings show GLM (or graphiti's edge-dedupe step) misbehaving: near-identical paraphrases, several *self-describing the defect* — `"...a duplicate legal strategy to force the condo board..."`, `"...a typoed legal strategy..."`, `"...the prevous condo board..."` — and two with prompt-template placeholders leaked into the stored fact: `"...approve an SOURCE_ENTITY_0"` and `"The_CURRENT_MESSAGE is evaluating a legal strategy..."`. Needs a root-cause pass in Phase 7: is this GLM emitting the same fact N times with perturbations, graphiti's dedup prompt echoing its own scaffold, or test residue written into the live graph? The `SOURCE_ENTITY_0` / `The_CURRENT_MESSAGE` tokens are definitely not real content. This one alone is a strong signal that GLM extraction is not yet at parity.
+5. **Opaque episode names.** Episodes are named `promoted_<YYYYMMDD>_<digits>` (e.g. `promoted_20260830_29234680`). That string is unusable for browsing or citing. A semantic slug — **`<source>-<topic>-<NNN>`**, e.g. `chatgpt-astrophotography-001` — would make the graph navigable and give `recall()` provenance a human-readable handle. *Fix:* the `name=` argument in the promotion path (`promote_reviewed` → `remember()`); derive `topic` from the reasoning episode's `thread_key` or `thread_title`, `source` from the originating harness, `NNN` a per-(source,topic) counter. Low risk, high readability payoff — worth doing before the full 1,243-row backlog run.
+6. **Entity granularity — fragments instead of real-world entities.** For `promoted_20260830_29234680` ("remove the separate Morocco zones toggle layer and integrate microclimate guidance into the assumptions section…"), GLM extracted `Morocco zones toggle layer`, `assumptions section`, `microclimate guidance`, `text overlays`, `map layers`, `HTML` — UI-implementation noun phrases lifted from the sentence. The salient entities are **`Spain`** and **`Morocco`** (the astrophotography trip's actual locations), which GLM did not extract at all. This is the core of the "entities aren't as good as Gemini" impression: GLM chunks the surface text rather than identifying the durable referents. *This is an extraction-prompt problem*, and the most important one to fix if GLM stays the extraction model — the A/B scoring should weight "extracted the real entities" heavily.
+
+**Sequencing:** items 2, 3 and 5 are mechanical and can be fixed independently of the model choice. Items 1, 4 and 6 are extraction-quality and feed directly into the D1 model decision — if the prompt can't be made to fix them on GLM, that is the argument for the hybrid (Gemini extraction, local embeddings) or for scoring Qwen3.5 / `qwen3-coder-30b` on the same inputs.
 
 Functional:
 
@@ -650,6 +670,9 @@ Quality — where the decision actually gets made:
 
 - [ ] Take **20 statements already promoted under Gemini**, re-promote into `mem-fabric-local`, compare extracted entities and edges side by side. The old graph exists precisely for this.
 - [ ] Run the same recall queries against both graphs and compare.
+- [ ] **Score the six first-look symptoms** (above) on both graphs, not just impressionistically: pronoun-entity count (and Todd-as-actor vs. generic split), self-referential edge count, parallel-edge rate for `RELATES_TO` *and* `MENTIONS`, paraphrase-spam / template-token leakage in facts, and — the weighted one — "did extraction name the real-world entities" on a hand-graded sample (the `Spain`/`Morocco` failure mode).
+- [ ] Root-cause item 4 (the `SOURCE_ENTITY_0` / `The_CURRENT_MESSAGE` / "duplicate legal strategy" facts) — GLM paraphrase-spam, graphiti dedup-prompt echo, or test residue in the live graph.
+- [ ] Decide whether items 2, 3 and 5 (self-edges, parallel-edge dedup, semantic episode names) land as promotion-path fixes now, independent of the model decision.
 - [ ] **The gate:** does GLM extraction produce entity/edge structure comparable to Gemini's? A local model that extracts noticeably worse converts a quota problem into a data-quality problem, which is the worse trade. If quality drops, fall back to the hybrid — local embeddings (high-volume, low-judgment) with Gemini extraction (low-volume, high-judgment). Phase 1's split provider vars make that a config change.
 
 Now cheap to measure, and worth measuring: whether `gemini-3.8-flash`-class quality was ever needed, or whether its 20 RPD ceiling was the only reason CMF settled on flash-lite.
@@ -693,7 +716,7 @@ Worth raising, in rough priority:
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| GLM extraction quality below Gemini | **High** — the real gate | Phase 7 A/B against the retained graph; hybrid fallback via the split provider vars |
+| GLM extraction quality below Gemini | **High** — the real gate; 2026-09-09 first-look inspection (Phase 7) found specific symptoms — generic-pronoun entities, self-referential (8) and duplicate parallel edges (`RELATES_TO` 50 pairs / `MENTIONS` 7 pairs), paraphrase-spam facts with leaked template tokens (`SOURCE_ENTITY_0`, `The_CURRENT_MESSAGE`), and surface-fragment entities missing the real referents (`Spain`/`Morocco`) | Phase 7 A/B against the retained graph, now with those symptoms as explicit scored metrics; mechanical fixes (self-edges, edge dedup, episode naming) separable from the model choice; hybrid fallback via the split provider vars if the extraction prompt can't recover items 1, 4 and 6 |
 | Reasoning-model throughput | **Medium** — measured; passes for the 285-row run, marginal for the 1,243-row backlog | GLM ~12 h / 285 episodes (vs ~2 days on the free tier) but **~50 h for the full backlog**. `qwen3-coder-30b` is 3.4x cheaper in output tokens (~15 h) — promoted from escape hatch to a Phase 7 quality candidate |
 | Auto-Evict swaps the model out mid-run | **High** — observed live: two probe requests died with `{"error": "Model unloaded."}` mid-generation | Ask Alex to pin (see "What needs Alex" #1). Note `"Model unloaded."` matches none of `classify_transient_error`'s markers and is not an HTTP 5xx, so **graphiti will not retry it** — add it to `TRANSIENT_ERROR_MARKERS` in Phase 4 |
 | 8192 loaded context truncates extraction prompts | Medium | Raise to 32K; until then, watch for truncated/empty extractions on long episodes |
