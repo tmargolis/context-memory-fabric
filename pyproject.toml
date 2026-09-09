@@ -29,3 +29,20 @@ search-path = ["."]
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# Tests marked `live` call the real Gemini API. They are excluded by default:
+# they make the suite roughly 35x slower (27s -> 15+ min, almost entirely
+# blocked on network and retry backoff), they spend real free-tier quota, and
+# they cannot run without a key -- so on an exhausted quota day they fail for
+# reasons that have nothing to do with the code under test.
+#
+# Run them deliberately with:   uv run pytest -m live
+# Run everything with:          uv run pytest -m ""
+#
+# A CLI -m overrides the one in addopts (pytest keeps the last -m it sees),
+# which is what makes both commands above work.
+addopts = '-m "not live"'
+markers = [
+    "live: hits the real Gemini API -- costs quota, needs GEMINI_API_KEY, slow",
+]

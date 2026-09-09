@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import sys
 import unittest
+import pytest
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -122,6 +123,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("templates", r.relative_path)
             self.assertNotIn("memory/", r.relative_path)
 
+    @pytest.mark.live
     async def test_remember_and_recall_tools(self):
         """Verify remember and recall tools save and retrieve episodic facts."""
         synthetic_note = "Project Atlas selected PostgreSQL 16 on August 31, 2026 for its low latency."
@@ -137,6 +139,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Episodic Memory Search Results", recall_resp)
         self.assertIn("PostgreSQL", recall_resp)
 
+    @pytest.mark.live
     async def test_get_context_unification(self):
         """Verify get_context combines durable knowledge and episodic memory with distinct sections."""
         ctx = await mcp_get_context(topic="Project Atlas", max_wiki_results=3, max_memory_results=3)

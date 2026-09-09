@@ -1,6 +1,6 @@
 # Migrating CMF off Gemini onto Spark-local models
 
-**Status:** Phase 0 substantially verified; Phases 1-7 not yet executed. **Written:** 2026-09-08. **Revised:** 2026-09-08 (rev 3 — decisions D1-D5, probing, and Phase 0 verification).
+**Status:** Phases 0-5 complete — all code phases done. Phase 6 (graph rebuild) next. **Written:** 2026-09-08. **Revised:** 2026-09-08 (rev 4 — Phases 0-3 built and verified against the Spark).
 **Scope:** replace the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint.
 
 Related: [docs/plan-active.md](docs/plan-active.md) · [docs/adr/0002-provider-boundaries.md](docs/adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
@@ -85,7 +85,7 @@ Low practical risk: Graphiti only embeds entity **names** (`name_embedding`) and
 ### The current CMF graph
 
 ```
-FalkorDB graph `memory-fabric` (local Docker, 127.0.0.1:6379)
+FalkorDB graph `mem-fabric-gemini` (local Docker, 127.0.0.1:6379)
   Episodic nodes   337
   Entity nodes     337
   RELATES_TO edges 187
@@ -218,9 +218,9 @@ GLM is verified working on a realistic extraction prompt (12 entities, 10 edges)
 
 In Mode B the response-side shim is not actually exercised — it is retained only so Mode A remains selectable. **All three of your preferred models are verified working**, so if GLM disappoints on the Phase 7 quality gate, switching to Qwen3.5-35B-A3B or Gemma-4-26B-A4B is a one-variable change. `qwen3-coder-30b` is no longer merely an escape hatch: it is 3.4x cheaper in output tokens on the identical prompt (Phase 7), which is the difference between ~15 h and ~50 h on the full 1,243-row backlog. It joins the quality A/B rather than sitting in reserve.
 
-**D2 — New graph.** ✅ *Resolved: fresh graph, full re-promotion, not more writes into `memory-fabric`.*
+**D2 — New graph.** ✅ *Resolved: fresh graph, full re-promotion, not more writes into `mem-fabric-gemini`.*
 
-Target `mem-fabric`. `FALKORDB_DATABASE` has no default and refuses to guess ([`resolve_target_database`](server/providers/memory_graphiti.py)), so switching is a one-line `.env` change and the Gemini-era graph survives untouched for the §9 comparison and for rollback.
+Target `mem-fabric-local`. `FALKORDB_DATABASE` has no default and refuses to guess ([`resolve_target_database`](server/providers/memory_graphiti.py)), so switching is a one-line `.env` change and the Gemini-era graph survives untouched for the §9 comparison and for rollback.
 
 **Confirmed split:** the graph lives on Todd's machine; only the *inference* runs on the Spark.
 
@@ -228,18 +228,31 @@ Target `mem-fabric`. `FALKORDB_DATABASE` has no default and refuses to guess ([`
 Mac                                    Spark (nanospark)
   CMF server                             LM Studio :1234
   FalkorDB (Docker, 127.0.0.1:6379)  <-- SSH tunnel -->  GLM-4.7-Flash
-    graph `memory-fabric`      (kept, untouched)         nomic-embed-text
-    graph `mem-fabric` (new, 768-dim)
+    graph `mem-fabric-gemini`      (kept, untouched)         nomic-embed-text
+    graph `mem-fabric-local` (new, 768-dim)
   BGE reranker (sentence-transformers)
 ```
 
-So FalkorDB is not moved, no second tunnel is needed, and the graph never leaves your hardware. What crosses the tunnel is extraction prompts and embedding requests. The Gemini-era `memory-fabric` graph stays in place for the Phase 7 A/B and for rollback.
+So FalkorDB is not moved, no second tunnel is needed, and the graph never leaves your hardware. What crosses the tunnel is extraction prompts and embedding requests. The Gemini-era `mem-fabric-gemini` graph stays in place for the Phase 7 A/B and for rollback.
 
-**D3 — Reranking: `BGERerankerClient`.** ✅ *Resolved: option 1.*
+**D3 — Reranking: `BGERerankerClient`.** ✅ *Resolved: option 1 — but see below, it is not currently reachable.*
 
-`uv add sentence-transformers`, then `BGERerankerClient()`. First construction downloads `BAAI/bge-reranker-v2-m3` (~2.2 GB) and it runs on the Mac. Note `OpenAIRerankerClient` pointed at LM Studio **will not work** — it scores via `logit_bias={'6432': 1, '7983': 1}`, hardcoded OpenAI BPE token ids meaningless under GLM's tokenizer. Verified by reading the source; do not attempt it.
+**Measured after Phases 2-3: CMF never invokes a cross-encoder at all.** Instrumenting `rank()` across a real search returned **zero invocations**, and the code path explains why:
 
-A ~10-line passthrough `CrossEncoderClient` (returns Graphiti's existing RRF order) is worth keeping in the tree as a dev stub so a torch install never blocks a test run, but BGE is the target.
+- CMF has exactly one retrieval call site: `graphiti.search(query)` in `memory_graphiti.py:467`.
+- That method resolves to the `EDGE_HYBRID_SEARCH_RRF` recipe (or `EDGE_HYBRID_SEARCH_NODE_DISTANCE` when given a center node). Neither uses `EdgeReranker.cross_encoder`.
+- Nothing in CMF calls `graphiti.search_()`, which is the entry point whose default *is* `COMBINED_HYBRID_SEARCH_CROSS_ENCODER`.
+
+**What a cross-encoder would do.** Retrieval here is two-stage. Stage one is recall-oriented and cheap: BM25 keyword matching plus cosine similarity over embeddings. Those use a *bi-encoder* — query and document are embedded separately and compared by vector distance, which is fast because document vectors are precomputed, but the model never sees the query and the document together. Stage two would be precision-oriented: a *cross-encoder* takes `(query, passage)` as one joint input and scores relevance directly, so it can register negation, qualifiers, and which entity a question is actually about. It is markedly more accurate and markedly more expensive — one forward pass per candidate, nothing precomputable.
+
+Graphiti's `reranker` enum blurs this: `rrf`, `node_distance`, `episode_mentions` and `mmr` are cheap structural or statistical reorderings, while `cross_encoder` is the only one that runs a model. CMF uses `rrf` — reciprocal rank fusion, which merges the BM25 and cosine rankings by rank position with no model involved.
+
+**So is passthrough a problem?** Not today — it is a true no-op, not a degradation, because the only ranking CMF performs is RRF and that happens before the cross-encoder would be consulted. It also means **D3 is off the critical path**: no need to pull torch and ~2.2 GB of BGE weights to complete this migration.
+
+It becomes a real decision when reranking is switched on, which MS7's context-assembly work is the natural occasion for. Two things follow:
+
+- `PassthroughReranker` now **logs a warning the first time it is actually invoked**. Without it, flipping a search config to `cross_encoder` would silently return the input order with plausible-looking scores, and the only symptom would be retrieval quality that never improved — indistinguishable from a bad model or a bad query set, which is exactly the confusion MS7's evaluation cannot afford.
+- When that day comes, `CMF_RERANKER=bge` is the switch, and `uv add sentence-transformers` the prerequisite.
 
 **D4 — Gemini escape hatch.** ✅ *Resolved: keep it.*
 
@@ -251,7 +264,7 @@ The recorded MS4a decision was "Gemini-only for now, no filtering, hard free-tie
 
 ---
 
-## Phase 0 — Network path — **3 of 4 done**
+## Phase 0 — Network path — **complete**
 
 CMF runs on the Mac; LM Studio runs on the Spark. LM Studio is bound to `0.0.0.0:1234` on a **directly-routable public IP with no firewall you control** — do not point CMF at `128.171.121.85`. Everything goes through the Tailscale-backed SSH tunnel.
 
@@ -270,7 +283,7 @@ curl -sS http://127.0.0.1:12345/v1/models | python3 -m json.tool
 curl -sS http://127.0.0.1:12345/v1/embeddings -H 'Content-Type: application/json' -d '{"model":"text-embedding-nomic-embed-text-v1.5","input":"dimension probe"}' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]))'
 ```
 
-- [ ] **Make the tunnel survive sleep — the one item still open.** `Host spark` in `~/.ssh/config` is currently bare (`HostName` + `User` only) with no keepalives set anywhere in the file. Four days of uptime is encouraging but it is luck on a quiet network: without `ServerAliveInterval` a half-open connection stays *listening locally* while silently failing to forward, so CMF sees connection-refused or a hang mid-consolidation rather than a clean error. A 12–24 h promotion run is exactly the workload that exposes this.
+- [x] **Tunnel hardened against sleep/half-open.** `~/.ssh/config` now carries the keepalives, confirmed effective via `ssh -G spark` (`serveraliveinterval 30`, `serveralivecountmax 3`, `exitonforwardfailure yes`, `tcpkeepalive yes`):
 ```
 Host spark
     HostName 100.123.43.85
@@ -279,120 +292,250 @@ Host spark
     ServerAliveCountMax 3
     ExitOnForwardFailure yes
 ```
-Note `ExitOnForwardFailure yes` changes behaviour deliberately: ssh will refuse to connect at all if it cannot bind 12345, rather than silently giving you a session with no forward. For auto-restart, `autossh -M 0 -N -L 12345:127.0.0.1:1234 spark` or a launchd agent with `KeepAlive`. Restart the existing tunnel after editing the config — the running process keeps its old settings.
+Tunnel restarted to pick them up (PID 13398), re-verified end to end: 10 models, 768-dim embeddings. `autossh -M 0 -N -L 12345:127.0.0.1:1234 spark` or a launchd `KeepAlive` agent remains optional for auto-restart — the keepalives make a dead tunnel *fail fast* rather than hang, but they do not respawn it.
 
 Port `12345` is the one already in use. Nothing is listening on the Mac's `11434` (no local Ollama), so there is no collision either way; `12345` keeps the Spark endpoint visibly distinct from anything local.
 
 ---
 
-## Phase 1 — Config plumbing
+## Phase 1 — Config plumbing — **complete**
 
-- [ ] Add to `.env.example` and `.env`:
-```bash
-# Provider selection, split so a hybrid (local embeddings + Gemini extraction)
-# is expressible without re-plumbing — see D4 and Phase 6.
-CMF_LLM_PROVIDER=local            # "gemini" | "local"
-CMF_EMBED_PROVIDER=local          # "gemini" | "local"
+Landed with **zero behaviour change**: both provider switches stay on `gemini`, the graph stays `mem-fabric-gemini`, and `EMBEDDING_DIM` stays 1024. The new variables are inert until Phase 2 supplies the code that reads them.
 
-# Spark LM Studio, reached over the Phase 0 tunnel. Never a public IP.
-CMF_LOCAL_BASE_URL=http://127.0.0.1:12345/v1
-CMF_LOCAL_API_KEY=lm-studio       # LM Studio ignores it; the OpenAI SDK requires non-empty
-CMF_LOCAL_LLM_MODEL=zai-org/glm-4.7-flash
-CMF_LOCAL_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5
+### The import-order hazard, found and fixed
 
-# MUST match the embedder's true output width. Graphiti reads this at import
-# time and OpenAIEmbedder *silently truncates* to it — a wrong value here
-# corrupts every vector with no error.
-EMBEDDING_DIM=768
+`EMBEDDING_DIM` in `.env` **would have done nothing.** graphiti_core freezes it into a module constant at import time:
 
-# New graph. The 1024-dim Gemini graph stays intact under `memory-fabric`.
-FALKORDB_DATABASE=mem-fabric
-```
-
-- [ ] Extend `CMFConfig` in [`server/core/config.py`](server/core/config.py) with the local fields, and widen `memory_enabled` so it doesn't demand `GEMINI_API_KEY` when the provider is `local`. As written it returns `False` without a Gemini key, which would disable memory tooling at startup on an otherwise correctly configured local box.
-
-**Gotcha:** `EMBEDDING_DIM` is read at *module import* in graphiti_core (`EMBEDDING_DIM = int(os.getenv('EMBEDDING_DIM', 1024))`). It must be in the environment before `graphiti_core` is first imported — a `load_dotenv()` inside a function that runs after the import is too late. Set it in the shell/MCP server env, or call `load_dotenv()` before the graphiti import in `server/mcp.py`.
-
----
-
-## Phase 2 — Swap the Graphiti clients
-
-Branch `create_graphiti()` (L94) on `CMF_LLM_PROVIDER` / `CMF_EMBED_PROVIDER`. The Gemini branch stays exactly as-is.
-
-- [ ] Local branch:
 ```python
-from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
-from graphiti_core.cross_encoder.bge_reranker_client import BGERerankerClient
-
-llm_client = OpenAIGenericClient(
-    config=LLMConfig(
-        api_key=local_api_key,
-        base_url=local_base_url,
-        model=resolved_model,
-        small_model=resolved_model,
-    ),
-    client=LMStudioCompatClient(local_base_url, local_api_key),   # Phase 3
-)
-
-embedder = OpenAIEmbedder(
-    config=OpenAIEmbedderConfig(
-        api_key=local_api_key,
-        base_url=local_base_url,
-        embedding_model=local_embed_model,
-        embedding_dim=768,
-    )
-)
-
-cross_encoder = BGERerankerClient()      # D3; PassthroughReranker() as a dev stub
+# graphiti_core/embedder/client.py
+EMBEDDING_DIM = int(os.getenv('EMBEDDING_DIM', 1024))
 ```
 
-Use `OpenAIGenericClient`, **not** `OpenAIClient` — the generic one targets arbitrary OpenAI-compatible endpoints.
+and `server/mcp.py` imports `server.memory` (→ graphiti_core) at line 29, while `load_config()` does not run until line 45. `memory_graphiti.py`'s own `load_dotenv()` sits *after* its graphiti imports. Demonstrated before the fix:
 
-- [ ] Set `structured_output_mode='json_object'` (Mode B, §3.4). That makes graphiti inject the schema into the prompt; the Phase 3 proxy then rewrites the wire format to `text`, which is what LM Studio accepts. Driving this from a `CMF_LOCAL_STRUCTURED_MODE` env var keeps Mode A one variable away if a model turns out to need the grammar.
-
-- [ ] Assert the first embedding's width rather than trusting config:
-```python
-assert len(vec) == 768, f"embedder returned {len(vec)}d, EMBEDDING_DIM says 768"
 ```
-`OpenAIEmbedder.create` does `embedding[: self.config.embedding_dim]` — a mismatch truncates silently and corrupts the index with no error.
+graphiti EMBEDDING_DIM at import = 1024
+after load_dotenv, os.environ EMBEDDING_DIM = None
+graphiti constant is now still = 1024 (constants do not re-read)
+```
+
+The consequence would have been silent: `graphiti_core.search` falls back to `[0.0] * EMBEDDING_DIM` for a zero query vector, which on a 768-dimension graph is the wrong width, with nothing raised to say so.
+
+- [x] **`server/__init__.py` created** with `load_dotenv(override=False)`. It is the only chokepoint that runs before any `server.*` submodule, and therefore before graphiti_core. This turns `server` from a namespace package into a regular one — intentional, and consistent with pyproject's `packages = ["server"]`.
+- [x] `override=False` is load-bearing, not stylistic: `tests/conftest.py` sets `FALKORDB_DATABASE=cmf_test` before importing any `server` module to keep test writes out of the production graph. `override=True` would have silently clobbered that and pointed the suite at the real graph. Verified both directions — preset survives, absent preset still reads `.env`.
+
+### Config
+
+- [x] **`CMFConfig` extended** with `llm_provider`, `embed_provider`, `local_base_url`, `local_api_key`, `local_llm_model`, `local_embed_model`, `local_structured_mode`, `embedding_dim`, plus `llm_is_local` / `embed_is_local` helpers.
+- [x] **Unknown provider values raise** rather than defaulting. A typo like `lcoal` silently falling back to `gemini` would send extraction to a metered API the operator believed they had left, and the only symptom would be quota burn.
+- [x] **`memory_enabled` widened.** It previously required `GEMINI_API_KEY` unconditionally, so a fully local deployment would have reported memory disabled and unregistered the memory tools at startup. It now follows the two switches, and consults *both* — the hybrid needs the credentials of both halves.
+- [x] **`.env.example` and `.env` documented**, with the flip-together warning on `EMBEDDING_DIM` / `FALKORDB_DATABASE`.
+
+### Tests
+
+- [x] **`tests/test_spark_config.py` — 17 tests.** `CMFConfig` had no coverage at all before this.
+- [x] **Suite result: 293 passed, 6 skipped, 23 subtests passed, 0 regressions.** The 7 remaining failures all require live Gemini and fail today on exhausted daily embedding quota (above), not on anything Phase 1 touched. Verified by running the suite with the credential removed so those paths fail instantly: **27.5s** versus **15+ minutes** with live calls.
+- [x] **Live-Gemini tests should be marked and skippable.** Seven tests call the real API: `test_step6_mcp_tools` (2), `test_step6b_proposals` (1), `test_step7_import_memories` (1), `test_step8_edit_memory` (3). They make the suite ~35x slower, cost real quota, cannot run in CI without a key, and today fail for quota reasons rather than code reasons. `conftest.py` already isolates FalkorDB writes into `cmf_test`; nothing isolates Gemini. A `live` marker plus `-m "not live"` by default is the cheap fix, and it should land before Phase 7's A/B work, which needs many repeated runs.
+- [x] One fixture bug worth recording: `load_config()` calls `load_dotenv()`, and python-dotenv only declines to override variables that are *present* — so a `monkeypatch.delenv` of `GEMINI_API_KEY` was immediately repopulated from the real `.env`, and the "missing credential" cases were testing the opposite of what they claimed. The fixture now stubs `load_dotenv`, and `test_fixture_actually_isolates_from_dotenv` guards against the stub being dropped.
+
+### Found while verifying: the rate limiter does not govern embeddings
+
+Running the seven live-Gemini tests to close out Phase 1 surfaced this:
+
+```
+429 RESOURCE_EXHAUSTED
+Quota exceeded for metric: generativelanguage.googleapis.com/embed_content_free_tier_requests
+limit: 1000, model: gemini-embedding-1.0
+```
+
+`server/core/rate_limiter.py` exists to "guarantee CMF never places a Gemini call that would exceed the free tier's per-model RPM/RPD ceilings". It does not do that for embeddings:
+
+```
+chain actually reserved against : ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+embedder in KNOWN_MODEL_BUDGETS : True   (rpm=100, tpm=30000, rpd=1000)
+embedder in DEFAULT_MODEL_CHAIN : False
+models tracked in today's ledger: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
+```
+
+The budget for `gemini-embedding-001` is *defined* but never *reserved against*, because `reserve()` only walks `DEFAULT_MODEL_CHAIN`. Every `add_episode` and `search` embeds, entirely unmetered, and today that quietly exceeded 1,000/day — the local ledger showed plenty of headroom the whole time because it was tracking the wrong models.
+
+`create_graphiti`'s docstring states the assumption explicitly: *"the embedder always uses gemini-embedding-001, which has ample free-tier headroom and isn't part of the rate-limited fallback chain."* The headroom claim is what failed. 1,000 embedding requests/day is roughly 200 episodes at 4-6 calls each — the same order as the 500 RPD generation ceiling, not comfortably above it.
+
+Two consequences:
+
+- **Independent of this migration**, the Gemini path needs the embedder metered — either added to the reservation chain or given its own ledger, since it has a different ceiling and no fallback sibling to fall through to.
+- **It strengthens the migration's case.** Embedding is the highest-volume, lowest-judgment call CMF makes, and it is the one that hit the wall first. `nomic-embed-text-v1.5` on the Spark has no quota at all, which is why `CMF_EMBED_PROVIDER=local` is worth landing even if extraction stays on Gemini.
+
+### Note for Phase 6
+
+`EMBEDDING_DIM`, `FALKORDB_DATABASE` and the two provider switches must move **together**. Setting `EMBEDDING_DIM=768` while still pointed at `mem-fabric-gemini` would write 768-dimension vectors into a 1024-dimension graph.
 
 ---
 
-## Phase 3 — The LM Studio compatibility proxy
+## Phases 2 & 3 — Client swap and LM Studio proxy — **complete, verified end to end**
 
-This is the piece that makes D1 work. Implement as a **wrapper around `AsyncOpenAI`** exposing `.chat.completions.create(...)`, injected via `OpenAIGenericClient(client=...)` — not a subclass, so it survives graphiti upgrades.
+A full `add_episode` + `search` round-trip ran against GLM-4.7-Flash and nomic-embed on the Spark, writing 768-dimension vectors into a throwaway FalkorDB graph. Search returned sensible facts:
 
-- [ ] **Request side (does the real work in Mode B):** if `response_format.type == "json_object"`, rewrite to `{"type": "text"}` (§3.2). Graphiti has already appended the schema to the final user message, so nothing is lost.
-- [ ] **Response side (Mode A fallback):** if `choices[0].message.content` is empty/whitespace and `reasoning_content` is non-empty, promote `reasoning_content` into `content` (§3.1). Graphiti's own `_strip_code_fences` handles fenced output downstream.
-- [ ] **Guard the promotion.** Only substitute when the reasoning payload actually parses as JSON; otherwise leave `content` empty and let `EmptyResponseError` fire (which graphiti retries). This guard is what makes it safe to keep both modes in one code path — in Mode B `reasoning_content` holds genuine chain-of-thought prose (verified on Qwen: `'Thinking Process:\n\n1. **Analyze the Request:**…'`), and feeding that to the JSON parser would be worse than failing.
-- [ ] **Don't lower `max_tokens`.** Reasoning tokens come out of the same budget, and extraction calls measured at 2,900–5,800 completion tokens. Graphiti's `OpenAIGenericClient` defaults to 16,384, which is ample; the failure mode if it's too low is a truncated JSON body (`finish_reason: "length"`), which graphiti will retry three more times before failing — expensive at ~48s a call.
-- [ ] Unit-test against **recorded** LM Studio responses (empty-content + populated-reasoning; a `json_object` request) so the test suite needs no live Spark.
+```
+add_episode OK in 44.5s
+search OK in 0.2s -> 5 edges
+   - Alex Nano agreed to keep GLM-4.7-Flash resident in LM Studio on the DGX Spark
+   - Alex Nano agreed to ... leave JIT loading enabled for experimental models
+   - Todd reviewed the Context Memory Fabric rate limiter against his AI Studio dashboard
+```
+
+### Correction: Mode A, not Mode B
+
+Rev 3 recommended Mode B (`json_object` → `text`, schema in the prompt) on the strength of hand-written probe prompts. **End-to-end testing against graphiti's actual prompts proved that wrong.** Given `extract_nodes`, GLM returns the *schema itself*:
+
+```
+pydantic_core.ValidationError: 1 validation error for ExtractedEntities
+extracted_entities  Field required
+  input_value={'$defs': {'ExtractedEnti...ties', 'type': 'object'}
+```
+
+Constrained decoding cannot fail that way — the grammar makes echoing the schema structurally impossible. `DEFAULT_LOCAL_STRUCTURED_MODE` is therefore `json_schema`.
+
+**This makes the proxy required, not a convenience.** Mode A's own failure is GLM leaving `content` empty, and it fires on every call:
+
+```
+DEBUG server.providers.lmstudio_client: Promoting 43 chars of reasoning_content into an empty content field.
+content          : '{"entities": ["Todd", "Alex", "DGX Spark"]}'
+reasoning_content: '{"entities": ["Todd", "Alex", "DGX Spark"]}'
+```
+
+The cost is Gemma-4-26B-A4B: its control-token leak is triggered by constrained decoding specifically, so it is out as an extraction model. Mode B remains selectable via `CMF_LOCAL_STRUCTURED_MODE` for a non-reasoning model that might prefer it.
+
+### Measured: the per-episode call mix, and why the earlier estimate was wrong
+
+One `add_episode` on this episode issued:
+
+| | count |
+|---|---|
+| `chat/completions` (extraction) | **3** |
+| `embeddings` | **~20** |
+
+Both numbers correct earlier guesses, in opposite directions. The §"×3 multiplier" section estimated 4-6 LLM calls from a source trace — the real figure is **3**, so the rate limiter's `DEFAULT_CALLS_PER_OPERATION = 3` was accurate after all and the proposed raise to 6 is unnecessary. More importantly, **nobody was counting embeddings**, and they outnumber LLM calls roughly 7:1 because every entity name and edge fact is embedded individually.
+
+**This is what exhausted the Gemini quota, and it reframes the migration's economics.** At ~20 embeddings per episode against a 1,000/day free-tier embedding ceiling, the Gemini path sustains roughly **50 episodes/day** — not the ~160/day implied by the 500 RPD generation ceiling. The binding constraint was never extraction; it was embedding, unmetered and uncounted.
+
+Consequences:
+
+- `CMF_EMBED_PROVIDER=local` is the single highest-value part of this migration and is worth landing **on its own**, ahead of any extraction change. nomic-embed has no quota.
+- The full 1,243-row backlog would need ~25,000 embedding calls. On Gemini that is 25 days. On the Spark it is free.
+- Phase 4's "raise `DEFAULT_CALLS_PER_OPERATION` to 6" is **withdrawn** — measurement says 3 is right. Metering the embedder stands, and is now clearly the urgent half.
+
+### Built
+
+- **`server/providers/lmstudio_client.py`** — `LMStudioCompatClient`. Request side rewrites `json_object` → `text` (LM Studio rejects `json_object` outright). Response side promotes `reasoning_content` into an empty `content`, but **only when it parses as JSON**, so Mode B's genuine chain-of-thought prose is never fed to graphiti's `json.loads`. Duck-types `AsyncOpenAI` rather than subclassing it, since graphiti only ever touches `.chat.completions.create`.
+- **`server/providers/reranker.py`** — `PassthroughReranker` (default) and BGE selection via `CMF_RERANKER`, with a clear error naming the install when `sentence-transformers` is absent. Documents why `OpenAIRerankerClient` is unusable here: it scores via `logit_bias` on hardcoded OpenAI BPE ids that mean unrelated tokens under GLM's tokenizer.
+- **`create_graphiti` split** into `_build_llm_client` / `_build_embedder` / `_build_cross_encoder`, each branching on its own switch. `resolve_llm_model` picks the model from the right source — the rate limiter's chain is a list of *Gemini* ids and is meaningless on the local path.
+- **`assert_embedding_width()`** — every layer here fails silently on a width mismatch (OpenAIEmbedder slices rather than raises, FalkorDB accepts anything, graphiti falls back to a frozen module constant), so a graph can be built entirely from wrong-width vectors with nothing raised and only poor recall as a symptom. Verified live: returns 768, raises when told to expect 1024.
+- **`tests/test_lmstudio_client.py` — 17 offline tests**, running on recorded response shapes so the suite needs no Spark.
+- **Verified stored width is 768** in the probe graph, and the Gemini path constructs byte-identically to before.
+
+### Also landed: `live` test marker
+
+Seven tests call the real Gemini API. They are now marked and excluded by default via `pyproject.toml`'s `addopts = -m "not live"`.
+
+- Default: **310 passed, 6 skipped, 7 deselected, 26s**, zero quota.
+- Opt in with `uv run pytest -m live`; everything with `-m ""`.
+- Markers verified to work on the `unittest.IsolatedAsyncioTestCase` classes in both directions.
+
+Before this, a full run took **15+ minutes**, almost entirely blocked on network and retry backoff, and could not run at all on an exhausted-quota day.
 
 ---
 
-## Phase 4 — Neutralize the rate limiter
+## Phase 4 — Rate limiter — **complete**
 
-The ledger is correct and worth keeping for the Gemini path. For local models it must become a no-op without changing any call signature — `promote_reviewed`, `pipeline.py` and `ReasoningEpisodePolicyV1` all take a `GeminiRateLimiter` and catch `GeminiQuotaExhaustedError`.
+Two halves: switch the ledger off where it protects nothing, and switch it on where it was missing.
 
-- [ ] Add a `LOCAL_MODEL_BUDGETS` mechanism populating budgets on demand for whatever `CMF_LOCAL_LLM_MODEL` names, with `rpm`/`rpd` sentinels large enough never to bind (so `seconds_until_headroom` is always `0.0`).
-- [ ] Have `get_default_rate_limiter()` (L340) merge those when `CMF_LLM_PROVIDER=local`, so the constructor's unknown-model `ValueError` doesn't fire.
-- [ ] Leave `KNOWN_MODEL_BUDGETS` (L52) and its dashboard-provenance comment untouched — those numbers stay accurate for the Gemini path and shouldn't be diluted with fake entries.
-- [ ] **Raise `DEFAULT_CALLS_PER_OPERATION` from 3 to 6** and correct its docstring. It is documented as a deliberate over-estimate of graphiti's real per-episode call count, but that count is 4-6 (Phase 7), so today it under-reserves and the local ledger can drift ahead of Google's actual counters. This is a fix to the *Gemini* path and is worth landing independently of the migration.
-- [ ] Pass `inter_call_delay=0.2` for local runs ([`promotion.py:145` and `:305`](server/consolidation/promotion.py)) — it's a parameter, so pass it rather than editing the default.
+### Local path: unmetered, not fake-unlimited
 
-Keep the *shape*: local inference still fails transiently — model swapping under Auto-Evict (§1, a live concern here), or Alex taking the baseline offline. `classify_transient_error`'s `503`/`unavailable`/`overloaded` markers still apply, so the retry machinery stays useful.
+- [x] `get_default_rate_limiter()` returns a limiter built with `unmetered=True` when `CMF_LLM_PROVIDER=local`, chained to `CMF_LOCAL_LLM_MODEL`.
+- [x] `reserve()` returns immediately, `seconds_until_headroom()` returns `0.0`, `reserve_model()` is a no-op, and **no ledger file is touched at all**.
+
+Implemented as a flag rather than as ceilings large enough never to bind, because the latter still loads, mutates and re-saves the JSON ledger on every reservation — a 1,243-episode backfill issues thousands. Verified by a test asserting the state file is never created.
+
+The object still exists and still raises the same exception type, so every caller's `GeminiQuotaExhaustedError` handling stays wired for a switch back to Gemini. The constructor's unknown-model `ValueError` is skipped only in unmetered mode; the metered path still rejects a model with no known budget.
+
+### Gemini path: the embedder is now metered
+
+The gap that caused today's failures. `gemini-embedding-001` had a budget in `KNOWN_MODEL_BUDGETS` but was absent from `DEFAULT_MODEL_CHAIN`, so `reserve()` never debited it.
+
+- [x] **`reserve_model(model, calls)`** — reserves against one *named* model with no chain fallback. `reserve()`'s "which model should I use" question is meaningless for the embedder: there is one embedding model and nothing to fall through to, so the only useful answers are yes and `GeminiQuotaExhaustedError`.
+- [x] **`MeteredEmbedder`** (`server/providers/metered_embedder.py`) wraps the Gemini embedder. Metering has to happen there because CMF has no call site to guard — graphiti calls `embedder.create()` from inside `add_episode` and `search`.
+- [x] **Debits per input, not per batch.** `GeminiEmbedder` forces `batch_size = 1` for `gemini-embedding-001`, so a batch of N is N HTTP requests and N quota debits. Counting a batch as one call is precisely the undercount that hid this.
+- [x] **Reserves before delegating**, so a refused caller has made zero API requests — the same contract `get_graphiti_for_operation()` already gives generation.
+- [x] **Not applied to the local embedder.** nomic-embed has no quota; a layer that only ever says yes is noise.
+
+### Found while testing: `status()` had the same blind spot
+
+The operator-facing `status()` reported only models **in the chain**. Since the embedder is deliberately not in the chain, an operator checking quota saw no embedding usage whatsoever — right up to a live 429 on a ceiling nothing was reporting. It now reports the union of the chain and everything the ledger has recorded, with an `in_chain` flag, and returns `{"unmetered": true}` on the local path.
+
+### Also
+
+- [x] **`"model unloaded"` added to `TRANSIENT_ERROR_MARKERS`.** LM Studio's Auto-Evict kills in-flight requests with `{"error": "Model unloaded."}` — observed live. It is not an HTTP 5xx and matched no existing marker, so it would abort a batch run that one retry would have carried through.
+- [x] **`inter_call_delay` is provider-aware.** `default_inter_call_delay()` resolves to 3.5s on Gemini (politeness toward a shared 15 RPM ceiling) and 0.2s locally. Resolved at call time rather than baked into three signatures, so flipping the provider takes effect without edits and an explicit caller value — including the `0` the tests pass — still wins. Across 1,243 episodes the old default would have added over an hour of pure sleeping.
+- [x] **`DEFAULT_CALLS_PER_OPERATION` left at 3**, per the measurement that withdrew the proposed raise.
+- [x] **`tests/test_spark_rate_limiter.py` — 18 tests.** Suite: **330 passed, 24s**.
+
+### Caveat for the first day back on Gemini
+
+The ledger is CMF's own count, not Google's. It currently records **zero** embedding usage today because metering did not exist while today's ~1,000 embedding calls were being made. If anything runs on the Gemini path before the Pacific-midnight reset, the ledger will believe there is a full 1,000-call budget available while Google's counter is already exhausted, and calls will 429 despite a clean local reservation. From tomorrow the two agree.
 
 ---
 
-## Phase 5 — Reasoning-episode policy
+## Phase 5 — Reasoning-episode policy — **complete**
 
-[`_default_generate()`](server/policies/reasoning_episode_v1.py) at L106 calls `google.genai` directly with `response_mime_type: application/json`.
+`ReasoningEpisodePolicyV1` bypassed Graphiti entirely, calling `google.genai` directly, so Phases 2-3 did not touch it.
 
-- [ ] Write `_local_generate(model, prompt)` against `/v1/chat/completions`, going through the **same Phase 3 proxy** so the reasoning-channel and `json_object` handling live in one place. Use `json_schema` with the episode schema, temperature 0.2.
-- [ ] Select on `CMF_LLM_PROVIDER` at `ReasoningEpisodePolicyV1.__init__` (L158) — `generate_fn` is already injectable, so no structural change and the existing fakes keep working.
-- [ ] Retune `_TRANSIENT_MARKERS` for LM Studio's error strings (it returns `{"error": "..."}` shapes, not Google's). **Add `"model unloaded"`** — observed live when Auto-Evict swapped a model out mid-generation. It is not an HTTP 5xx and matches none of the existing markers, so without this it surfaces as a hard failure and aborts the run rather than retrying. Same addition belongs in [`server/core/rate_limiter.py`](server/core/rate_limiter.py)'s `TRANSIENT_ERROR_MARKERS` for the Graphiti path.
-- [ ] **Bump `version` from `"0.2"` to `"0.3"`.** A different extraction model is a different policy. The pipeline's `supersedes` lineage re-derives cleanly, and leaving it at 0.2 would silently mix Gemini-derived and GLM-derived episodes in one version bucket — wrecking the §9 comparison.
+- [x] **`_local_generate(model, prompt)`** — same `GenerateFn` contract, routed through the Phase 3 `LMStudioCompatClient` rather than a bare `AsyncOpenAI`, so the `json_object`→`text` rewrite and the `reasoning_content` rescue apply here too. In `json_schema` mode it supplies `_EPISODES_SCHEMA`, a permissive schema mirroring the shape the prompt already describes and `_to_episode` already reads.
+- [x] **`_select_generate_fn()`** picks it at construction from `CMF_LLM_PROVIDER`. An injected `generate_fn` still wins, so every existing fake keeps working.
+- [x] **Transient handling consolidated.** The policy's private `_TRANSIENT_MARKERS` tuple is gone; it now defers to `server.core.rate_limiter.classify_transient_error`, which means LM Studio's `{"error": "Model unloaded."}` is retried here too. Gemini's `"try again later"` phrasing was carried into the shared set so nothing was lost. Quota errors stay deliberately non-retryable — `evaluate_window` re-raises them as `GeminiQuotaExhaustedError` so the pipeline stops clean.
+- [x] **Version bumped 0.2 → 0.3.** A different extraction model is a different policy: GLM-derived and Gemini-derived episodes must not share a version bucket or the Phase 7 comparison has nothing to compare.
+
+### The version bump was a trap, and it needed three more fixes
+
+`"0.2"` was a hardcoded **default argument** in three production call sites — `review_queue()`, `tier1_review_queue()` and `mark_superseded_by_reasoning()` — and the review CLI had **no `--policy-version` flag at all**. Bumping the policy alone would have silently emptied the review queue with no way to reach the 1,243 rows sitting at 0.2.
+
+- [x] **`REASONING_POLICY_VERSION` is now the single source of truth**, imported by all three (verified free of import cycles). A literal repeated across four modules is precisely how a bump stops matching rows.
+- [x] **`--policy-version` added** to `stats`, `queue` and `export`, defaulting to the current version.
+- [x] **An empty queue now explains itself.** It distinguishes "no rows at all at this version" (prints the versions that do have rows, and the flag to use) from "rows exist but the backlog is worked through" — which is a finished queue, not a missing one. The first draft conflated them and reported the 1,243-row version as empty.
+
+Verified against the real journal:
+
+```
+$ python -m server.review.cli queue --tier 1
+0 pending across 0 buckets
+Note: no rows at all at policy version 0.3; other versions: 0.2 (1243 queued), 0.1 (66 queued)
+      Review them with:  --policy-version 0.2
+
+$ python -m server.review.cli queue --tier 1 --policy-version 0.2
+0 pending across 0 buckets (301 already reviewed, 942 tier-2 not in scope)
+```
+
+- [x] **Nine existing tests failed on the bump** — fixtures built rows at `"0.2"` and queried with the new default. They were the canary for exactly this coupling. Their fixtures now use `REASONING_POLICY_VERSION`, so they are version-agnostic and will not break on the next bump.
+### Verified live, and it caught a regression
+
+A real window through GLM-4.7-Flash extracted correct episodes with correct evidence linking:
+
+```
+[finding]  conf=0.9  evidence=['e1','e2','e3']
+[decision] conf=0.9  evidence=['e3']
+```
+
+But both came back with **`thread_key=None`**. Checked against the real corpus, that is a regression, not a quirk: Gemini populated `thread_key` on **1,242 of 1,243** rows. The field is load-bearing — referenced 58 times across 10 modules, it is what `consolidation/threads.py` matches conversations on and what `review/projects.py` buckets by — so nulls there quietly degrade thread continuity and project grouping.
+
+Cause: the prompt describes `thread_key` as nullable, so the permissive schema allowed null, and GLM took the option wherever the grammar permitted it. **`thread_key` is now required and non-nullable in `_EPISODES_SCHEMA`**; the genuinely optional fields (`status`, `rationale`, `alternatives`, `driving_question`, `thread_title`) stay nullable, since requiring everything would push the model to invent values. Re-run:
+
+```
+[finding] conf=1.0  thread=gemini-free-tier-consolidation  status=resolved
+```
+
+**Note for Phase 7:** the same window yielded 2 episodes on one run and 1 on the next, at temperature 0.2. Extraction is non-deterministic, so the quality A/B needs several samples per input rather than one — a single-sample comparison would mostly measure variance.
+
+- [x] **`tests/test_spark_reasoning_policy.py` — 22 tests**, including a guard that `thread_key` stays required. Suite: **352 passed, 24s.**
 
 ---
 
@@ -409,7 +552,7 @@ cp imports/journal/journal.db imports/journal/journal.db.pre-spark-20260908
 docker exec context-memory-fabric-falkordb redis-cli --rdb /data/pre-spark-20260908.rdb
 ```
 
-- [ ] Point `.env` at `mem-fabric`. Graphiti builds indexes at the new dimension on first use; the old graph is untouched.
+- [ ] Point `.env` at `mem-fabric-local`. Graphiti builds indexes at the new dimension on first use; the old graph is untouched.
 
 - [ ] **Reset the promotion ledger.** `promote_reviewed` skips any row where `promotion_store.is_promoted(memory_id)` is true, and `promotions.memory_id` is the primary key with **no graph column in it** — so all 285 prior promotions would be skipped and the new graph would come up empty. After confirming the backup exists:
 ```bash
@@ -423,7 +566,7 @@ python -m server.review.cli promote --limit 5 --apply
 ```
 Inspect before going further:
 ```bash
-docker exec context-memory-fabric-falkordb redis-cli GRAPH.RO_QUERY mem-fabric "MATCH (n) RETURN labels(n)[0], count(*)"
+docker exec context-memory-fabric-falkordb redis-cli GRAPH.RO_QUERY mem-fabric-local "MATCH (n) RETURN labels(n)[0], count(*)"
 ```
 - [ ] Then the full run. No `--no-wait` needed — after Phase 4 there is nothing to wait for.
 
@@ -505,7 +648,7 @@ Not blocking the plan; do these before or during Phase 7 rather than now.
 
 Quality — where the decision actually gets made:
 
-- [ ] Take **20 statements already promoted under Gemini**, re-promote into `mem-fabric`, compare extracted entities and edges side by side. The old graph exists precisely for this.
+- [ ] Take **20 statements already promoted under Gemini**, re-promote into `mem-fabric-local`, compare extracted entities and edges side by side. The old graph exists precisely for this.
 - [ ] Run the same recall queries against both graphs and compare.
 - [ ] **The gate:** does GLM extraction produce entity/edge structure comparable to Gemini's? A local model that extracts noticeably worse converts a quota problem into a data-quality problem, which is the worse trade. If quality drops, fall back to the hybrid — local embeddings (high-volume, low-judgment) with Gemini extraction (low-volume, high-judgment). Phase 1's split provider vars make that a config change.
 
@@ -520,7 +663,7 @@ Four env vars and one restore:
 ```bash
 CMF_LLM_PROVIDER=gemini
 CMF_EMBED_PROVIDER=gemini
-FALKORDB_DATABASE=memory-fabric
+FALKORDB_DATABASE=mem-fabric-gemini
 EMBEDDING_DIM=1024
 ```
 ```bash

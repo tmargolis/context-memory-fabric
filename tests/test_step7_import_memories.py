@@ -25,6 +25,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import pytest
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -338,6 +339,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result_files), 1)
         self.assertIn("dry_run", result_files[0].name)
 
+    @pytest.mark.live
     async def test_real_import_and_idempotency_workflow(self):
         """Verify real import (dry_run=False) ingests episodic memories and skips duplicates on rerun."""
         # Short synthetic snippet for live FalkorDB/Gemini test

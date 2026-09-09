@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from server.consolidation.store import ConsolidationStore
+from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
 from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     GeminiRateLimiter,
@@ -38,6 +39,28 @@ from server.journal.store import SqliteEventStore, DEFAULT_JOURNAL_PATH
 logger = logging.getLogger(__name__)
 
 RememberFn = Callable[..., Awaitable[dict[str, Any]]]
+
+# Spacing between successive remember() calls in a batch run. On Gemini this
+# is politeness toward a shared free-tier quota with a 15 RPM ceiling; the
+# 3.5s value matches reconcile_memories' existing precedent. Local inference
+# has no quota and no other tenant, so the delay is pure dead time: across a
+# 1,243-episode backfill, 3.5s each adds over an hour of sleeping. Dropped to
+# a token 0.2s rather than 0 so a runaway loop still yields.
+GEMINI_INTER_CALL_DELAY = 3.5
+LOCAL_INTER_CALL_DELAY = 0.2
+
+
+def default_inter_call_delay() -> float:
+    """Provider-appropriate spacing, resolved at call time.
+
+    Resolved here rather than baked into the signatures so that flipping
+    CMF_LLM_PROVIDER takes effect without editing three defaults, and so an
+    explicit caller value (including 0, which the tests pass) still wins.
+    """
+    from server.core.config import load_config
+
+    return LOCAL_INTER_CALL_DELAY if load_config().llm_is_local else GEMINI_INTER_CALL_DELAY
+
 
 # Fixed backoff for a real Gemini API 429/503 that survives remember()'s own
 # retry budget — see promote_reviewed's matching except block for why this
@@ -52,15 +75,98 @@ _API_TRANSIENT_ERROR_BACKOFF_SECONDS = 65.0
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS promotions (
-    memory_id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL,
     status TEXT NOT NULL,
     episode_name TEXT,
-    graph_name TEXT,
+    graph_name TEXT NOT NULL,
     error TEXT,
-    promoted_at TEXT NOT NULL
+    promoted_at TEXT NOT NULL,
+    PRIMARY KEY (memory_id, graph_name)
 );
 CREATE INDEX IF NOT EXISTS idx_promotions_status ON promotions(status);
+CREATE INDEX IF NOT EXISTS idx_promotions_graph ON promotions(graph_name);
 """
+
+
+def _configured_graph() -> str:
+    """The graph this process is pointed at, for ledger scoping.
+
+    Reads config rather than importing server.providers.memory_graphiti's
+    resolve_target_database(), which would pull graphiti_core into every
+    import of this module for a single string.
+    """
+    from server.core.config import load_config
+
+    name = load_config().falkordb_database
+    if not (name and name.strip()):
+        raise MissingPromotionGraphError(
+            "FALKORDB_DATABASE is not set, so promotions cannot be scoped to a graph. "
+            "Set it in the project-root .env file."
+        )
+    return name.strip()
+
+
+class MissingPromotionGraphError(RuntimeError):
+    """Raised when a promotion cannot be attributed to a target graph."""
+
+
+def _migrate_promotions_pk(conn: sqlite3.Connection) -> None:
+    """Widen the promotions primary key from (memory_id) to (memory_id, graph_name).
+
+    Without graph_name in the key, one memory can be recorded as promoted
+    exactly once across all graphs -- so rebuilding into a second graph
+    silently skips every row that ever succeeded anywhere, and the new graph
+    comes up empty with a clean-looking ledger. That is precisely the
+    Gemini-vs-local A/B this migration exists to enable.
+
+    SQLite cannot alter a primary key in place, so this rebuilds the table.
+    Idempotent: it inspects the existing key first and returns if already wide.
+    """
+    cols = conn.execute("PRAGMA table_info(promotions)").fetchall()
+    if not cols:
+        return  # fresh database; SCHEMA_SQL already created the wide key
+    pk_cols = {c[1] for c in cols if c[5]}  # c[5] is the pk position, 0 when not part of it
+    if "graph_name" in pk_cols:
+        return
+
+    backfill = _configured_graph()
+    logger.info(
+        "Migrating promotions to a (memory_id, graph_name) primary key; "
+        "rows with no recorded graph are attributed to %r.",
+        backfill,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE promotions_migrated (
+            memory_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            episode_name TEXT,
+            graph_name TEXT NOT NULL,
+            error TEXT,
+            promoted_at TEXT NOT NULL,
+            PRIMARY KEY (memory_id, graph_name)
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO promotions_migrated (memory_id, status, episode_name, graph_name, error, promoted_at)
+        SELECT memory_id, status, episode_name,
+               CASE WHEN graph_name IS NULL OR TRIM(graph_name) = '' THEN ? ELSE graph_name END,
+               error, promoted_at
+        FROM promotions
+        """,
+        (backfill,),
+    )
+    conn.executescript(
+        """
+        DROP TABLE promotions;
+        ALTER TABLE promotions_migrated RENAME TO promotions;
+        CREATE INDEX IF NOT EXISTS idx_promotions_status ON promotions(status);
+        CREATE INDEX IF NOT EXISTS idx_promotions_graph ON promotions(graph_name);
+        """
+    )
+    conn.commit()
 
 
 class PromotionStore:
@@ -82,6 +188,7 @@ class PromotionStore:
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(SCHEMA_SQL)
         self._conn.commit()
+        _migrate_promotions_pk(self._conn)
 
     def close(self) -> None:
         self._conn.close()
@@ -92,34 +199,60 @@ class PromotionStore:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def get(self, memory_id: str) -> Optional[sqlite3.Row]:
-        return self._conn.execute("SELECT * FROM promotions WHERE memory_id = ?", (memory_id,)).fetchone()
+    def get(self, memory_id: str, graph_name: Optional[str] = None) -> Optional[sqlite3.Row]:
+        """The ledger row for this memory *in one graph*.
 
-    def is_promoted(self, memory_id: str) -> bool:
-        row = self.get(memory_id)
+        `graph_name` defaults to the configured target, which makes the
+        natural reading of every existing call site the correct one: "is this
+        promoted into the graph I am working with", not "into any graph ever".
+        """
+        graph = graph_name or _configured_graph()
+        return self._conn.execute(
+            "SELECT * FROM promotions WHERE memory_id = ? AND graph_name = ?",
+            (memory_id, graph),
+        ).fetchone()
+
+    def is_promoted(self, memory_id: str, graph_name: Optional[str] = None) -> bool:
+        row = self.get(memory_id, graph_name)
         return row is not None and row["status"] == "succeeded"
+
+    def graphs(self) -> list[str]:
+        """Every graph this ledger has recorded a promotion into."""
+        return [
+            r["graph_name"]
+            for r in self._conn.execute(
+                "SELECT DISTINCT graph_name FROM promotions ORDER BY graph_name"
+            ).fetchall()
+        ]
 
     def record_success(self, memory_id: str, episode_name: str, graph_name: str) -> None:
         self._conn.execute(
             """
             INSERT INTO promotions (memory_id, status, episode_name, graph_name, error, promoted_at)
             VALUES (?, 'succeeded', ?, ?, NULL, ?)
-            ON CONFLICT(memory_id) DO UPDATE SET
+            ON CONFLICT(memory_id, graph_name) DO UPDATE SET
                 status='succeeded', episode_name=excluded.episode_name,
-                graph_name=excluded.graph_name, error=NULL, promoted_at=excluded.promoted_at
+                error=NULL, promoted_at=excluded.promoted_at
             """,
-            (memory_id, episode_name, graph_name, datetime.now(timezone.utc).isoformat()),
+            (memory_id, episode_name, graph_name or _configured_graph(), datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
 
-    def record_failure(self, memory_id: str, error: str) -> None:
+    def record_failure(self, memory_id: str, error: str, graph_name: Optional[str] = None) -> None:
+        """Record a failed promotion, scoped to its target graph.
+
+        graph_name is no longer nullable: it is half the primary key, and
+        SQLite permits NULLs in a non-INTEGER primary key, so a NULL here
+        would let the same failure be inserted repeatedly instead of updating.
+        """
         self._conn.execute(
             """
             INSERT INTO promotions (memory_id, status, episode_name, graph_name, error, promoted_at)
-            VALUES (?, 'failed', NULL, NULL, ?, ?)
-            ON CONFLICT(memory_id) DO UPDATE SET status='failed', error=excluded.error, promoted_at=excluded.promoted_at
+            VALUES (?, 'failed', NULL, ?, ?, ?)
+            ON CONFLICT(memory_id, graph_name) DO UPDATE SET
+                status='failed', error=excluded.error, promoted_at=excluded.promoted_at
             """,
-            (memory_id, error, datetime.now(timezone.utc).isoformat()),
+            (memory_id, graph_name or _configured_graph(), error, datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
 
@@ -142,7 +275,7 @@ async def promote_auto_accepted(
     dry_run: bool = True,
     limit: Optional[int] = None,
     graph_name: Optional[str] = None,
-    inter_call_delay: float = 3.5,
+    inter_call_delay: Optional[float] = None,
 ) -> dict[str, Any]:
     """Promote `auto_accepted` derived_memories rows not yet promoted.
 
@@ -227,15 +360,16 @@ async def promote_auto_accepted(
             break
         except Exception as e:
             logger.error(f"Failed to promote {memory_id}: {e}")
-            promotion_store.record_failure(memory_id, str(e))
+            promotion_store.record_failure(memory_id, str(e), graph_name)
             result["failed"].append({"memory_id": memory_id, "error": str(e)})
             continue
 
         # Polite delay between remember() calls, matching the precedent in
         # server.providers.memory_graphiti.reconcile_memories. Configurable
         # (and zeroed in tests) so the delay doesn't leak into test runtime.
-        if inter_call_delay > 0:
-            await asyncio.sleep(inter_call_delay)
+        delay = inter_call_delay if inter_call_delay is not None else default_inter_call_delay()
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     return result
 
@@ -260,7 +394,7 @@ def default_tier(reasoning_kind: Optional[str]) -> int:
 
 
 def tier1_review_queue(
-    consolidation_store: ConsolidationStore, promotion_store: PromotionStore, policy_version: str = "0.2"
+    consolidation_store: ConsolidationStore, promotion_store: PromotionStore, policy_version: str = REASONING_POLICY_VERSION
 ) -> list[sqlite3.Row]:
     """Reasoning episodes a reviewer should triage for promotion: tier-1
     kind, not already promoted, not rejected/superseded."""
@@ -302,7 +436,7 @@ async def promote_reviewed(
     memory_ids: list[str],
     dry_run: bool = True,
     graph_name: Optional[str] = None,
-    inter_call_delay: float = 3.5,
+    inter_call_delay: Optional[float] = None,
     wait_through_rate_limit: bool = True,
     max_single_wait_seconds: float = 6 * 3600,
     rate_limiter: Optional[GeminiRateLimiter] = None,
@@ -433,12 +567,13 @@ async def promote_reviewed(
                     result["api_stalls"] += 1
                     continue
                 logger.error(f"Failed to promote {memory_id}: {e}")
-                promotion_store.record_failure(memory_id, str(e))
+                promotion_store.record_failure(memory_id, str(e), graph_name)
                 result["failed"].append({"memory_id": memory_id, "error": str(e)})
                 break
 
-        if inter_call_delay > 0:
-            await asyncio.sleep(inter_call_delay)
+        delay = inter_call_delay if inter_call_delay is not None else default_inter_call_delay()
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     return result
 
