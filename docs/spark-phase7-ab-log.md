@@ -100,9 +100,33 @@ full-local is a hard requirement.
 
 ---
 
+### 4. `qwen3.5-122b-a10b` extraction probe — [MUTATES: one throwaway graph]
+
+Todd loaded `unsloth/qwen3.5-122b-a10b` at **32768** context + `nomic` embedder on
+the Spark via `lms load` (correct key is `unsloth/…`, not `qwen/…`). Server on 1234,
+both models resident.
+
+- Smoke test: qwen-122b is a **reasoning model** — empty `content`, all output in
+  `reasoning_content` — so the run uses the existing `LMStudioCompatClient` proxy in
+  Mode A (`json_schema`), same as GLM.
+- `scratchpad/phase7/run_q122.py` — env-overrides `CMF_LLM_PROVIDER=local`,
+  `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b`, `EMBEDDING_DIM=768`,
+  `FALKORDB_DATABASE=spark-phase7-q122`; full `graphiti.add_episode` for **8** of the
+  scored sample episodes (dropped interlock / mac-infra / ev-charging — both
+  extractors were ~empty there).
+- **Only mutation: FalkorDB graph `spark-phase7-q122`.** Journal DB untouched (local
+  rate-limiter path writes no ledger; the promotion path is not used).
+
+**Undo:** `docker exec context-memory-fabric-falkordb redis-cli GRAPH.DELETE spark-phase7-q122`
+
+---
+
 ## Rollback ledger
 
-Nothing in steps 1–3 mutated any state. All FalkorDB access was `GRAPH.RO_QUERY`;
-the two production graphs were not written to. Scratch artifacts live under
-`scratchpad/phase7/` (session-isolated, auto-cleaned). This log file is the only
-repo change.
+| Step | State change | Undo |
+|---|---|---|
+| 1–3 | none (all `GRAPH.RO_QUERY`) | n/a |
+| 4 | FalkorDB graph `spark-phase7-q122` created | `redis-cli GRAPH.DELETE spark-phase7-q122` |
+
+Production graphs `mem-fabric-gemini` / `mem-fabric-local` and `imports/journal/journal.db`
+were never written to. Scratch under `scratchpad/phase7/` is session-isolated / auto-cleaned.
