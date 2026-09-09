@@ -204,6 +204,53 @@ win over the hybrid; a real quality/independence tradeoff.
    and/or a stronger `custom_extraction_instructions`, re-run the 38, see if recall
    closes the gap. If it does → all-local becomes the clear pick.
 
+### 4c. Round 1 — qwen-122b + `custom_extraction_instructions` — [MUTATES: graph `spark-phase7-q122-r1`]
+
+Lever: graphiti extraction already runs at **temperature 1** (its `LLMConfig` default;
+CMF never overrides it), so timidity is not a low-temp artefact. The real unused lever
+is `custom_extraction_instructions` — a first-class `add_episode` param spliced into
+the `extract_nodes`/`extract_edges` prompts, which `remember()` passes as `None`.
+
+Added a 601-char nudge: *"…a concise, deliberately terse 3rd-person summary… extract
+every specific named entity it references… even when mentioned only briefly… an empty
+list should be rare… do NOT extract the narrator."* Re-ran the same 38 into
+`spark-phase7-q122-r1`. 38/38 OK (one 605 s stall, recovered).
+
+| | n | ent/ep | edge/ep | **MISS** | pronoun | self-loop | garbage | dup |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| Gemini | 38 | 1.50 | 0.50 | 9 (24%) | 0 | 0 | 0 | 0 |
+| GLM | 38 | 2.87 | 1.82 | 2 (5%) | 8 | 0 | 0 | 6 |
+| qwen r0 (no instr) | 38 | 1.45 | 0.68 | 17 (45%) | 0 | 0 | 0 | 0 |
+| **qwen r1 (+instr)** | 38 | **2.03** | **1.24** | **11 (29%)** | **0** | **0** | **0** | **0** |
+
+- **Miss rate 45% → 29%** — now 5 pts off Gemini, and **7 of the 11 remaining misses
+  are episodes Gemini also misses** (un-extractable statements). Real recall gap vs
+  Gemini ≈ 10%, down from ~28%.
+- **Hygiene stayed perfect** — 0/0/0/0. Loosening did not bring back pronouns,
+  self-loops, garbage or dupes. That is the decisive result: qwen-122b can be made
+  less timid without making it sloppy.
+- **Recall volume now ≥ Gemini** when it engages: ent/ep 2.03 vs 1.50, edge/ep 1.24
+  vs 0.50 — and still clean.
+- Net over r0: 9 episodes recovered (0→N entities), 3 lost (all were 1-entity, likely
+  temp-1 noise).
+
+### Verdict — Phase 7 D1 gate: ANSWERED
+
+**All-local is viable. Adopt `unsloth/qwen3.5-122b-a10b` + the extraction-instructions
+nudge.** It matches Gemini on hygiene (and crushes GLM), and closes to ~5 pts of
+Gemini on recall — most of that residual being statements no model can extract from.
+Fully local: no quota, no per-call cost, ~25 s/episode.
+
+**Next steps (each milestone-gated):**
+1. Wire the `INSTR` string into `remember()`'s `add_episode` call (small; benign no-op
+   on the Gemini path — verify once). Set `CMF_LOCAL_LLM_MODEL=unsloth/qwen3.5-122b-a10b`.
+2. Fresh-graph re-promotion of the 295 tier-1 episodes on qwen-122b + nomic (~2 h).
+   `mem-fabric-gemini` retained for rollback.
+3. Mechanical fixes (self-edge drop, edge dedup, semantic episode names) — lower
+   priority now (qwen r1 already emits 0 self-loops / 0 dups) but still worth doing.
+4. Watch for the ~600 s mid-run stall recurring; Phase 4's `"model unloaded"` retry
+   marker should cover an Auto-Evict.
+
 ---
 
 ## Rollback ledger
