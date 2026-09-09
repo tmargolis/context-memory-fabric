@@ -161,12 +161,48 @@ extraction-model gap.
   decide if that miss rate is acceptable for a memory graph.
 - Throughput is fine (~27 s/episode).
 
+### 4b. Wider sample — 38 episodes, 3-way — [READ-ONLY]
+
+Added 30 more (stratified across projects) to `spark-phase7-q122`. 30/30 ingested,
+~4–59 s each. Full 3-way over all 38:
+
+| | n | ent/ep | edge/ep | **0-entity misses** | pronoun | self-loop | garbage | dup |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| Gemini | 38 | 1.50 | 0.50 | **9 (24%)** | 0 | 0 | 0 | 0 |
+| GLM | 38 | 2.87 | 1.82 | 2 (5%) | 8 | 0 | 0 | 6 |
+| **qwen-122b** | 38 | 1.45 | 0.68 | **17 (45%)** | 0 | 0 | 0 | 0 |
+
+- **Hygiene: qwen-122b = Gemini, perfect.** Zero on all four defect classes. GLM's
+  low miss rate (5%) is not a virtue — it "hits" by emitting pronouns / fragments /
+  hallucinations (its 2.87 ent/ep is inflated junk).
+- **Recall: qwen-122b clearly below Gemini.** 45% of statements yield zero entities
+  vs Gemini's 24% — held from 37% at n=8, so not noise. On the ~29 statements Gemini
+  finds extractable, qwen-122b succeeds on ~21 → **~28% relative recall loss**.
+  Concretely: ~8 of the 38 are episodes Gemini made entity-retrievable and qwen-122b
+  left with nothing (3d-sphere, an astro-exposure episode, two exhibition, a finance,
+  an ev-charging…).
+- **When qwen-122b does engage, structure ≈ Gemini or slightly richer** (e.g.
+  `promoted_20260830…` G 5/2 vs Q 7/3; `promoted_20260502_a1f3da61` G 3/2 vs Q 5/4).
+- Gemini's own 24% floor is partly statement quality — some reasoning-episode
+  syntheses are too abstract to extract from by any model ("asks for a phased
+  purchase and installation plan…").
+
+### Verdict — n=38
+
+**qwen-122b is a clean extractor that is too conservative.** It removes every one of
+GLM's disqualifying defects but trades ~28% of Gemini's recall for it. Not a clear
+win over the hybrid; a real quality/independence tradeoff.
+
 **Options for Todd:**
-1. Wider confirmation run (~25–30 more episodes through qwen-122b into the same
-   throwaway graph) to pin the real miss rate, then decide all-local-qwen vs hybrid.
-2. Adopt qwen-122b now, accept the miss rate, full re-promotion (~2 h for 295).
-3. Hybrid (Gemini extraction + local embed) — safest recall, config-only, ~2 days
-   for the 295 (limiter-paced).
+1. **Hybrid** (`CMF_LLM_PROVIDER=gemini` + `CMF_EMBED_PROVIDER=local`) — best recall,
+   captures the migration's real win (unmetered local embeddings), config-only.
+   ~2 days limiter-paced to re-promote 295. **Safest.**
+2. **All-local qwen-122b** — accept ~28% recall loss vs Gemini for fully local / no
+   quota / no cost / clean output / fast (~2 h for 295).
+3. **One tuning pass on qwen-122b** (~15–20 min) — the 45% miss may be a reasoning
+   model going terse under Mode-A `json_schema` at low temperature; try temp 0.4–0.7
+   and/or a stronger `custom_extraction_instructions`, re-run the 38, see if recall
+   closes the gap. If it does → all-local becomes the clear pick.
 
 ---
 
