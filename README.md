@@ -13,7 +13,7 @@ Context Memory Fabric is a portable personal context and memory layer shared acr
                                                          │
    ┌──────────────┬──────────────┬──────────────┬────────┴───────┬──────────────┬──────────────────────┬──────────────────┐
    │              │              │              │                │              │                      │                  │
-remember()    recall()     edit_memory()  search_wiki()    get_context()   propose_wiki_update()   import_memories()
+remember()   recall_mem()   edit_memory()  search_wiki()    get_context()   propose_wiki_update()   import_memories()
    │              │              │              │                │              │                      │
  direct        episodic      episodic       canonical         unified       reviewable             administrative
 episodic       factual      mutation /       durable          context        proposal                historical
@@ -42,6 +42,22 @@ episodic       factual      mutation /       durable          context        pro
 
 ---
 
+## Does the shared context layer help? (MS7 evaluation)
+
+30 real questions about ongoing projects, decisions, and personal state — each with a hand-written correct answer. An assistant answers each question; the answer is scored **0** (wrong, or "I don't know"), **1** (partial), or **2** (contains what a correct answer needs). The figure below is the **share of a complete answer**, averaged over the 30 questions.
+
+| Answering with… | Complete-answer score |
+|---|---|
+| Claude, no memory and no context (isolated baseline) | 3% |
+| Gemini 3.8 Flash, its own built-in memory of the user | 10% |
+| GPT-5.6, its own built-in memory of the user | 18% |
+| Claude Sonnet 5, its own built-in memory of the user | 18% |
+| **Claude + `get_context` (this project)** | **76%** |
+
+*Each assistant's built-in memory answers only 5–8 of the 30 questions at all — mostly the facts repeated often enough to have stuck — and several of those answers are confidently wrong: a garage electrical spec that contradicts the site report, an out-of-date positioning claim, an invented list of agent names. `get_context` answers 24 of 30 at least partially, and every claim it returns is tied to a specific stored decision or document. Method and full results: [docs/plan-active.md](docs/plan-active.md) (MS7) and [docs/spark-ms7-episode-vector-spike.md](docs/spark-ms7-episode-vector-spike.md).*
+
+---
+
 ## Documentation & Guides
 
 All project documentation beyond this README lives under [`docs/`](docs/).
@@ -62,7 +78,7 @@ All project documentation beyond this README lives under [`docs/`](docs/).
 |---|---|---|
 | **`get_context(topic)`** | Read-Only | **DEFAULT** personal context retrieval tool. Concurrently searches durable Wiki files and episodic memories, returning formatted Markdown with temporal conflict guidance. |
 | **`search_wiki(query)`** | Read-Only | Lexical search over the local durable knowledge corpus (`WIKI/`, `REPORTS/`, `RAW/`, `TO-RESEARCH/`, etc.) with extracted snippet previews and media metadata. |
-| **`recall(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes. |
+| **`recall_mem(query)`** | Read-Only | Queries the Graphiti episodic knowledge graph in FalkorDB for temporal facts, past decisions, milestones, and preference changes — hybrid edge search plus KNN over each episode's synthesized statement. |
 | **`remember(content, name, source_description)`** | State Write | Ingests a substantive decision, event, preference change, or milestone into the episodic knowledge graph in FalkorDB. |
 | **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** | Memory Mutation | Modifies, corrects, or re-dates existing episodic episodes, entity nodes, and graph relationships in FalkorDB, synchronizing local import state. |
 | **`reconcile_memories(records, dry_run)`** | Reconciliation | Consolidates, updates, and upserts episodic memories with real upsert/reject semantics in FalkorDB and synchronizes local import registry state. |
