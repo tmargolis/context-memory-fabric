@@ -106,6 +106,47 @@ class CorpusScanner:
         return assets
 
 
+# English function words carry no retrieval signal but, under substring scoring,
+# match nearly every document and let large stopword-dense assets (PDF tables of
+# contents, long journals) dominate. Filtered from query terms before scoring.
+_STOPWORDS = frozenset(
+    """
+    a an the this that these those
+    and or but nor
+    of for to in on at by with from into onto over under about across during
+    is are was were be been being
+    do does did
+    have has had
+    i me my we us our you your it its
+    he she they them their his her
+    what which who whom whose
+    how why when where whether
+    as if than then else
+    not no
+    can could will would should may might must
+    just now only very also
+    versus vs
+    """.split()
+)
+
+
+def _tokenize(query: str) -> list[str]:
+    """Split a query into content-bearing lowercase terms.
+
+    Strips leading/trailing punctuation from each whitespace-delimited token so
+    ``interlock?`` and ``glean,`` match plain corpus text, then drops English
+    function words. Falls back to the unfiltered token list when every term is a
+    stopword, so a degenerate query still matches something.
+    """
+    cleaned: list[str] = []
+    for tok in re.split(r"\s+", query.lower()):
+        tok = re.sub(r"^[^\w]+|[^\w]+$", "", tok)
+        if tok:
+            cleaned.append(tok)
+    content = [t for t in cleaned if t not in _STOPWORDS]
+    return content or cleaned
+
+
 def _extract_snippet(text: str, query: str, window: int = 160) -> Optional[str]:
     """Generate a contextual snippet around the first occurrence of query terms."""
     if not text:
@@ -161,7 +202,7 @@ class CorpusSearchEngine:
             return []
 
         lower_query = stripped_query.lower()
-        terms = [t for t in re.split(r"\s+", lower_query) if t]
+        terms = _tokenize(stripped_query)
 
         results: list[SearchResult] = []
 
