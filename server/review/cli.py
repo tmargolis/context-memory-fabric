@@ -5,7 +5,7 @@
     python -m server.review.cli queue [--tier 1] [--project openclaw]
     python -m server.review.cli export --out review.json [--tier 1]
     python -m server.review.cli apply --verdicts verdicts.json
-    python -m server.review.cli explain <memory_id>
+    python -m server.review.cli explain <memory_id> [--graph]
     python -m server.review.cli bulk-reject --category ambiguous --reason "..." [--apply]
     python -m server.review.cli retire-stale-versions [--apply]
     python -m server.review.cli confirm-superseded [--apply]
@@ -13,6 +13,8 @@
     python -m server.review.cli revert-batch <batch_id> [--apply]
     python -m server.review.cli expand-evidence <memory_id> --event-ids ID [ID ...] --reason "..." [--apply]
     python -m server.review.cli promote [--apply] [--limit N]
+    python -m server.review.cli correct-memory <memory_id> --content "..." --reason "..." [--apply]
+    python -m server.review.cli delete-memory <memory_id> --reason "..." [--apply]
 
 The CLI owns the *machine* half of review — building the queue, exporting
 it, applying verdicts back, bulk actions, promotion. The *human* half is
@@ -150,8 +152,51 @@ def cmd_explain(args: argparse.Namespace) -> int:
     if result is None:
         print(f"No derived memory with memory_id={args.memory_id!r}", file=sys.stderr)
         return 1
+    if args.graph:
+        from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
+        from server.review.graph_explain import explain_graph
+
+        with PromotionStore(args.db) as ps:
+            graph_result = asyncio.run(explain_graph(ps, args.memory_id, get_graphiti()))
+        if graph_result is None:
+            print("Not promoted into the graph — journal-only answer above.", file=sys.stderr)
+        result["graph"] = graph_result
     _print_json(result)
     return 0
+
+
+def cmd_correct_memory(args: argparse.Namespace) -> int:
+    from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
+    from server.review.correction import correct_memory
+
+    with PromotionStore(args.db) as ps, ReviewStore(args.db) as rs:
+        result = asyncio.run(
+            correct_memory(
+                ps, rs, args.memory_id, args.content, get_graphiti(),
+                reviewer=args.reviewer, reason=args.reason, dry_run=not args.apply,
+            )
+        )
+    _print_json(result)
+    if result.get("dry_run"):
+        print("\nDRY RUN — re-run with --apply to write the correction.", file=sys.stderr)
+    return 0 if "error" not in result else 1
+
+
+def cmd_delete_memory(args: argparse.Namespace) -> int:
+    from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
+    from server.review.correction import delete_memory
+
+    with PromotionStore(args.db) as ps, ReviewStore(args.db) as rs:
+        result = asyncio.run(
+            delete_memory(
+                ps, rs, args.memory_id, get_graphiti(),
+                reviewer=args.reviewer, reason=args.reason, dry_run=not args.apply,
+            )
+        )
+    _print_json(result)
+    if result.get("dry_run"):
+        print("\nDRY RUN — re-run with --apply to remove it from the graph.", file=sys.stderr)
+    return 0 if "error" not in result else 1
 
 
 def cmd_bulk_reject(args: argparse.Namespace) -> int:
@@ -259,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_explain = sub.add_parser("explain", help="Why does this memory exist?")
     p_explain.add_argument("memory_id")
+    p_explain.add_argument("--graph", action="store_true",
+                            help="Also walk into Graphiti for extracted entities/edges (promoted memories only)")
     p_explain.set_defaults(func=cmd_explain)
 
     p_bulk = sub.add_parser("bulk-reject", help="Reject a filtered population in one recorded action")
@@ -304,6 +351,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_prom.add_argument("--no-wait", action="store_true",
                          help="Stop immediately on a rate-limit wall instead of sleeping through it (old behavior)")
     p_prom.set_defaults(func=cmd_promote)
+
+    p_correct = sub.add_parser("correct-memory", help="Re-issue a promoted episode's content, preserving reference_time")
+    p_correct.add_argument("memory_id")
+    p_correct.add_argument("--content", required=True, help="Corrected episode body")
+    p_correct.add_argument("--reason", required=True)
+    p_correct.add_argument("--apply", action="store_true")
+    p_correct.set_defaults(func=cmd_correct_memory)
+
+    p_delete = sub.add_parser("delete-memory", help="Remove a promoted episode from the graph (journal untouched)")
+    p_delete.add_argument("memory_id")
+    p_delete.add_argument("--reason", required=True)
+    p_delete.add_argument("--apply", action="store_true")
+    p_delete.set_defaults(func=cmd_delete_memory)
 
     return parser
 

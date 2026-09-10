@@ -33,7 +33,7 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
 | 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements) |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | [**MS6b**](plan-active.md#ms6b--governance--next) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | **next ← here** |
+| 9 | [**MS6b**](plan-active.md#ms6b--governance--next) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | **built 2026-09-10** — `explain_graph`/`correct_memory`/`delete_memory`, unit-tested against fakes; live-FalkorDB pass + scopes pending ← here |
 | 10 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification pending |
 | 11 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
 | 12 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
@@ -63,7 +63,7 @@ source exports → journal (19,012 events) → per-event classification (heurist
 - **Staged, not yet reviewed:** ~942 tier-2 reasoning episodes (work-journal, stay in-thread, not promoted) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (confirm-only). Tier-1 is done.
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
-**Next: MS6b — governance** ([plan-active.md](plan-active.md#ms6b--governance--next)): `explain()` into the graph, `correct_memory` (re-issue via `remove_episode` + `add_episode`, preserving `reference_time`), deletion propagation, scopes. MS7 is done — its unfinished task-list items (intent routing, time-aware modes, explicit conflict signals, `search_wiki` semantic retrieval, …) are tracked in [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements).
+**MS6b — governance** ([plan-active.md](plan-active.md#ms6b--governance--next)): `explain()` into the graph, `correct_memory` (re-issue via `remove_episode` + `add_episode`, preserving `reference_time`), and deletion propagation are built and unit-tested against fake Graphiti/FalkorDB doubles (`tests/test_ms6b_governance.py`) — not yet run against the live `mem-fabric-local` graph or wired into the review artifact's UI. Scopes remains deferred to MS9/MS4c, per MS6a's original cut rationale. MS7 is done — its unfinished task-list items (intent routing, time-aware modes, explicit conflict signals, `search_wiki` semantic retrieval, …) are tracked in [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements).
 
 ### Spark local-inference migration — done 2026-09-09
 
@@ -132,7 +132,7 @@ Rows in **execution order**, not milestone-number order. Estimates assume agent-
 | MS6a (review surface + tier-1 pass) | 5–6 | ~33 | done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
 | Spark migration (Gemini → Spark-local) | ~4 | ~37 | done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
 | MS7 (context assembly quality) | 4–5 | ~42 | **done 2026-09-10** |
-| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **next** |
+| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **built 2026-09-10** — unit-tested against fakes; live-graph pass + scopes pending |
 | MS4a (live cross-harness verification) | 1 | ~46 | built; needs a live Claude Desktop session |
 | MS4b (Claude Code) | 3–4 | ~50 | |
 | MS4c (OpenClaw) | 4–5 | ~55 | |

@@ -67,12 +67,26 @@ The `reviews` table records reviewer `todd`, 2026-09-08: **295 tier-1 episodes a
 
 MS7 is done (see [plan-history.md](plan-history.md#ms7--context-assembly-quality)); MS6b is the active milestone. Deferred from MS6 on the grounds that all of it serves the promoted rows, and the correction path should be designed after a real assembly pass rather than before it.
 
-- [ ] **`explain()` into Graphiti** — episode name, extracted entities and edges. The differentiation demo; worth building once the graph holds real content.
-- [ ] **`correct_memory`** — re-issue via `remove_episode` + `add_episode`, preserving `reference_time`. The fiddly part (Graphiti has no in-place update).
-- [ ] **Deletion propagation** — `delete_memory` removing from the graph, reverting the `PromotionStore` row, leaving journal + `derived_memories` intact.
-- [ ] **Scopes** — revisit as access control alongside MS9, or MS4c if remote ingest needs it first.
+- [x] **`explain()` into Graphiti** — `server/review/graph_explain.py`'s `explain_graph()` resolves `memory_id` -> `episode_name` via `PromotionStore`, then walks the FalkorDB `Episodic` node, its `MENTIONS` entities and the `RELATES_TO` edges citing it. Returns `None` for a never-promoted memory (fall back to the journal-only `explain()`) and `found_in_graph: False` when the ledger says promoted but the episode is actually absent, rather than raising. Wired into the CLI as `explain <memory_id> --graph`. 11 tests against a hand-rolled `FakeDriver`/`FakeGraphiti` (no real FalkorDB) — `tests/test_ms6b_governance.py`.
+- [x] **`correct_memory`** — `server/review/correction.py`. Re-issues via `remove_episode` + `add_episode` under the *original* episode's `valid_at` (preserved from the graph read, not re-derived), with a fresh episode name (a removed episode's name isn't reusable) and re-run extraction against the corrected text. Updates `PromotionStore` to the new episode name so it stays the resolvable identity for this `memory_id`; audited via `ReviewStore.note()` (not `.record()` — this isn't a keep/drop verdict). No-ops when the new content matches the graph's current content. CLI: `correct-memory <memory_id> --content "..." --reason "..."`.
+- [x] **Deletion propagation** — `delete_memory` in the same module: removes the Graphiti episode and deletes the `PromotionStore` row (new `PromotionStore.delete()`), leaving `derived_memories` and the journal untouched — takes back a promotion, doesn't un-happen the reviewed event. Tolerates the episode already being absent from the graph (logs and clears the ledger anyway) rather than failing. Re-promoting the same `memory_id` (`promote_reviewed`) is the recovery path. CLI: `delete-memory <memory_id> --reason "..."`.
+- [ ] **Scopes** — revisit as access control alongside MS9, or MS4c if remote ingest needs it first. Not attempted here — see MS6a's original cut rationale (one person, one graph, no scoped caller yet).
 
-**Effort:** 2-3 sessions. **Risk:** Medium — the correction re-issue path is the one genuinely fiddly piece.
+**Effort:** 2-3 sessions. **Risk:** Medium — the correction re-issue path is the one genuinely fiddly piece. **Status (2026-09-10):** the three graph-touching pieces are built and unit-tested against fakes; not yet exercised against a real FalkorDB graph or wired into the review artifact's UI. Scopes deliberately deferred.
+
+### Exit gate — live round-trip (not yet run)
+
+The plan never defined acceptance tests for MS6b the way MS6a did; `tests/test_ms6b_governance.py`'s 11 tests prove the logic against a hand-rolled `FakeDriver`/`FakeGraphiti` — real correctness of the Cypher against Graphiti's actual schema, and of `remove_episode`/`add_episode` sequencing, is unverified until this runs against a real graph. Two checks, in order:
+
+1. **Read-only, against production, zero mutation risk.** `explain --graph` never writes. Pick any real promoted memory_id (a `reviews` row with `review_state='approved'`) and confirm the entities/edges it returns look right:
+   ```
+   uv run python -m server.review.cli explain <memory_id> --graph
+   ```
+2. **Full round-trip, fully isolated from production.** `scripts/ms6b_exit_gate.py` seeds one real episode into its own scratch FalkorDB graph (`cmf-ms6b-exit-gate` by default — refuses to run against `mem-fabric-local`/`mem-fabric-gemini`/`mem-fabric-local-glm`) and a scratch SQLite file (a tempfile, never `imports/journal/journal.db`), then runs `explain_graph` → `correct_memory` (dry run, then applied) → `delete_memory`, asserting at each step against the real graph state (old episode actually gone, new content actually present, `PromotionStore` actually cleared) rather than mocks. Exits non-zero on the first failed assertion:
+   ```
+   uv run python scripts/ms6b_exit_gate.py --cleanup
+   ```
+   Passing both is what would flip this section's status to "done."
 
 ---
 

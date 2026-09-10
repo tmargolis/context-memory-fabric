@@ -280,6 +280,18 @@ class PromotionStore:
         rows = self._conn.execute("SELECT status, COUNT(*) AS c FROM promotions GROUP BY status").fetchall()
         return {row["status"]: row["c"] for row in rows}
 
+    def delete(self, memory_id: str, graph_name: Optional[str] = None) -> None:
+        """Remove this memory's ledger row for one graph.
+
+        The inverse of `record_success` — used by MS6b's `delete_memory` to
+        take back a promotion. Once gone, `is_promoted()` reports False
+        again, so `promote_reviewed` can re-promote from a clean review
+        without the idempotency check silently skipping it.
+        """
+        graph = graph_name or _configured_graph()
+        self._conn.execute("DELETE FROM promotions WHERE memory_id = ? AND graph_name = ?", (memory_id, graph))
+        self._conn.commit()
+
 
 def _episode_name_for(memory_id: str, event_date: Optional[str]) -> str:
     date_part = (event_date or "undated")[:10].replace("-", "")
