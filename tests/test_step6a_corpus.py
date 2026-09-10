@@ -317,6 +317,14 @@ class TestSyntheticCorpus(unittest.TestCase):
         self.assertIn("primary infrastructure initiative", top.matched_snippet)
         self.assertEqual(top.source, "durable_knowledge")
 
+    def test_extraction_result_strips_control_chars(self):
+        """ExtractionResult.__post_init__ removes NUL / C0 controls (kept \t \n \r)."""
+        from server.extractors import ExtractionResult
+
+        r = ExtractionResult(extracted_text="a\x00b\x07c\td\ne\rf\x1bg")
+        self.assertEqual(r.extracted_text, "abc\td\ne\rfg")
+        self.assertIsNone(ExtractionResult(extracted_text=None).extracted_text)
+
     def test_search_pdf_content(self):
         """Verify searching extracted text from PDF documents."""
         results = search_corpus("Scaling Strategy", root_path=self.wiki_path)

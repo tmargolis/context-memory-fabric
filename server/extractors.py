@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 # Suppress harmless pypdf syntax warnings during corpus scan
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
+# C0 control characters other than tab / newline / carriage-return. pypdf
+# occasionally emits these (a NUL byte in the 1400 State Pkwy inspection PDF
+# broke a downstream subprocess); strip them so search_wiki / get_context
+# never hand a control char to an MCP client.
+_CTRL_CHARS = {c: None for c in range(0x20) if c not in (0x09, 0x0A, 0x0D)}
+_CTRL_CHARS[0x7F] = None
+
+
+def _clean_text(text: Optional[str]) -> Optional[str]:
+    return text.translate(_CTRL_CHARS) if isinstance(text, str) else text
+
 
 @dataclass
 class ExtractionResult:
@@ -29,6 +40,10 @@ class ExtractionResult:
     extraction_status: str = ExtractionStatus.UNSUPPORTED.value
     extractor_name: str = "none"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Every extractor's text flows through here; sanitize once.
+        self.extracted_text = _clean_text(self.extracted_text)
 
 
 class BaseExtractor(ABC):
