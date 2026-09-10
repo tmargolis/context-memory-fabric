@@ -27,11 +27,47 @@ from server.providers import get_default_knowledge_provider, get_default_memory_
 _default_knowledge_provider = get_default_knowledge_provider()
 _default_memory_provider = get_default_memory_provider()
 
+# Fan-in tuning. get_context used to fetch exactly `max_*_results` from each
+# provider and concatenate — so a gold doc at rank 6-8 was dropped before the
+# merge ever happened. Now it over-fetches, filters, dedups, then caps.
+_FETCH_K = 12
+_WIKI_SCORE_FLOOR_RATIO = 0.4  # drop wiki hits below this fraction of the top hit
+
+
+def _select_wiki(candidates: list, cap: int) -> list:
+    """Keep wiki hits within _WIKI_SCORE_FLOOR_RATIO of the top score, then cap.
+
+    Cuts the long tail of coincidental stopword/substring matches that used to
+    ride into the top 5 on big TOC-heavy PDFs, without touching genuine rank-2-8
+    hits (which sit well above the floor in practice)."""
+    if not candidates:
+        return []
+    top = getattr(candidates[0], "relevance_score", 0.0) or 0.0
+    floor = top * _WIKI_SCORE_FLOOR_RATIO
+    kept = [r for r in candidates if (getattr(r, "relevance_score", 0.0) or 0.0) >= floor]
+    return (kept or candidates[:1])[:cap]
+
+
+def _select_memory(facts: list, cap: int) -> list:
+    """Drop exact-duplicate facts (recall_mem returns verbatim repeats), then cap."""
+    seen: set[str] = set()
+    out: list = []
+    for f in facts:
+        key = (f.get("fact") or "").strip().lower()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(f)
+        if len(out) >= cap:
+            break
+    return out
+
 
 async def get_context(
     topic: str,
-    max_wiki_results: int = 5,
-    max_memory_results: int = 5,
+    max_wiki_results: int = 8,
+    max_memory_results: int = 8,
     knowledge_provider: Optional[KnowledgeProvider] = None,
     memory_provider: Optional[MemoryProvider] = None,
 ) -> str:
@@ -57,11 +93,15 @@ async def get_context(
     memory = memory_provider or _default_memory_provider
 
     # 1. Retrieve Durable Knowledge from LLM_Wiki, if a knowledge provider is configured.
+    #    Over-fetch, then filter + cap in _select_wiki (fan-in, not a blind top-N).
+    fetch_k = max(_FETCH_K, max_wiki_results, max_memory_results)
     knowledge_configured = knowledge.is_configured()
-    wiki_results = knowledge.search(clean_topic, max_results=max_wiki_results) if knowledge_configured else []
+    wiki_candidates = knowledge.search(clean_topic, max_results=fetch_k) if knowledge_configured else []
+    wiki_results = _select_wiki(wiki_candidates, max_wiki_results)
 
-    # 2. Retrieve Episodic Memory from Graphiti / FalkorDB
-    memory_facts: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=max_memory_results)
+    # 2. Retrieve Episodic Memory from Graphiti / FalkorDB (over-fetch, dedup, cap).
+    memory_candidates: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=fetch_k)
+    memory_facts: list[dict[str, Any]] = _select_memory(memory_candidates, max_memory_results)
 
     # 3. Assemble Unified Context
     sections: list[str] = [

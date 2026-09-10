@@ -183,14 +183,14 @@
     "input_schema": {
       "properties": {
         "max_memory_results": {
-          "default": 5,
-          "description": "Maximum number of episodic memory facts to return (default: 5).",
+          "default": 8,
+          "description": "Maximum number of episodic memory facts to return (default: 8).",
           "title": "Max Memory Results",
           "type": "integer"
         },
         "max_wiki_results": {
-          "default": 5,
-          "description": "Maximum number of durable Wiki documents/notes to return (default: 5).",
+          "default": 8,
+          "description": "Maximum number of durable Wiki documents/notes to return (default: 8).",
           "title": "Max Wiki Results",
           "type": "integer"
         },

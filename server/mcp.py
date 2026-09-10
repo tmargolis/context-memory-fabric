@@ -98,15 +98,15 @@ async def get_context(
     max_wiki_results: Annotated[
         int,
         Field(
-            description="Maximum number of durable Wiki documents/notes to return (default: 5)."
+            description="Maximum number of durable Wiki documents/notes to return (default: 8)."
         ),
-    ] = 5,
+    ] = 8,
     max_memory_results: Annotated[
         int,
         Field(
-            description="Maximum number of episodic memory facts to return (default: 5)."
+            description="Maximum number of episodic memory facts to return (default: 8)."
         ),
-    ] = 5,
+    ] = 8,
 ) -> str:
     """DEFAULT personal-context retrieval tool when an ongoing project or topic may benefit from both durable LLM_Wiki knowledge and recent episodic memory.
 
