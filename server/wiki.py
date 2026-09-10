@@ -147,38 +147,64 @@ def _tokenize(query: str) -> list[str]:
     return content or cleaned
 
 
-def _extract_snippet(text: str, query: str, window: int = 160) -> Optional[str]:
-    """Generate a contextual snippet around the first occurrence of query terms."""
+def _extract_snippet(
+    text: str, query: str, window: int = 280, max_windows: int = 3
+) -> Optional[str]:
+    """Contextual snippet: up to ``max_windows`` slices around the densest
+    clusters of query terms, in document order, joined by ``…``.
+
+    MS7's answer eval showed the gold fact routinely sitting outside a single
+    first-occurrence ±80 window even when the doc ranked #1 — sometimes because
+    the window was too small (OpenClaw's agent count), sometimes because the
+    relevant passage was in a different section from where the query terms first
+    matched (the Cedar -> access-control line, the panel-capacity numbers). A
+    few well-placed windows cover both cases.
+    """
     if not text:
         return None
 
+    half = window // 2
     lower_text = text.lower()
-    lower_query = query.lower()
+    lower_query = query.lower().strip()
 
-    # Try exact query match first
-    idx = lower_text.find(lower_query)
-    if idx == -1:
-        # Try individual words
-        words = [w for w in re.split(r"\s+", lower_query) if len(w) > 2]
-        for w in words:
-            idx = lower_text.find(w)
-            if idx != -1:
-                break
+    def clip(center: int, mlen: int = 0) -> tuple[int, int, str]:
+        s = max(0, center - half)
+        e = min(len(text), center + mlen + half)
+        body = " ".join(text[s:e].split())
+        return s, e, ("..." if s > 0 else "") + body + ("..." if e < len(text) else "")
 
-    if idx == -1:
-        # Fallback to the beginning of the text
+    # Exact phrase present -> a single window centered on it is signal enough.
+    pidx = lower_text.find(lower_query) if lower_query else -1
+    if pidx != -1:
+        return clip(pidx, len(lower_query))[2]
+
+    terms = [
+        t
+        for t in (re.sub(r"^[^\w]+|[^\w]+$", "", w) for w in re.split(r"\s+", lower_query))
+        if len(t) > 2
+    ]
+    hits: list[int] = []
+    for t in terms:
+        pos = lower_text.find(t)
+        while pos != -1:
+            hits.append(pos)
+            pos = lower_text.find(t, pos + 1)
+
+    if not hits:
         clean = " ".join(text[:window].split())
         return clean + ("..." if len(text) > window else "")
 
-    start = max(0, idx - window // 2)
-    end = min(len(text), idx + len(query) + window // 2)
+    # Greedily take the highest-coverage positions, keeping windows non-overlapping.
+    ranked = sorted(hits, key=lambda p: -sum(1 for q in hits if p - half <= q <= p + half))
+    picked: list[int] = []
+    for p in ranked:
+        if len(picked) >= max_windows:
+            break
+        if all(abs(p - c) >= window for c in picked):
+            picked.append(p)
 
-    snippet = text[start:end].strip()
-    snippet = " ".join(snippet.split())
-
-    prefix = "..." if start > 0 else ""
-    suffix = "..." if end < len(text) else ""
-    return f"{prefix}{snippet}{suffix}"
+    parts = [clip(c)[2] for c in sorted(picked)]
+    return " … ".join(parts)
 
 
 class CorpusSearchEngine:
