@@ -434,6 +434,87 @@ def _provenance_from_source_description(source_description: Optional[str]) -> st
     return " \u00b7 ".join(parts)
 
 
+_EPISODE_VECTOR_INDEX: dict[str, bool] = {}
+
+
+async def _graph_has_episode_vector_index(graphiti: Graphiti) -> bool:
+    """True if the target graph carries a VECTOR index on Episodic.content_embedding.
+
+    Cached per resolved graph name. When False, recall_mem's vector arm is a
+    no-op, so the episode-content retrieval can ship before any graph is
+    backfilled. See docs/spark-ms7-episode-vector-spike.md.
+    """
+    if os.getenv("CMF_MEM_EPISODE_VECTOR", "1") == "0":
+        return False
+    name = resolve_target_database()
+    if name in _EPISODE_VECTOR_INDEX:
+        return _EPISODE_VECTOR_INDEX[name]
+    present = False
+    try:
+        rows = await graphiti.driver.execute_query(
+            "CALL db.indexes() YIELD label, types RETURN label, types"
+        )
+        recs = rows[0] if rows and isinstance(rows[0], list) else (rows or [])
+        for r in recs:
+            if r.get("label") == "Episodic" and "content_embedding" in str(r.get("types")) and "VECTOR" in str(r.get("types")):
+                present = True
+                break
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"episode-vector index probe failed ({e!r}); treating as absent")
+    _EPISODE_VECTOR_INDEX[name] = present
+    return present
+
+
+async def _episode_vector_search(graphiti: Graphiti, query: str, k: int) -> list[dict[str, Any]]:
+    """KNN over Episodic.content_embedding — the synthesized statement itself,
+    reachable even when qwen extracted zero entities for it. Returns fact-shaped
+    dicts; [] if the graph has no such index or the query cannot be embedded."""
+    if k <= 0 or not await _graph_has_episode_vector_index(graphiti):
+        return []
+    try:
+        vec = await graphiti.embedder.create(query)
+        lit = "[" + ",".join(f"{x:.7f}" for x in vec) + "]"
+        rows = await graphiti.driver.execute_query(
+            f"CALL db.idx.vector.queryNodes('Episodic', 'content_embedding', {int(k)}, vecf32({lit})) "
+            "YIELD node, score "
+            "RETURN node.uuid AS uuid, node.name AS name, node.content AS content, "
+            "node.valid_at AS valid_at, score AS distance"
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"recall_mem: episode-vector search failed ({e!r}); edge results only")
+        return []
+    recs = rows[0] if rows and isinstance(rows[0], list) else (rows or [])
+    out: list[dict[str, Any]] = []
+    for r in recs:
+        va = r.get("valid_at")
+        out.append({
+            "fact": r.get("content") or "",
+            "valid_at": va.isoformat() if isinstance(va, datetime) else va,
+            "invalid_at": None,
+            "episodes": [r["uuid"]] if r.get("uuid") else [],
+            "created_at": None,
+            "_via": "episode_vector",
+            "_distance": r.get("distance"),
+        })
+    return out
+
+
+def _rrf_merge(*ranked_lists: list[dict[str, Any]], k: int = 60, limit: int) -> list[dict[str, Any]]:
+    """Reciprocal-rank fusion of fact lists, deduped by fact text (case-insensitive).
+    The first list a fact appears in supplies the kept dict."""
+    score: dict[str, float] = {}
+    keep: dict[str, dict[str, Any]] = {}
+    for lst in ranked_lists:
+        for rank, item in enumerate(lst):
+            key = (item.get("fact") or "").strip().lower()
+            if not key:
+                continue
+            score[key] = score.get(key, 0.0) + 1.0 / (k + rank)
+            keep.setdefault(key, item)
+    ordered = sorted(keep.values(), key=lambda it: -score[(it.get("fact") or "").strip().lower()])
+    return ordered[:limit]
+
+
 async def _resolve_episode_index(graphiti: Graphiti, uuids: list[str]) -> dict[str, dict[str, str]]:
     """uuid -> {name, content, provenance} for the given Episodic node uuids.
 
@@ -565,8 +646,8 @@ async def recall_mem(
             else:
                 raise
 
-    facts: list[dict[str, Any]] = []
-    for edge in results[:max_results]:
+    edge_facts: list[dict[str, Any]] = []
+    for edge in results[: max(max_results, 10)]:
         fact_data = {
             "fact": getattr(edge, "fact", str(edge)),
             "valid_at": getattr(edge, "valid_at", None),
@@ -581,7 +662,14 @@ async def recall_mem(
         if isinstance(fact_data["created_at"], datetime):
             fact_data["created_at"] = fact_data["created_at"].isoformat()
 
-        facts.append(fact_data)
+        edge_facts.append(fact_data)
+
+    # Second arm: KNN over the episode's synthesized statement itself. Reaches
+    # decisions the RELATES_TO edge search misses — no edge extracted, or the
+    # extracted edges don't carry the query's terms. No-op on a graph without
+    # the vector index. RRF-fused with the edge results, deduped by fact text.
+    vector_facts = await _episode_vector_search(graphiti, query, max_results)
+    facts = _rrf_merge(edge_facts, vector_facts, limit=max_results)
 
     # Attach each fact's source-episode synthesized statement + provenance so a
     # consumer sees the reasoning behind the terse RELATES_TO edge, not just the
