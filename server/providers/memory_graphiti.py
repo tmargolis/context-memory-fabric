@@ -411,6 +411,59 @@ async def remember(
     }
 
 
+_PROVENANCE_FIELDS = (
+    ("reasoning_kind", re.compile(r"reasoning_kind=(\S+)")),
+    ("project", re.compile(r"project=(\S+)")),
+    ("evidence", re.compile(r"evidence=(\d+)\s*turn")),
+)
+
+
+def _provenance_from_source_description(source_description: Optional[str]) -> str:
+    """Condense a promoted episode's source_description into a one-line provenance tag.
+
+    e.g. "reasoning_kind=decision \u00b7 project=openclaw \u00b7 evidence=2 turn(s)".
+    Returns "" when none of the fields are present (non-promoted episode).
+    """
+    sd = source_description or ""
+    parts = []
+    for label, pat in _PROVENANCE_FIELDS:
+        m = pat.search(sd)
+        if not m:
+            continue
+        parts.append(f"evidence={m.group(1)} turn(s)" if label == "evidence" else f"{label}={m.group(1)}")
+    return " \u00b7 ".join(parts)
+
+
+async def _resolve_episode_index(graphiti: Graphiti, uuids: list[str]) -> dict[str, dict[str, str]]:
+    """uuid -> {name, content, provenance} for the given Episodic node uuids.
+
+    One batched read. Best-effort: on any driver error, returns {} so callers
+    degrade to bare facts rather than failing the whole recall.
+    """
+    uniq = sorted({u for u in uuids if u})
+    if not uniq:
+        return {}
+    try:
+        rows = await graphiti.driver.execute_query(
+            "MATCH (e:Episodic) WHERE e.uuid IN $uuids "
+            "RETURN e.uuid AS uuid, e.name AS name, e.content AS content, "
+            "e.source_description AS source_description",
+            uuids=uniq,
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"recall_mem: source-episode resolution failed ({e!r}); returning bare facts")
+        return {}
+    recs = rows[0] if rows and isinstance(rows[0], list) else (rows or [])
+    out: dict[str, dict[str, str]] = {}
+    for r in recs:
+        out[r["uuid"]] = {
+            "name": r.get("name") or r["uuid"],
+            "content": r.get("content") or "",
+            "provenance": _provenance_from_source_description(r.get("source_description")),
+        }
+    return out
+
+
 def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> str:
     """Format extracted memory facts into clean Markdown for MCP tool responses."""
     if not facts:
@@ -427,14 +480,22 @@ def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> st
         invalid_at = item.get("invalid_at")
         episodes = item.get("episodes", [])
 
+        source_eps = item.get("source_episodes") or []
+        episode_labels = item.get("episode_names") or [str(e) for e in episodes]
+
         status_tag = "ACTIVE" if not invalid_at else f"SUPERSEDED (invalidated at {invalid_at})"
         lines.append(f"#### {idx}. {fact_text}")
         lines.append(f"- **Status:** `{status_tag}`")
         lines.append(f"- **Valid From:** `{valid_at}`")
         if invalid_at:
             lines.append(f"- **Superseded At:** `{invalid_at}`")
-        if episodes:
-            lines.append(f"- **Source Episodes:** `{', '.join(str(e) for e in episodes)}`")
+        if episode_labels:
+            lines.append(f"- **Source Episodes:** `{', '.join(episode_labels)}`")
+        for se in source_eps:
+            if not se.get("content"):
+                continue
+            prov = f"  _({se['provenance']})_" if se.get("provenance") else ""
+            lines.append(f"  > {se['content']}{prov}")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -521,6 +582,18 @@ async def recall_mem(
             fact_data["created_at"] = fact_data["created_at"].isoformat()
 
         facts.append(fact_data)
+
+    # Attach each fact's source-episode synthesized statement + provenance so a
+    # consumer sees the reasoning behind the terse RELATES_TO edge, not just the
+    # edge. One batched read; degrades to bare facts on failure.
+    ep_index = await _resolve_episode_index(
+        graphiti, [u for f in facts for u in (f.get("episodes") or [])]
+    )
+    for f in facts:
+        srcs = [ep_index[u] for u in (f.get("episodes") or []) if u in ep_index]
+        f["source_episodes"] = srcs
+        if srcs:
+            f["episode_names"] = [s["name"] for s in srcs]
 
     if format_for_mcp:
         return format_memory_results_for_mcp(facts, query)

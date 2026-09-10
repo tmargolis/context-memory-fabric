@@ -98,7 +98,13 @@ async def get_context(
             invalid_at = f.get("invalid_at")
             status_tag = "ACTIVE" if not invalid_at else f"SUPERSEDED (at {invalid_at})"
             sections.append(f"### {idx}. {fact_text}")
-            sections.append(f"- **Status:** `{status_tag}` | **Valid From:** `{valid_at}`\n")
+            sections.append(f"- **Status:** `{status_tag}` | **Valid From:** `{valid_at}`")
+            for se in f.get("source_episodes") or []:
+                if not se.get("content"):
+                    continue
+                prov = f"  _({se['provenance']})_" if se.get("provenance") else ""
+                sections.append(f"  > {se['content']}{prov}")
+            sections.append("")
     else:
         sections.append(f"_No episodic memories found in FalkorDB for '{clean_topic}'._\n")
 
