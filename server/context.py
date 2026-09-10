@@ -101,7 +101,10 @@ async def get_context(
 
     # 2. Retrieve Episodic Memory from Graphiti / FalkorDB (over-fetch, dedup, cap).
     memory_candidates: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=fetch_k)
-    memory_facts: list[dict[str, Any]] = _select_memory(memory_candidates, max_memory_results)
+    # recall_mem already RRF-ranks + per-episode-caps; render its full result
+    # (dedup only) rather than re-truncating to max_memory_results and dropping
+    # a lower-ranked but distinct fact it deliberately surfaced.
+    memory_facts: list[dict[str, Any]] = _select_memory(memory_candidates, fetch_k)
 
     # 3. Assemble Unified Context
     sections: list[str] = [

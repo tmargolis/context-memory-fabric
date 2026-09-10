@@ -1,6 +1,6 @@
 # MS7 spike — episode-content vector retrieval for `recall_mem`
 
-**Status:** spike done, result strong — code landed (gated, `64fffdd`); live-graph backfill pending Todd (2026-09-10)
+**Status:** landed on `mem-fabric-local` 2026-09-10 (`64fffdd` + follow-up); backup `mem-fabric-local.pre-epvec-20260910`
 **Owner:** MS7 · related: [plan-active.md](plan-active.md) MS7, [SPARK-MIGRATION-PLAN.md](SPARK-MIGRATION-PLAN.md)
 
 ## Why
@@ -49,7 +49,13 @@ Spike graph `mem-fabric-spike-eps` (295 episodes nomic-embedded + vector index):
 
 The three contradictory-retrieval cases flipped to correct — A5 (combine Now & Then + Delayed Vision), A9 (skip Schedule C, no expenses), A10 (MFJ vs MFS). C4/C8/C10 total misses now answered.
 
-**Regressions to follow up:** B7 `+memory` 1→0 (RRF pushed a routing fact below the cut); A10 `+both` stayed 0 (the `recall_mem` arm surfaces it but `get_context`'s own fan-in RRF doesn't propagate it — `_select_memory` / RRF interaction); A1 `+memory` now asserts a wrong backend (NAS + M5 MacBook Air — a conflated episode).
+**Follow-ups (applied):** `_rrf_merge` caps facts at 2 per source episode; the vector arm feeds only its top 6 into the fusion; `get_context` renders `recall_mem`'s full ranked output instead of re-truncating to 8.
+- **A10 `+both` 0 → 2** — fixed. The rank-8 MFS episode now reaches the answer.
+- **B7 `+memory` 1 → 0** — not recovered. B7 is a wiki-domain query; `+both` answers it fully (2). Accepted.
+- **A1 `+memory` / `+both`** — still conflates a NAS + M5-MacBook-Air backend. `gemini-openclaw-002` (the friend's-Spark decision) is not retrieved by the edge *or* vector arm; a distance ceiling that would drop the conflation would also drop A10's gold (d≈0.38), so left as-is.
+- **C6** — the site-eval panel numbers share no words with the query; unreachable by lexical snippet. Needs vector retrieval in `search_wiki` — the next MS7 lever.
+
+Post-follow-up answer-eval: `+both` **1.60** (80% of a complete answer), `+memory` **1.00**, lift **+1.53**.
 
 ## Landing
 

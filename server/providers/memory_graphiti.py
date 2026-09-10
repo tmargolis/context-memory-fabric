@@ -435,6 +435,7 @@ def _provenance_from_source_description(source_description: Optional[str]) -> st
 
 
 _EPISODE_VECTOR_INDEX: dict[str, bool] = {}
+_EPISODE_VECTOR_K = 6  # vector-arm candidates fed into the RRF merge (head only)
 
 
 async def _graph_has_episode_vector_index(graphiti: Graphiti) -> bool:
@@ -499,9 +500,16 @@ async def _episode_vector_search(graphiti: Graphiti, query: str, k: int) -> list
     return out
 
 
-def _rrf_merge(*ranked_lists: list[dict[str, Any]], k: int = 60, limit: int) -> list[dict[str, Any]]:
-    """Reciprocal-rank fusion of fact lists, deduped by fact text (case-insensitive).
-    The first list a fact appears in supplies the kept dict."""
+def _rrf_merge(
+    *ranked_lists: list[dict[str, Any]], k: int = 60, limit: int, max_per_episode: int = 2
+) -> list[dict[str, Any]]:
+    """Reciprocal-rank fusion of fact lists, deduped by fact text (case-insensitive),
+    then capped at `max_per_episode` facts per source episode.
+
+    The per-episode cap stops one chatty episode (e.g. the three near-identical
+    'crypto Summary method' RELATES_TO facts) from crowding out a distinct
+    episode's fact further down the ranking. The first list a fact appears in
+    supplies the kept dict."""
     score: dict[str, float] = {}
     keep: dict[str, dict[str, Any]] = {}
     for lst in ranked_lists:
@@ -512,7 +520,18 @@ def _rrf_merge(*ranked_lists: list[dict[str, Any]], k: int = 60, limit: int) -> 
             score[key] = score.get(key, 0.0) + 1.0 / (k + rank)
             keep.setdefault(key, item)
     ordered = sorted(keep.values(), key=lambda it: -score[(it.get("fact") or "").strip().lower()])
-    return ordered[:limit]
+    out: list[dict[str, Any]] = []
+    per_ep: dict[frozenset, int] = {}
+    for it in ordered:
+        eps = frozenset(it.get("episodes") or [])
+        if eps and per_ep.get(eps, 0) >= max_per_episode:
+            continue
+        out.append(it)
+        if eps:
+            per_ep[eps] = per_ep.get(eps, 0) + 1
+        if len(out) >= limit:
+            break
+    return out
 
 
 async def _resolve_episode_index(graphiti: Graphiti, uuids: list[str]) -> dict[str, dict[str, str]]:
@@ -668,7 +687,10 @@ async def recall_mem(
     # decisions the RELATES_TO edge search misses — no edge extracted, or the
     # extracted edges don't carry the query's terms. No-op on a graph without
     # the vector index. RRF-fused with the edge results, deduped by fact text.
-    vector_facts = await _episode_vector_search(graphiti, query, max_results)
+    # Cap the vector arm at its high-confidence head — its rank 7+ hits are
+    # semantic neighbours, not real matches, and they add noise the consumer
+    # then weaves in (e.g. an unrelated storage episode read as a "backend").
+    vector_facts = await _episode_vector_search(graphiti, query, min(max_results, _EPISODE_VECTOR_K))
     facts = _rrf_merge(edge_facts, vector_facts, limit=max_results)
 
     # Attach each fact's source-episode synthesized statement + provenance so a

@@ -52,9 +52,9 @@ episodic       factual      mutation /       durable          context        pro
 | Gemini 3.8 Flash, its own siloed memory of the user | 10% |
 | GPT-5.6, its own siloed memory of the user | 18% |
 | Claude Sonnet 5, its own siloed memory of the user | 18% |
-| **Claude + `get_context` (this project)** | **76%** |
+| **Claude + `get_context` (this project)** | **80%** |
 
-*Each assistant's built-in memory answers only 5–8 of the 30 questions at all — mostly the facts repeated often enough to have stuck — and several of those answers are confidently wrong: a garage electrical spec that contradicts the site report, an out-of-date positioning claim, an invented list of agent names. `get_context` answers 24 of 30 at least partially, and every claim it returns is tied to a specific stored decision or document. Method and full results: [docs/plan-active.md](docs/plan-active.md) (MS7) and [docs/spark-ms7-episode-vector-spike.md](docs/spark-ms7-episode-vector-spike.md).*
+*Each assistant's built-in memory answers only 5–8 of the 30 questions at all — mostly the facts repeated often enough to have stuck — and several of those answers are confidently wrong: a garage electrical spec that contradicts the site report, an out-of-date positioning claim, an invented list of agent names. `get_context` answers 25 of 30 at least partially, and every claim it returns is tied to a specific stored decision or document. Method and full results: [docs/plan-active.md](docs/plan-active.md) (MS7) and [docs/spark-ms7-episode-vector-spike.md](docs/spark-ms7-episode-vector-spike.md).*
 
 ---
 
