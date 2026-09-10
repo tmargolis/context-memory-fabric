@@ -25,7 +25,7 @@ from server.providers.memory_graphiti import (
     get_graphiti_for_operation,
     parse_iso_datetime,
     reconcile_memories,
-    recall,
+    recall_mem,
     remember,
     resolve_target_database,
 )
@@ -44,7 +44,7 @@ __all__ = [
     "get_graphiti_for_operation",
     "parse_iso_datetime",
     "reconcile_memories",
-    "recall",
+    "recall_mem",
     "remember",
     "resolve_target_database",
 ]

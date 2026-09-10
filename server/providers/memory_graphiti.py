@@ -309,7 +309,7 @@ def get_graphiti_for_operation(graph_name: Optional[str] = None) -> tuple[Graphi
     """Reserve a model from the free-tier rate limiter, then return the matching Graphiti instance.
 
     This is the entry point for any code path that actually calls into
-    Gemini (remember() via add_episode, recall() via search()) — it commits
+    Gemini (remember() via add_episode, recall_mem() via search()) — it commits
     a reservation against the local ledger before construction/reuse of the
     Graphiti client, so a caller that gets GeminiQuotaExhaustedError from
     this function has made zero Gemini calls and can safely defer the
@@ -441,7 +441,7 @@ def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> st
 
 
 @overload
-async def recall(
+async def recall_mem(
     query: str,
     max_results: int = 10,
     format_for_mcp: Literal[True] = True,
@@ -450,7 +450,7 @@ async def recall(
 
 
 @overload
-async def recall(
+async def recall_mem(
     query: str,
     max_results: int = 10,
     format_for_mcp: Literal[False] = ...,
@@ -459,7 +459,7 @@ async def recall(
 
 
 @overload
-async def recall(
+async def recall_mem(
     query: str,
     max_results: int = 10,
     format_for_mcp: bool = ...,
@@ -467,7 +467,7 @@ async def recall(
 ) -> str | list[dict[str, Any]]: ...
 
 
-async def recall(
+async def recall_mem(
     query: str,
     max_results: int = 10,
     format_for_mcp: bool = True,
@@ -497,7 +497,7 @@ async def recall(
             if _is_transient_gemini_error(e) and attempt < max_retries - 1:
                 backoff = 5.0 * (attempt + 1)
                 logger.warning(
-                    f"Transient Gemini error in recall() ({_classify_transient_error(e)}). "
+                    f"Transient Gemini error in recall_mem() ({_classify_transient_error(e)}). "
                     f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
                 )
                 await asyncio.sleep(backoff)
@@ -1360,7 +1360,7 @@ class GraphitiMemoryProvider:
         query: str,
         max_results: int = 10,
     ) -> list[dict[str, Any]]:
-        return await recall(query=query, max_results=max_results, format_for_mcp=False)
+        return await recall_mem(query=query, max_results=max_results, format_for_mcp=False)
 
     async def edit(
         self,

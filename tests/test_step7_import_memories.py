@@ -40,7 +40,7 @@ from server.importer import (
     TemporalExtractor,
     import_memories_content,
 )
-from server.mcp import app, import_memories as mcp_import_memories, recall as mcp_recall
+from server.mcp import app, import_memories as mcp_import_memories, recall_mem as mcp_recall
 from server.memory import close_graphiti
 
 
@@ -394,7 +394,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
 
         expected_tools = {
             "remember",
-            "recall",
+            "recall_mem",
             "search_wiki",
             "get_context",
             "propose_wiki_update",

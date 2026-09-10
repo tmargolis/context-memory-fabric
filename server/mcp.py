@@ -28,7 +28,7 @@ from server.importer import import_memories_content
 from server.journal.store import SqliteEventStore
 from server.memory import (
     edit_memory as edit_episodic_memory,
-    recall as recall_memory,
+    recall_mem as recall_memory,
     reconcile_memories as reconcile_episodic_memories,
     remember as remember_memory,
 )
@@ -48,7 +48,7 @@ SERVER_INSTRUCTIONS = (
     "Context Memory Fabric is the default personal context layer for the user. For questions about "
     "projects, prior work, decisions, current state, or personal knowledge, prefer get_context "
     "when both durable and recent context may matter. Use search_wiki for durable corpus retrieval "
-    "and recall for temporal episodic retrieval. remember writes episodic state. "
+    "and recall_mem for temporal episodic retrieval. remember writes episodic state. "
     "edit_memory corrects, re-dates, or modifies existing episodic memory and entity nodes. "
     "reconcile_memories reconciles and upserts episodic memories with real upsert and reject semantics. "
     "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
@@ -122,7 +122,7 @@ async def get_context(
     - 'Catch me up on our discussions regarding the database.'
 
     DISTINCTIONS:
-    - Unlike search_wiki (which only searches durable files) or recall (which only queries episodic facts), get_context queries both sources concurrently and formats them into distinct sections with temporal conflict guidance.
+    - Unlike search_wiki (which only searches durable files) or recall_mem (which only queries episodic facts), get_context queries both sources concurrently and formats them into distinct sections with temporal conflict guidance.
 
     SIDE EFFECTS:
     - Read-only. Does not modify any memory or Wiki files.
@@ -198,7 +198,7 @@ if _config.knowledge_enabled:
         open_world_hint=False,
     ),
 )
-async def recall(
+async def recall_mem(
     query: Annotated[
         str,
         Field(

@@ -179,7 +179,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "DEFAULT personal-context retrieval tool when an ongoing project or topic may benefit from both durable LLM_Wiki knowledge and recent episodic memory.\n\n    WHEN TO USE:\n    - Prefer as the primary retrieval tool for broad, exploratory, or status questions about projects, topics, decisions, or current thinking.\n    - Use when you need a unified view combining curated documentation and recent episodic state.\n\n    EXAMPLES OF USER INTENT:\n    - 'Where are we with Project Atlas?'\n    - 'What do we know about the Spark architecture?'\n    - 'What's my current thinking on EV charging?'\n    - 'Continue our work on Context Memory Fabric.'\n    - 'Catch me up on our discussions regarding the database.'\n\n    DISTINCTIONS:\n    - Unlike search_wiki (which only searches durable files) or recall (which only queries episodic facts), get_context queries both sources concurrently and formats them into distinct sections with temporal conflict guidance.\n\n    SIDE EFFECTS:\n    - Read-only. Does not modify any memory or Wiki files.\n    ",
+    "description": "DEFAULT personal-context retrieval tool when an ongoing project or topic may benefit from both durable LLM_Wiki knowledge and recent episodic memory.\n\n    WHEN TO USE:\n    - Prefer as the primary retrieval tool for broad, exploratory, or status questions about projects, topics, decisions, or current thinking.\n    - Use when you need a unified view combining curated documentation and recent episodic state.\n\n    EXAMPLES OF USER INTENT:\n    - 'Where are we with Project Atlas?'\n    - 'What do we know about the Spark architecture?'\n    - 'What's my current thinking on EV charging?'\n    - 'Continue our work on Context Memory Fabric.'\n    - 'Catch me up on our discussions regarding the database.'\n\n    DISTINCTIONS:\n    - Unlike search_wiki (which only searches durable files) or recall_mem (which only queries episodic facts), get_context queries both sources concurrently and formats them into distinct sections with temporal conflict guidance.\n\n    SIDE EFFECTS:\n    - Read-only. Does not modify any memory or Wiki files.\n    ",
     "input_schema": {
       "properties": {
         "max_memory_results": {
@@ -491,7 +491,7 @@
     },
     "title": "Propose Durable Wiki Update"
   },
-  "recall": {
+  "recall_mem": {
     "annotations": {
       "destructive_hint": false,
       "idempotent_hint": true,
@@ -517,10 +517,10 @@
       "required": [
         "query"
       ],
-      "title": "recallArguments",
+      "title": "recall_memArguments",
       "type": "object"
     },
-    "name": "recall",
+    "name": "recall_mem",
     "output_schema": {
       "properties": {
         "result": {
@@ -531,7 +531,7 @@
       "required": [
         "result"
       ],
-      "title": "recallOutput",
+      "title": "recall_memOutput",
       "type": "object"
     },
     "title": "Recall Episodic Memory"

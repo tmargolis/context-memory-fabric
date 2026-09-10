@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from server.context import get_context
 from server.corpus import CorpusAsset, ExtractionStatus
-from server.mcp import app, get_context as mcp_get_context, propose_wiki_update as mcp_propose_wiki_update, recall as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
+from server.mcp import app, get_context as mcp_get_context, propose_wiki_update as mcp_propose_wiki_update, recall_mem as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
 from server.memory import close_graphiti
 from server.proposals import (
     WikiProposal,
@@ -191,7 +191,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         tools = await app.list_tools()
         tool_names = {t.name for t in tools}
         expected_tools = {
-            "remember", "recall", "search_wiki", "get_context", "propose_wiki_update",
+            "remember", "recall_mem", "search_wiki", "get_context", "propose_wiki_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_note", "capture_health",  # MS4a MCP-boundary capture
             "promote_auto_accepted_memories",

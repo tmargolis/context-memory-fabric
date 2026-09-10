@@ -26,11 +26,11 @@ from server.mcp import (
     app,
     get_context as mcp_get_context,
     propose_wiki_update as mcp_propose_wiki_update,
-    recall as mcp_recall,
+    recall_mem as mcp_recall,
     remember as mcp_remember,
     search_wiki as mcp_search_wiki,
 )
-from server.memory import close_graphiti, recall, remember
+from server.memory import close_graphiti, remember
 from server.wiki import WikiCorpusManager, format_search_results_for_mcp, search_corpus, search_wiki
 
 
@@ -52,7 +52,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         tools = await app.list_tools()
         tool_dict = {t.name: t for t in tools}
         expected_tools = {
-            "remember", "recall", "search_wiki", "get_context", "propose_wiki_update",
+            "remember", "recall_mem", "search_wiki", "get_context", "propose_wiki_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_note", "capture_health",  # MS4a MCP-boundary capture
             "promote_auto_accepted_memories",
@@ -69,7 +69,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         # 4. Check read-only vs write annotations
         self.assertTrue(tool_dict["get_context"].annotations.read_only_hint)
         self.assertTrue(tool_dict["search_wiki"].annotations.read_only_hint)
-        self.assertTrue(tool_dict["recall"].annotations.read_only_hint)
+        self.assertTrue(tool_dict["recall_mem"].annotations.read_only_hint)
         self.assertFalse(tool_dict["remember"].annotations.read_only_hint)
         self.assertFalse(tool_dict["propose_wiki_update"].annotations.read_only_hint)
         self.assertFalse(tool_dict["import_memories"].annotations.read_only_hint)
@@ -85,8 +85,8 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Durable/source-material retrieval", tool_dict["search_wiki"].description)
         self.assertIn("Find my notes on", tool_dict["search_wiki"].description)
 
-        self.assertIn("Temporal/episodic retrieval", tool_dict["recall"].description)
-        self.assertIn("What did I decide", tool_dict["recall"].description)
+        self.assertIn("Temporal/episodic retrieval", tool_dict["recall_mem"].description)
+        self.assertIn("What did I decide", tool_dict["recall_mem"].description)
 
         self.assertIn("Direct episodic write", tool_dict["remember"].description)
         self.assertIn("Do NOT call this automatically for every casual chat message", tool_dict["remember"].description)
