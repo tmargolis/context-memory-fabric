@@ -277,3 +277,49 @@ Not an IMPLEMENTATION-PLAN milestone — a parallel track with its own file, [SP
 - **Residual risk:** qwen3.5-122b's 29% zero-entity rate (vs Gemini's 24%) and one ~600 s mid-run stall on the probe — watched on the full re-promotion; the hybrid (Gemini extraction + local embeddings, D4's split provider vars) is the fallback if it regresses at scale.
 
 **Executed 2026-09-09 — migration complete.** GLM graph renamed `mem-fabric-local-glm` (+ its 295 ledger rows); fresh `mem-fabric-local` re-promoted from the 295 tier-1 episodes on qwen3.5-122b + nomic — **295/295, 0 failed**, ~2.5 h, no stalls. Final graph: 295 Episodic / 393 Entity / 263 RELATES_TO / 768-dim, **0 pronoun entities / 0 self-loops / 0 echo-facts** (= Gemini), 28% zero-entity (vs Gemini 22%). Episodes renamed `<harness>-<project>-NNN` (`chatgpt-astrophotography-001`) — migration for the 295, plus `_semantic_episode_name` wired into `promote_reviewed` for future runs. `.env` flipped to local/768/`mem-fabric-local`; `recall()` verified live. Probe graphs deleted. Backups: `journal.db.pre-qwen-20260909`, `.env.pre-qwen-flip-20260909`, `episode_rename_map.pre-qwen-20260909.json`. Rollback ledger in [spark-phase7-ab-log.md](spark-phase7-ab-log.md).
+
+---
+
+## MS7 — Context assembly quality
+
+**Goal:** Deliver *useful* context, not a bag of retrieved items — measurably better than either single provider on real queries.
+
+### The instrument (built before code)
+
+- **30 graded queries** (`tests/fixtures/ms7_eval/queries.json`, gitignored) — 3 groups of 10: **A** memory-domain, **B** wiki-domain, **C** spanning, each with a hand-written `gold_needs`.
+- **`capture.py`** → `runs.json` — `recall_mem` / `search_wiki` / `get_context` output + latency for all 30, one command, re-run after every change.
+- **Round 1 — sufficiency grader** (Artifact `ms7-assembly-grader`): 0/1/2 "does this context contain the answer". **Retired** — that made the grader simulate the answer generator, which is the hard, noisy part.
+- **Round 2 — answer-quality eval** (`answer_eval.py`, Artifact `ms7-answer-grader`): for each query, Claude (Sonnet, isolated via `claude -p --restricted --strict-mcp-config` — no MCP, no CLAUDE.md, no memory) generates an actual answer in 4 conditions (`model_only` / `+memory` / `+wiki` / `+both`); the *answer* is graded 0/1/2 against `gold_needs`. This is the live instrument; re-runs are `--resume`-able.
+
+### What was built
+
+- **Step 1 — `search_wiki` tokenizer + stopwords** (`799572d`). The first-occurrence substring scorer kept trailing punctuation on query terms (`interlock?`, `glean,`) and let function words match every doc; big stopword-dense PDFs dominated. `_tokenize` strips leading/trailing non-word chars and drops a ~90-word function-word set. Gold doc in top-5 **12/20 → 18/20**, MRR 0.49 → 0.73, zero regressions.
+- **Step 2 — `recall` → `recall_mem`; render fidelity; `get_context` fan-in** (`4581696`, `60d4ef0`, `d4fb058`). Renamed the module fn + MCP wire tool (the `MemoryProvider.recall` protocol method is kept — receiver-scoped). `recall_mem` now resolves each fact's episode and attaches the source-episode synthesized statement + a `reasoning_kind · project · evidence` provenance line — a consumer saw only the terse RELATES_TO edge before. `get_context` over-fetches 12/side, drops wiki hits below 0.4× the top score, dedups facts, then caps — was a blind top-5 concatenation.
+- **Snippet + extractor fixes** (`f50f351`, `0b0e52c`). `_extract_snippet` returns up to 3 windows around the densest query-term clusters (the gold fact routinely sat outside a single ±80 window — OpenClaw's agent count, the Colorado-repeal line). `ExtractionResult.__post_init__` strips C0 control chars — a NUL from the 1400 State Pkwy inspection PDF was reaching MCP clients and crashed a subprocess in the eval.
+- **Step 3 — episode-content vector retrieval for `recall_mem`** (`64fffdd` + follow-up `7ff999f`; spike record [spark-ms7-episode-vector-spike.md](spark-ms7-episode-vector-spike.md)). `recall_mem` gains a KNN arm over `Episodic.content_embedding` — the synthesized statement itself, reachable past qwen's ~28% zero-entity rate — RRF-fused with the edge search, deduped, capped at 2 facts per source episode, **auto-gated on the vector index existing** (a no-op on a graph without it). Proven on throwaway `mem-fabric-spike-eps`, then landed on `mem-fabric-local` (nomic-embed of all 295 Episodic nodes + a vector index; backup `mem-fabric-local.pre-epvec-20260910`; rollback = `DROP VECTOR INDEX`). Follow-ups: vector arm feeds only its top 6 into the fusion; `get_context` renders `recall_mem`'s full ranked output instead of re-truncating.
+
+### Exit gate — ANSWERED (2026-09-10)
+
+**Does cross-provider context measurably beat the single-provider baselines?** **Yes, decisively.** On the 30 graded queries, answer completeness (0/1/2 vs gold, meaned):
+
+| answering with | score | % of a complete answer |
+|---|---|---|
+| bare model (no memory, no context) | 0.07 | 3% |
+| `recall_mem` only | 1.00 | 50% |
+| `search_wiki` only | 1.06 | 53% |
+| **`get_context` (both)** | **1.60** | **80%** |
+
+`+both` ≥ every single arm on all 30 and wins outright on several; lift over the bare model **+1.53**. For comparison, the same 30 questions answered from Gemini 3.8 Flash / GPT-5.6 / Claude's *own* built-in memory of the user scored 10% / 18% / 18% — and several of those answers are confidently wrong (a contradicted electrical spec, a stale positioning claim, invented agent names), where `get_context` grounds every returned claim in a stored decision or document.
+
+Progression: bare `get_context` **0.07 → 1.07** after Steps 1+2+fixes → **1.60** after Step 3 + follow-ups.
+
+### Corrections found while building
+
+- **`recall` was the weaker retriever, not `search_wiki`** — the opposite of the going-in assumption. Post-Step-1, `search_wiki` put the gold doc in the top-5 on 18/20; `recall_mem` missed the gold *episode* on 13/20, and on A5/A9 retrieved a **contradictory** episode (the graph edge search reaches RELATES_TO facts, not the episode's synthesized statement, and ~28% of tier-1 statements have zero extracted entities).
+- **`get_context`'s memory section was a byte-identical prefix of `recall`** on 30/30 — the "combined re-retrieves worse than recall" diagnosis from the first pass was wrong; it was pure pre-merge truncation.
+- **"Does the context contain the answer" is the wrong thing to grade.** It forces the grader to predict downstream answerability. Grading the generated *answer* is both easier and the real target — the round-1 grader was retired for this reason.
+- **`recall_mem` / `get_context` / `search_wiki` never call the extraction model.** They use nomic (query embedding) + graph/BM25 + RRF; `CMF_RERANKER` is `PASSTHROUGH`. `recall_mem` median latency ~0.4 s. Only *writes* (`remember`, promotion) touch qwen-122b.
+
+### Deferred to backlog
+
+MS7's exit gate is met; the remaining task-list items are refinements, tracked in **[plan-active.md → Backlog](plan-active.md#backlog--deferred-assembly-refinements)**: `search_wiki` semantic retrieval (the largest remaining retrieval lever — a one-time corpus embed, not per-write cost); explicit conflict/staleness callouts (acceptance test 3) and truncation/omission disclosure (test 4); query-intent routing, time-aware modes, context templates, token-budget allocation, retrieval-explanation debug mode; and the residual eval misses (A1's friend's-Spark episode reachable by neither arm; B7 `+memory` regression; C6's lexical dead-end).

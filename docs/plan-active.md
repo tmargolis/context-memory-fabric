@@ -63,9 +63,9 @@ The `reviews` table records reviewer `todd`, 2026-09-08: **295 tier-1 episodes a
 
 ---
 
-## MS6b — Governance — after MS7
+## MS6b — Governance — **next**
 
-Deferred from MS6 on the grounds that all of it serves 22 promoted rows today, and the correction path should be designed after a real review pass rather than before it.
+MS7 is done (see [plan-history.md](plan-history.md#ms7--context-assembly-quality)); MS6b is the active milestone. Deferred from MS6 on the grounds that all of it serves the promoted rows, and the correction path should be designed after a real assembly pass rather than before it.
 
 - [ ] **`explain()` into Graphiti** — episode name, extracted entities and edges. The differentiation demo; worth building once the graph holds real content.
 - [ ] **`correct_memory`** — re-issue via `remove_episode` + `add_episode`, preserving `reference_time`. The fiddly part (Graphiti has no in-place update).
@@ -73,60 +73,6 @@ Deferred from MS6 on the grounds that all of it serves 22 promoted rows today, a
 - [ ] **Scopes** — revisit as access control alongside MS9, or MS4c if remote ingest needs it first.
 
 **Effort:** 2-3 sessions. **Risk:** Medium — the correction re-issue path is the one genuinely fiddly piece.
-
----
-
-## MS7 — Context assembly quality
-
-**Goal:** Deliver *useful* context, not a bag of retrieved items. Roadmap MS7.
-
-**Why now:** Once MS6 has moved real material into the graph, `get_context` is the thing the whole system exists to produce — and today it is a flat concatenation of vector hits. This is where cross-provider retrieval, conflict signals, and token budgeting land.
-
-**Depends on:** MS2 (journal, for time-aware modes), MS6 (real graph content to assemble). **Not** MS5 — the file knowledge provider is enough to build and evaluate assembly against; generalizing providers is independent.
-
-### Tasks
-
-- [ ] **Query intent classification** — current-state vs historical vs troubleshooting vs research; routes retrieval planning.
-- [ ] **Provider-aware retrieval planning** — how many hits from memory vs knowledge vs journal, per intent; budget-allocated, not fixed.
-- [ ] **Time-aware modes** — a "current state" query prefers valid current facts without erasing history; a "what did I decide in March" query reconstructs the prior state.
-- [ ] **Conflict + staleness signals** — surface contradictory memories and likely-superseded ones rather than silently picking one. The `supersedes` / `superseded_by` lineage already exists; expose it in the assembled response.
-- [ ] **Token-budget allocation** across evidence / memory / knowledge, with the response naming what was truncated or omitted.
-- [ ] **Context templates** — project-continuation, decision-history, troubleshooting, research — each a different assembly shape.
-- [ ] **Retrieval explanations** — a debug mode showing why each item was included.
-- [ ] **Quality / latency / token-cost metrics**, and a **baseline measurement** (memory-only, knowledge-only) to show improvement against — done *during* MS7, not after.
-
-### Eval harness (built 2026-09-09, pre-code)
-
-- **30 graded queries** — `tests/fixtures/ms7_eval/queries.json` (gitignored). 3 groups of 10: **A** memory-domain (graph only), **B** wiki-domain (wiki only), **C** spanning (decision in memory, context in wiki). 4 conflict-candidates for acceptance-test 3.
-- **Capture** — `tests/fixtures/ms7_eval/capture.py` → `runs.json`: `recall_mem` / `search_wiki` / `get_context` output + latency for all 30, each memory fact enriched with its source-episode content + provenance. One command, re-run after every retrieval change.
-- **Sufficiency grader** (round 1) — Artifact `ms7-assembly-grader`: 0/1/2 answer-sufficiency per system per query. **Retired** — grading "does this context contain the answer" made the grader simulate the answer generator, which is the hard part. Kept as a historical snapshot.
-- **Answer-quality eval** (round 2, the live instrument) — `tests/fixtures/ms7_eval/answer_eval.py`: for each query, Claude (Sonnet, isolated via `claude -p --restricted --strict-mcp-config` — no MCP, no CLAUDE.md, no memory) generates an actual answer in 4 conditions (`model_only` / `+memory` / `+wiki` / `+both`); grade the *answer* against `gold_needs`. Artifact `ms7-answer-grader`. `--resume`, incremental write.
-
-### Progress (2026-09-10)
-
-Order: build the instrument, then fix retrieval against it.
-
-- **[x] Step 1 — `search_wiki` tokenizer + stopwords** (`799572d`). First-occurrence substring scorer kept trailing punctuation on query terms and let function words match every doc. Gold-doc in top-5 **12/20 → 18/20**, MRR 0.49 → 0.73, zero regressions.
-- **[x] Step 2 — `recall` → `recall_mem`, render fidelity, `get_context` fan-in** (`4581696`, `60d4ef0`, `d4fb058`). Rename incl. the MCP wire tool (`MemoryProvider.recall` protocol method kept). `recall_mem` now attaches each fact's source-episode synthesized statement + `reasoning_kind · project · evidence` provenance. `get_context` over-fetches 12/side, drops wiki hits below 0.4× the top score, dedups facts, caps 8 (was a blind top-5 concat).
-- **[x] Snippet + extractor fixes** (`f50f351`, `0b0e52c`). `_extract_snippet` → up to 3 windows around the densest term clusters (the gold fact routinely sat outside a single ±80 window). `ExtractionResult` strips C0 control chars (a NUL from the condo inspection PDF was reaching MCP clients).
-- **Answer-eval baseline (post Step 1+2+fixes):** per-condition means **model_only 0.07 / +memory 0.47 / +wiki 0.53 / +both 1.07**; lift (+both − model_only) **+1.00**; `+both` ≥ every single arm on all 30, wins outright on 3. **Group A +both = 0.80, Group C +both = 0.80** — both capped by `recall_mem`: A3/A5/A8/A9/A10 scored 0 in every arm (gold episode unreachable, or a contradictory one retrieved).
-- **[x] Step 3 — episode-content vector retrieval for `recall_mem`** (`64fffdd`; spike `docs/spark-ms7-episode-vector-spike.md`). `recall_mem` gains a KNN arm over `Episodic.content_embedding` (the synthesized statement itself — reachable past qwen's ~28% zero-entity rate), RRF-fused with the edge search, **auto-gated on the vector index existing** (no-op on `mem-fabric-local` until backfilled — so the code is live but inert). Spike (`mem-fabric-spike-eps`, 295 nomic-embedded): **gold episode in `recall_mem` top-8 7/20 → 17/20**; answer-eval **`+both` 1.07 → 1.60 (80% of a complete answer), `+memory` 0.47 → 1.00, lift +1.00 → +1.53**, Group A `+both` 0.80 → 1.30, Group C 0.80 → 1.60. Contradictory-retrieval cases flipped: A5, A9, A10; C4/C8/C10 misses answered. **Landed on `mem-fabric-local`** (backfill run 2026-09-10; backup `mem-fabric-local.pre-epvec-20260910`) — `tests/fixtures/ms7_eval/backfill_episode_vectors.py --graph mem-fabric-local --live` (~1 min; rollback = `DROP VECTOR INDEX`).
-  - Follow-ups (commit after `64fffdd`): per-episode RRF cap + vector arm top-6 + `get_context` renders `recall_mem`'s full output → **A10 `+both` 0→2 fixed**. Still open: B7 `+memory` 1→0 (wiki query, `+both`=2 — accepted); A1 conflates a NAS/MacBook backend (the friend's-Spark episode isn't retrieved by any arm); C6 panel numbers need vector retrieval in `search_wiki` itself — the next MS7 lever.
-
-### Acceptance tests
-
-1. A current-state query prefers valid current facts without dropping history from the trace.
-2. A historical query reconstructs a prior decision accurately (verified against a known thread).
-3. A response with contradictory memories surfaces the conflict rather than resolving it silently.
-4. Every response identifies omitted / truncated categories.
-5. Evaluation shows measurable improvement over the memory-only and knowledge-only baselines on a fixed query set.
-
-### Exit gate
-
-**Does cross-provider context measurably beat the single-provider baselines?** On a fixed set of real queries with graded answers. If not, the assembly logic is adding cost without value — simplify.
-
-**Effort:** 4–5 sessions.
-**Risk:** Medium. "Better" needs a rubric and a query set before any code — build those first.
 
 ---
 
@@ -287,7 +233,24 @@ Not a blocker for MS6 / MS7. Do it opportunistically the next time Claude Deskto
 
 ---
 
+## Backlog — deferred assembly refinements
+
+Out of MS7 with the exit gate met (`get_context` at 80% of a complete answer, beating every single-provider baseline — [plan-history.md](plan-history.md#ms7--context-assembly-quality)). These push the number higher but were not blockers. Roughly in value order:
+
+- [ ] **`search_wiki` semantic retrieval.** The largest remaining retrieval lever. Lexical search now puts the gold doc in the top-5 on 18/20 because the wiki is well-titled, but it can't cross a vocabulary gap ("garage panel capacity" ↔ "400A 3-phase service" — the C6 miss). A one-time nomic embed of the corpus (~1000 files, chunked) into a persisted vector store, hybrid lexical+vector in `search_wiki`, incremental re-embed on rescan. **Not** per-`remember` work — `remember` writes the graph, the wiki is curated files.
+- [ ] **Explicit conflict + staleness signals** (MS7 acceptance test 3). Today `get_context` tags `SUPERSEDED` and leans on the interpretation block; it works when the retrieved set happens to contain both sides (A9), not by design. Add a dedicated "these two facts disagree / this one is likely stale" callout off the `supersedes` / `superseded_by` lineage.
+- [ ] **Truncation / omission disclosure** (MS7 acceptance test 4). `get_context` should name what it dropped — N lower-ranked items, an empty provider, a below-threshold wiki tail.
+- [ ] **Query-intent classification + per-intent retrieval budgets.** current-state / historical / troubleshooting / research → different hit counts from memory vs knowledge vs journal.
+- [ ] **Time-aware modes.** A current-state query prefers valid facts without erasing history; a "what did I decide in March" query reconstructs the prior state.
+- [ ] **Context templates** — project-continuation / decision-history / troubleshooting / research, each a different assembly shape.
+- [ ] **Token-budget allocation** across evidence / memory / knowledge.
+- [ ] **Retrieval explanations** — a debug mode showing why each item was included.
+- [ ] **Cross-encoder reranker** (`CMF_RERANKER=bge`, Spark plan D3). Deprioritized: a reranker reorders a candidate set, and the eval showed the candidate set was the problem, not its order. Revisit only if intent-routing surfaces a real ordering gap.
+- [ ] **Residual eval misses.** A1 — `gemini-openclaw-002` (the friend's-Spark decision) is retrieved by neither the edge nor the vector arm; needs the extraction gap closed or a broader vector recall. B7 — `+memory` regressed 1→0 after the vector arm (wiki-domain query, `+both` unaffected); accepted. C6 — see `search_wiki` semantic retrieval above.
+
+---
+
 ## Two standing notes
 
 - **MS6 is the differentiation milestone.** *"Why does the system believe this?"* is the capability competitors do not offer. It should not slip indefinitely behind adapter work.
-- **MS7 needs a baseline first.** "Improvement over memory-only and knowledge-only baselines" requires those baselines be measured — do that during MS7.
+- **MS7 is done** (2026-09-10). The answer-quality eval (`tests/fixtures/ms7_eval/`, Artifact `ms7-answer-grader`) is the reusable instrument — re-run `capture.py` + `answer_eval.py` after any retrieval or assembly change.

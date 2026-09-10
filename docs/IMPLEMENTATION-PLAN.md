@@ -31,9 +31,9 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | done 2026-09-07 |
 | 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | done 2026-09-08 |
 | — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
-| 8 | [**MS7**](plan-active.md#ms7--context-assembly-quality) | Context assembly quality | **in progress** — answer-eval instrument built; Step 1 (search_wiki tokenizer) + Step 2 (recall_mem rename/fidelity, get_context fan-in) + snippet/PDF fixes landed; Step 3 (episode-content vector retrieval) in spike, +both lift **+1.00**, gold-episode recall 7→17/20 |
+| 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements) |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | [MS6b](plan-active.md#ms6b--governance--after-ms7) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | after MS7 |
+| 9 | [**MS6b**](plan-active.md#ms6b--governance--next) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | **next ← here** |
 | 10 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification pending |
 | 11 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
 | 12 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
@@ -42,11 +42,11 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 15 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | |
 | 16 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | |
 
-**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — so the active blocker for "make CMF's output actually good" is **MS7** (assembly quality). MS6b (correction / deletion / `explain()` into the graph) moved *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS4b–MS4d and MS5 come after the retrieval loop is proven.
+**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — MS7 (assembly quality) is **done** — `get_context` measurably beats both single-provider baselines (80% of a complete answer vs 50–53%), with the answer-quality eval kept as a reusable instrument. MS6b (correction / deletion / `explain()` into the graph) was sequenced *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS4b–MS4d and MS5 come after the retrieval loop is proven.
 
 ---
 
-## Current state (2026-09-09)
+## Current state (2026-09-10)
 
 **Done through MS6a + the Spark migration.** The pipeline runs end-to-end on Spark-local inference:
 
@@ -63,7 +63,7 @@ source exports → journal (19,012 events) → per-event classification (heurist
 - **Staged, not yet reviewed:** ~942 tier-2 reasoning episodes (work-journal, stay in-thread, not promoted) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (confirm-only). Tier-1 is done.
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
-**Next: MS7 — context assembly quality** ([plan-active.md](plan-active.md#ms7--context-assembly-quality)). MS7 needs a graded query set + memory-only / knowledge-only baselines built *first*, then intent-routing, time-aware modes, conflict signals, and token budgeting on top of the 295-episode graph.
+**Next: MS6b — governance** ([plan-active.md](plan-active.md#ms6b--governance--next)): `explain()` into the graph, `correct_memory` (re-issue via `remove_episode` + `add_episode`, preserving `reference_time`), deletion propagation, scopes. MS7 is done — its unfinished task-list items (intent routing, time-aware modes, explicit conflict signals, `search_wiki` semantic retrieval, …) are tracked in [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements).
 
 ### Spark local-inference migration — done 2026-09-09
 
@@ -81,6 +81,7 @@ The distilled output of the plan — every gate answered, newest first.
 
 | Milestone | Question | Answer (date) |
 |---|---|---|
+| **MS7** | Does cross-provider `get_context` measurably beat the single-provider baselines on graded real queries? | **Yes, decisively.** 30 queries, answers graded 0/1/2 vs hand-written gold: bare model 0.07 · `recall_mem` 1.00 · `search_wiki` 1.06 · **`get_context` 1.60 (80% of a complete answer)**; `+both` ≥ every single arm on all 30, lift +1.53. Progression 0.07 → 1.07 (search_wiki tokenizer, recall_mem render fidelity, get_context fan-in, multi-window snippets) → 1.60 (episode-content vector arm on `mem-fabric-local`). Same questions from Gemini/GPT/Claude's own memory: 10–18%, several confidently wrong. Instrument kept: `tests/fixtures/ms7_eval/`. (2026-09-10) |
 | **Spark migration — Phase 7 / D1** | Which extractor for Spark-local inference — is a local model comparable to Gemini? | **`qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`.** GLM-4.7-Flash rejected on the A/B (47 pronoun entities, 8 self-loops, paraphrase-spam, a hallucination over the shared 275-statement set — Gemini had zero). qwen matches Gemini on hygiene; the instructions nudge cut its zero-entity rate 45% → 29% (Gemini 22–24%). 295 tier-1 episodes re-promoted into `mem-fabric-local` (768-dim); `.env` flipped. Hybrid (Gemini extract + local embed) is the fallback. (2026-09-09) |
 | **MS6a** | Does project-bucketed bulk review clear the tier-1 backlog in usable time, and what is the keep rate? | **295 approved / 6 rejected** in one pass (verdicts bulk-written 2026-09-08). ~98% keep on the tier-1-*routed* slice — the `reasoning_kind` router already does the triage an LLM ranker would, so no ranker is worth building for this corpus. Wall-clock lives in the review artifact, not the journal. (2026-09-08) |
 | **MS3.6** | Does a promoted reasoning episode survive `remember()` → `recall()` with provenance + entities intact? Does coverage auto-resolve shrink the heuristic pile safely? | Yes — round trip verified, Graphiti entities attached. Coverage auto-resolve: heuristic `queued_for_review` **9,833 → 6,582**, each superseded row keeps a `superseded_by` pointer. By-thread bulk-review speed is an MS6 question. (2026-09-07) |
@@ -130,8 +131,8 @@ Rows in **execution order**, not milestone-number order. Estimates assume agent-
 | MS3.6 | 2–3 | ~27 | done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251); 22 keeps, then the full 295 tier-1 set promoted |
 | MS6a (review surface + tier-1 pass) | 5–6 | ~33 | done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
 | Spark migration (Gemini → Spark-local) | ~4 | ~37 | done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
-| MS7 (context assembly quality) | 4–5 | ~42 | **next** |
-| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | after MS7 |
+| MS7 (context assembly quality) | 4–5 | ~42 | **done 2026-09-10** |
+| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **next** |
 | MS4a (live cross-harness verification) | 1 | ~46 | built; needs a live Claude Desktop session |
 | MS4b (Claude Code) | 3–4 | ~50 | |
 | MS4c (OpenClaw) | 4–5 | ~55 | |
