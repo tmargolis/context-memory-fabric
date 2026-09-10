@@ -31,7 +31,7 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | done 2026-09-07 |
 | 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | done 2026-09-08 |
 | — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
-| 8 | [**MS7**](plan-active.md#ms7--context-assembly-quality) | Context assembly quality | **next ← here** |
+| 8 | [**MS7**](plan-active.md#ms7--context-assembly-quality) | Context assembly quality | **in progress** — answer-eval instrument built; Step 1 (search_wiki tokenizer) + Step 2 (recall_mem rename/fidelity, get_context fan-in) + snippet/PDF fixes landed; Step 3 (episode-content vector retrieval) in spike, +both lift **+1.00**, gold-episode recall 7→17/20 |
 | | | *— retrieval loop proven end-to-end here —* | |
 | 9 | [MS6b](plan-active.md#ms6b--governance--after-ms7) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | after MS7 |
 | 10 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification pending |
