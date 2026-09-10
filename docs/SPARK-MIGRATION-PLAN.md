@@ -724,6 +724,26 @@ Worth raising, in rough priority:
 5. **`lms` on your PATH** — a nicety. Every LM Studio inspection currently needs `sudo -iu nano` (note: `sudo nano` opens the editor).
 6. **Heads-up before the Phase 6 run** — sustained load, per the agreement to flag big experiments in advance.
 
+### Operational notes (from the shared Spark Google Doc, "Running Services" / "Baseline 9/4/26", 2026-09-09)
+
+- **LM Studio on the Spark is headless — there is no GUI.** Alex set it up entirely from the CLI (`llmster` + `lms`, install under `~nano/.lmstudio/`). `lms` has no subcommand for JIT / Auto-Evict; those settings live in **`~nano/.lmstudio/settings.json`**.
+- **Auto-Evict DISABLED 2026-09-10.** Set `"unloadPreviousJITModelOnLoad": false` in `~nano/.lmstudio/settings.json` (backup: `settings.json.bak-20260910`). Hot-read — no `llmster` restart needed. Verified: loading a 3rd model (`gemma-4-e4b`) no longer evicts `unsloth/qwen3.5-122b-a10b` + `text-embedding-nomic-embed-text-v1.5`. `jitModelTTL` (3600 s) left enabled — it only affects models JIT-loaded on an API request, not the two `lms load`-ed residents (their `lms ps` TTL is blank).
+- **Manage the LM Studio service (as `nano`):**
+  ```
+  sudo -iu nano bash -lc 'screen'          # detachable session
+  lms server start --bind 0.0.0.0          # (already running); ctrl-a d to detach
+  lms ls   /   lms ps   /   lms daemon status
+  ```
+  There is **no `lms delete`** — remove a downloaded model by hand: `cd ~/.lmstudio/models/lmstudio-community/ && rm -rf <ModelDir>/`.
+- **RDP into the Spark (only "for when GUI is needed", not for LM Studio):**
+  ```
+  ssh -L 3390:localhost:3389 nano@nanospark
+  ```
+  then point an RDP client (Remmina, or macOS "Windows App") at `localhost:3390`.
+- **Model-API port-forward, Alex's form:** `ssh -L 1234:localhost:1234 nano@128.171.121.85` (public IP; behind SSH). CMF instead uses the Tailscale route — `ssh -N -L 12345:127.0.0.1:1234 spark` (`spark` → `100.123.43.85`). Both `-L` forwards can coexist for Todd and Alex.
+- **UMA out-of-memory recovery** (DGX Spark unified memory; per NVIDIA's playbook): `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`.
+- **Host baseline (2026-09-04):** 121 GiB unified RAM (~25 GiB free with the old 5-model set loaded), GB10 GPU, 3.0 T free of 3.7 T. Nomic embed confirmed **768-dim**, 2048-token context, batching supported.
+
 ---
 
 ## Open risks
