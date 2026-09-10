@@ -337,6 +337,80 @@ ORDER BY e.valid_at ASC
 
 ---
 
+## H2. Project Grouping (CMF-local — not written by Graphiti)
+
+> [!NOTE]
+> Added to `mem-fabric-local` as a post-promotion pass (2026-09-09). Three parallel handles for the same `derived_memories.project` label: a node property, an extra label per episode, and a `Project` hub node. Graphiti never reads any of them — `MATCH (e:Episodic …)` is unaffected. A fresh re-promotion recreates Episodic nodes *without* these, so the pass must be re-run after one.
+>
+> - **`e.project`** — plain string property on every `:Episodic` node. For code / precise filters.
+> - **`ep_<name>` label** — second label on each episode (`['Episodic','ep_condo']`), sanitized (`career-navigator` → `ep_job_hunt`). Gives per-project **colour** in the FalkorDB Browser graph view. Does **not** give single-click hide — the Browser shows a node while *any* of its labels is on, and `:Episodic` must stay.
+> - **`(:Project {name})` + `[:IN_PROJECT]`** — one hub node per project, edge from each episode. Episode-level only (never wired to `:Entity`), so `build_communities()` is untouched. Drives force-view clustering.
+
+### All Episodes in One Project (property — exact)
+```cypher
+MATCH (e:Episodic {project: 'condo'})
+RETURN e.name AS name, e.valid_at AS valid_at, e.content AS content
+ORDER BY e.valid_at ASC
+```
+
+### Isolate One Project + Its Neighbourhood (label — for the Browser)
+```cypher
+MATCH (e:ep_condo)
+OPTIONAL MATCH (e)-[r]-(m)
+RETURN *
+```
+
+### Everything EXCEPT One Project
+```cypher
+MATCH (e:Episodic)
+WHERE NOT 'ep_condo' IN labels(e)
+OPTIONAL MATCH (e)-[r]-(m)
+RETURN *
+LIMIT 500
+```
+
+### Expand a Project Hub Node
+```cypher
+MATCH (p:Project {name: 'condo'})<-[:IN_PROJECT]-(e:Episodic)
+OPTIONAL MATCH (e)-[:MENTIONS]->(n:Entity)
+RETURN p, e, n
+```
+
+### Episode Count per Project
+```cypher
+MATCH (p:Project)<-[:IN_PROJECT]-(e:Episodic)
+RETURN p.name AS project, count(e) AS episodes
+ORDER BY episodes DESC
+```
+
+### Entities Shared Across Two Projects (cross-project links)
+```cypher
+MATCH (a:Episodic {project: 'openclaw'})-[:MENTIONS]->(n:Entity)<-[:MENTIONS]-(b:Episodic {project: 'obsidian'})
+RETURN DISTINCT n.name AS shared_entity
+ORDER BY shared_entity
+```
+
+### List Every `ep_*` Label With Its Count
+```cypher
+MATCH (e:Episodic)
+UNWIND labels(e) AS l
+WITH l WHERE l STARTS WITH 'ep_'
+RETURN l AS project_label, count(*) AS episodes
+ORDER BY episodes DESC
+```
+
+### Undo the Project-Grouping Pass
+```cypher
+// property
+MATCH (e:Episodic) REMOVE e.project;
+// labels — repeat per ep_* label, or script it
+MATCH (e:ep_condo) REMOVE e:ep_condo;
+// hub nodes + edges
+MATCH (p:Project) DETACH DELETE p
+```
+
+---
+
 ## ⚠️ I. Safe vs. Destructive Operations
 
 All queries in Sections A through H are **READ-ONLY** and safe to execute.
@@ -362,10 +436,12 @@ Context Memory Fabric utilizes the Graphiti graph schema inside FalkorDB:
 ### Node Labels
 - **`:Episodic`**: Discrete chronological event or decision.
   - Properties: `uuid` (String), `name` (String), `valid_at` (ISO Datetime string), `content` (String), `source_description` (String), `group_id` (String).
+  - **CMF-local additions** (`mem-fabric-local` only, post-promotion pass — see §H2): `project` (String); a second label `ep_<name>` per episode.
 - **`:Entity`**: Named entity or concept extracted across episodes.
   - Properties: `uuid` (String), `name` (String), `summary` (String), `group_id` (String).
 - **`:Community`**: Cluster of closely related entities (hierarchical grouping).
 - **`:Saga`**: High-level multi-episode narrative arc.
+- **`:Project`** *(CMF-local, not Graphiti)*: one hub node per `derived_memories.project`. Property: `name` (String). Linked to episodes only.
 
 ### Relationship Types
 - **`[:MENTIONS]`**: Directed edge from `(:Episodic)` to `(:Entity)`.
@@ -373,3 +449,9 @@ Context Memory Fabric utilizes the Graphiti graph schema inside FalkorDB:
 - **`[:HAS_MEMBER]`**: Community to Entity membership edge.
 - **`[:HAS_EPISODE]`**: Saga to Episodic relationship edge.
 - **`[:NEXT_EPISODE]`**: Chronological transition between episodes.
+- **`[:IN_PROJECT]`** *(CMF-local, not Graphiti)*: `(:Episodic)` → `(:Project)`.
+
+### Graph naming (2026-09-09)
+- **`mem-fabric-local`** — live graph. qwen3.5-122b extraction, `nomic-embed` (768-dim). Episodes named `<harness>-<project>-NNN`.
+- **`mem-fabric-gemini`** — pre-migration, 1024-dim, retained untouched (rollback).
+- **`mem-fabric-local-glm`** — rejected Phase 7 GLM build, kept as the A/B record.

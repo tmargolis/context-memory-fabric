@@ -7,7 +7,7 @@ This file is the **index**. Detail lives in two companions:
 | File | Contents |
 |---|---|
 | **[plan-active.md](plan-active.md)** | the milestones still to do — full task lists, acceptance tests, exit gates |
-| **[plan-history.md](plan-history.md)** | completed milestones (MS0.5–MS3.6, MS4a) — decisions, corrections found while building, exit-gate answers |
+| **[plan-history.md](plan-history.md)** | completed milestones (MS0.5–MS3.6, MS4a, MS6a) + the Spark local-inference migration — decisions, corrections found while building, exit-gate answers |
 
 ## How to use
 
@@ -23,51 +23,55 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 
 | # | Milestone | Focus | Status |
 |--:|---|---|---|
-| 1 | MS0.5 | Baseline correctness & wiring | done |
-| 2 | MS1 | Provider interfaces | done |
-| 3 | MS2 | Canonical event journal + importers + backfill | done |
-| 4 | MS3 | Capture / consolidation split | done |
-| 5 | MS3.5 | Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) | done 2026-09-07 |
-| 6 | MS3.6 | Promotion: staged memories → retrievable graph | done 2026-09-07 |
-| 7 | **MS6** | Review and governance | **next ← here** |
-| 8 | MS7 | Context assembly quality | |
+| 1 | [MS0.5](plan-history.md#ms05--baseline-correctness-and-wiring) | Baseline correctness & wiring | done |
+| 2 | [MS1](plan-history.md#ms1--extract-provider-interfaces-without-changing-behavior) | Provider interfaces | done |
+| 3 | [MS2](plan-history.md#ms2--canonical-event-journal-importers-and-backfill) | Canonical event journal + importers + backfill | done |
+| 4 | [MS3](plan-history.md#ms3--separate-capture-from-consolidation) | Capture / consolidation split | done |
+| 5 | [MS3.5](plan-history.md#ms35--reasoning-episode-consolidation-adr-0005) | Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) | done 2026-09-07 |
+| 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | done 2026-09-07 |
+| 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | done 2026-09-08 |
+| — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
+| 8 | [**MS7**](plan-active.md#ms7--context-assembly-quality) | Context assembly quality | **next ← here** |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | MS4a | MCP-boundary capture — live cross-harness verification | built; verification pending |
-| 10 | MS4b | Claude Code adapter | |
-| 11 | MS4c | OpenClaw adapter (+ `cmf-http`) | |
-| 12 | MS4d | Codex, Gemini CLI | |
-| 13 | MS5 | Knowledge-provider generalization | |
-| 14 | MS8 | Replay and evaluation | |
-| 15 | MS9 | Distribution | |
+| 9 | [MS6b](plan-active.md#ms6b--governance--after-ms7) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | after MS7 |
+| 10 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification pending |
+| 11 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
+| 12 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
+| 13 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | |
+| 14 | [MS5](plan-active.md#ms5--knowledge-provider-generalization) | Knowledge-provider generalization | |
+| 15 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | |
+| 16 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | |
 
-**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. The ~1.2k reasoning episodes and the heuristic candidates are staged in SQLite and are **not retrievable** until reviewed and promoted. So the blocker for "test what CMF actually does" is MS6 (review the backlog) → MS7 (make assembly good) — not more capture adapters. MS4b–MS4d and MS5 come after the retrieval loop is proven.
+**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — so the active blocker for "make CMF's output actually good" is **MS7** (assembly quality). MS6b (correction / deletion / `explain()` into the graph) moved *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS4b–MS4d and MS5 come after the retrieval loop is proven.
 
 ---
 
-## Current state (2026-09-07)
+## Current state (2026-09-09)
 
-**Done through MS3.6.** The full pipeline loop is closed end-to-end:
+**Done through MS6a + the Spark migration.** The pipeline runs end-to-end on Spark-local inference:
 
 ```text
 source exports → journal (19,012 events) → per-event classification (heuristic v1.2)
-                                          → reasoning episodes (model v0.2): 1,243 staged / 659 threads
-                                          → promotion (MS3.6): 22 human-reviewed keeps in the graph
+                                          → reasoning episodes (model v0.3): ~1,243 staged / 659 threads
+                                          → MS6a tier-1 review: 295 approved / 6 rejected (2026-09-08)
+                                          → promotion → mem-fabric-local (qwen3.5-122b + nomic, 768-dim)
                                           → recall() / get_context() return them, entity-extracted
 ```
 
-- **Graph (`memory-fabric`):** 57 MS0.5-backfilled episodes + 22 promoted reasoning episodes = 79.
-- **Staged, awaiting review:** ~1,221 unpromoted reasoning episodes (three-tier: ~301 tier-1 for promotion review, ~942 tier-2 work-journal, rest discard) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (covered by an episode, confirm-only).
+- **Live graph `mem-fabric-local`:** 295 Episodic · 393 Entity · 263 RELATES_TO · 768-dim. Extraction on `unsloth/qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`, embeddings on `nomic-embed-text`, both Spark-local. Episodes named `<harness>-<project>-NNN`. Hygiene matches Gemini (0 pronoun entities / 0 self-loops); 28% of statements yield no entities (vs Gemini's 22%).
+- **Retained graphs:** `mem-fabric-gemini` (pre-migration, 1024-dim, untouched — the rollback path); `mem-fabric-local-glm` (rejected Phase 7 GLM build, kept as the A/B record).
+- **Staged, not yet reviewed:** ~942 tier-2 reasoning episodes (work-journal, stay in-thread, not promoted) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (confirm-only). Tier-1 is done.
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
-**Next: MS6 — Review and governance** ([plan-active.md](plan-active.md#ms6--review-and-governance)). Build the surface to move the staged backlog into the graph — **bulk review by thread / kind / tier**, plus evidence-trace ("why does this memory exist"), correction, audit, and scopes.
+**Next: MS7 — context assembly quality** ([plan-active.md](plan-active.md#ms7--context-assembly-quality)). MS7 needs a graded query set + memory-only / knowledge-only baselines built *first*, then intent-routing, time-aware modes, conflict signals, and token budgeting on top of the 295-episode graph.
 
-### Parallel track — Spark local-inference migration (2026-09-09)
+### Spark local-inference migration — done 2026-09-09
 
-Tracked in its own file: [SPARK-MIGRATION-PLAN.md](SPARK-MIGRATION-PLAN.md), with the Phase 7 A/B write-up in [spark-phase7-ab-log.md](spark-phase7-ab-log.md). Replaces the Gemini Developer API as CMF's LLM + embedding backend with models served from the DGX Spark. **Phases 0-6 complete; Phase 7 quality gate answered.** What changed that the milestone docs depend on:
+Own plan file: [SPARK-MIGRATION-PLAN.md](SPARK-MIGRATION-PLAN.md); Phase 7 A/B + rollback ledger: [spark-phase7-ab-log.md](spark-phase7-ab-log.md). Replaced the Gemini Developer API as CMF's LLM + embedding backend with DGX-Spark-served models.
 
-- **Migration complete (2026-09-09).** `memory-fabric` → **`mem-fabric-gemini`** (retained untouched, 1024-dim, the rollback path). The MS6a tier-1-approved 295 episodes were re-promoted locally — first on GLM-4.7-Flash (**Phase 7 A/B rejected GLM**; that graph kept as `mem-fabric-local-glm`), then on **`unsloth/qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`** into a fresh 768-dim **`mem-fabric-local`** (295/295, episodes named `<harness>-<project>-NNN`). `.env` flipped — `mem-fabric-local` on Spark-local inference (qwen + nomic) is the live graph.
-- **The MS4a cost gate is superseded** (D5). Local inference has no per-call cost, so `server/core/rate_limiter.py` is now a *throughput* control on the Gemini path and unmetered on the local path — see "Privacy and cost" below.
-- **Phase 7 settled the extraction model.** GLM-vs-Gemini A/B over the shared 275-statement set rejected GLM; qwen3.5-122b matched Gemini on hygiene and, with the instructions nudge, closed to a ~5-pt recall gap. Fully local. The hybrid (Gemini extraction + local embeddings, via Phase 1's split provider vars) remains the fallback if qwen3.5-122b regresses at scale.
+- **Phase 7 / D1 answered:** GLM-4.7-Flash rejected on the A/B (pronoun entities, self-loops, paraphrase-spam, a hallucination — Gemini had zero of any). `unsloth/qwen3.5-122b-a10b` + a `custom_extraction_instructions` nudge matches Gemini on hygiene and closes to a ~5-pt recall gap. The hybrid (Gemini extract + local embed, via Phase 1's split provider vars) is the fallback if qwen regresses at scale.
+- **The MS4a cost gate is superseded** (D5): local inference has no per-call cost — `server/core/rate_limiter.py` is unmetered on the local path, still a throughput control on the Gemini path.
+- **Phase 7 checklist** is not fully closed — the D1 decision and re-promotion are done; discrete functional smokes (`remember()` round-trip, `search_wiki`, `get_context` both-provider) and the concurrency/throughput measurements are still open, tracked in the Spark log.
 
 ---
 
@@ -77,6 +81,8 @@ The distilled output of the plan — every gate answered, newest first.
 
 | Milestone | Question | Answer (date) |
 |---|---|---|
+| **Spark migration — Phase 7 / D1** | Which extractor for Spark-local inference — is a local model comparable to Gemini? | **`qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`.** GLM-4.7-Flash rejected on the A/B (47 pronoun entities, 8 self-loops, paraphrase-spam, a hallucination over the shared 275-statement set — Gemini had zero). qwen matches Gemini on hygiene; the instructions nudge cut its zero-entity rate 45% → 29% (Gemini 22–24%). 295 tier-1 episodes re-promoted into `mem-fabric-local` (768-dim); `.env` flipped. Hybrid (Gemini extract + local embed) is the fallback. (2026-09-09) |
+| **MS6a** | Does project-bucketed bulk review clear the tier-1 backlog in usable time, and what is the keep rate? | **295 approved / 6 rejected** in one pass (verdicts bulk-written 2026-09-08). ~98% keep on the tier-1-*routed* slice — the `reasoning_kind` router already does the triage an LLM ranker would, so no ranker is worth building for this corpus. Wall-clock lives in the review artifact, not the journal. (2026-09-08) |
 | **MS3.6** | Does a promoted reasoning episode survive `remember()` → `recall()` with provenance + entities intact? Does coverage auto-resolve shrink the heuristic pile safely? | Yes — round trip verified, Graphiti entities attached. Coverage auto-resolve: heuristic `queued_for_review` **9,833 → 6,582**, each superseded row keeps a `superseded_by` pointer. By-thread bulk-review speed is an MS6 question. (2026-09-07) |
 | **MS3.5** | What is the reasoning-episode auto-accept threshold? Backlog burn-down plan? | **No threshold** — model confidence does not separate keep from drop (fixture: keep 0.95 vs drop 0.94). Auto-accept stays off; promotion is fully review-gated. Backlog handled by **three-tier routing** (promote / work-journal-in-thread / discard), reviewed **by thread** in MS6. `reasoning_kind` is a routing hint (`decision`/`plan` kept 63–78%, `experiment`/`hypothesis`/`finding` ~15%). Assistant-only-substance rate ~5% Claude / ~13–26% ChatGPT-Gemini — follow-on ("can assistant turns seed an episode") is a scoped-later mini-milestone. (2026-09-07) |
 | **MS4a** | Privacy & cost for MCP-boundary capture | Gemini-only (no local routing yet), no content-class filtering, journal-everything / auto-consolidate-selectively, spend bounded by a hard free-tier RPM/RPD gate (`server/core/rate_limiter.py`). Capture registered unconditionally. (2026-09-04) |
@@ -91,7 +97,7 @@ The distilled output of the plan — every gate answered, newest first.
 
 ### Privacy and cost
 
-Graphiti sends every ingested episode to the Gemini Developer API for entity extraction + embedding. At curated volume that's a bounded, deliberate exposure; continuous capture across Claude Desktop / Claude Code / OpenClaw changes the posture (every turn becomes an extraction call; the corpus already holds medical, financial, legal material; cost is unbounded and unmeasured).
+*(Historical framing — as of 2026-09-09 extraction + embedding run Spark-local, not on Gemini; see the amendment below.)* Graphiti sends every ingested episode to an LLM for entity extraction + embedding. At curated volume that's a bounded, deliberate exposure; continuous capture across Claude Desktop / Claude Code / OpenClaw changes the posture (every turn becomes an extraction call; the corpus already holds medical, financial, legal material). On the Gemini path cost was also unbounded and unmeasured — the reason for the rate-limiter gate.
 
 **Standing policy (answered at the MS4a gate, 2026-09-04):**
 1. **Journal everything locally** (cheap), **consolidate selectively** (expensive, remote) — the natural shape of the MS2/MS3 split, and the default.
@@ -121,12 +127,14 @@ Rows in **execution order**, not milestone-number order. Estimates assume agent-
 | MS2 | 5–7 | 13 | done |
 | MS3 | 4–5 | 18 | done |
 | MS3.5 | 5–7 | ~24 | done — 1,243 episodes / 659 threads; no auto-accept threshold; three-tier routing |
-| MS3.6 | 2–3 | ~27 | done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251), 22 keeps promoted, retrieval verified |
-| MS6 (review & governance) | 5–6 | ~33 | **next** |
-| MS7 (context assembly quality) | 4–5 | ~38 | |
-| MS4a (live cross-harness verification) | 1 | ~39 | built; needs a live Claude Desktop session |
-| MS4b (Claude Code) | 3–4 | ~43 | |
-| MS4c (OpenClaw) | 4–5 | ~48 | |
-| MS4d (Codex, Gemini CLI) | 4–6 | ~54 | |
-| MS5 (knowledge-provider generalization) | 3–4 | ~58 | |
-| MS8–MS9 (replay/eval, distribution) | 8–11 | ~68 | |
+| MS3.6 | 2–3 | ~27 | done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251); 22 keeps, then the full 295 tier-1 set promoted |
+| MS6a (review surface + tier-1 pass) | 5–6 | ~33 | done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
+| Spark migration (Gemini → Spark-local) | ~4 | ~37 | done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
+| MS7 (context assembly quality) | 4–5 | ~42 | **next** |
+| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | after MS7 |
+| MS4a (live cross-harness verification) | 1 | ~46 | built; needs a live Claude Desktop session |
+| MS4b (Claude Code) | 3–4 | ~50 | |
+| MS4c (OpenClaw) | 4–5 | ~55 | |
+| MS4d (Codex, Gemini CLI) | 4–6 | ~61 | |
+| MS5 (knowledge-provider generalization) | 3–4 | ~65 | |
+| MS8–MS9 (replay/eval, distribution) | 8–11 | ~75 | |

@@ -89,5 +89,8 @@ imports/
 # Memory-quality label fixtures — reference real personal content, keep local only
 tests/fixtures/memory_quality/
 
+# MS7 evaluation query set — real personal queries + gold answers, keep local only
+tests/fixtures/ms7_eval/
+
 # MS6 review — personal project taxonomy, never published
 taxonomy.local.json

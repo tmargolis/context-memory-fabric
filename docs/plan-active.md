@@ -95,6 +95,13 @@ Deferred from MS6 on the grounds that all of it serves 22 promoted rows today, a
 - [ ] **Retrieval explanations** — a debug mode showing why each item was included.
 - [ ] **Quality / latency / token-cost metrics**, and a **baseline measurement** (memory-only, knowledge-only) to show improvement against — done *during* MS7, not after.
 
+### Eval harness (built 2026-09-09, pre-code)
+
+- **30 graded queries** — `tests/fixtures/ms7_eval/queries.json` (gitignored). 3 groups of 10: **A** memory-domain (graph only), **B** wiki-domain (wiki only), **C** spanning (decision in memory, context in wiki). 4 conflict-candidates for acceptance-test 3.
+- **Capture** — `tests/fixtures/ms7_eval/runs.json`: `recall` / `search_wiki` / `get_context` output + latency for all 30. Latencies: memory ~0.25 s, wiki ~0.1 s, combined ~0.35 s.
+- **Grader** — Artifact `ms7-assembly-grader` (localStorage autosave, JSON export). Todd grades 0/1/2 answer-sufficiency per system per query; metrics computed from the export (mean sufficiency per system × group, head-to-head win rate, conflict-surfacing rate).
+- **Pre-grading impressions (not the verdict):** (1) `search_wiki` is lexical/BM25 only — no vector search — so an EV-charging PDF scores 60–80 on unrelated queries; Group B will likely grade low on a *ranking* problem, not a coverage gap. **`search_wiki` retrieval technique — revisit after baselines: BM25 → add semantic/embedding retrieval and/or stopword + field-boost fixes.** (2) `recall` doesn't always surface the gold episode in its top 8. (3) `get_context` leads with `search_wiki`'s #1, inheriting its noise.
+
 ### Acceptance tests
 
 1. A current-state query prefers valid current facts without dropping history from the trace.

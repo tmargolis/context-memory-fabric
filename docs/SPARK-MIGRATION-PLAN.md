@@ -1,6 +1,6 @@
 # Migrating CMF off Gemini onto Spark-local models
 
-**Status: COMPLETE (2026-09-09).** All phases done. Extraction runs on **qwen3.5-122b-a10b + `EXTRACTION_INSTRUCTIONS`**, embeddings on **nomic-embed-text** — both Spark-local. `mem-fabric-local` (295 tier-1 episodes, 768-dim, `<harness>-<project>-NNN` names) is the live graph; `.env` flipped. `mem-fabric-gemini` retained untouched for rollback, `mem-fabric-local-glm` kept as the Phase 7 A/B record. Full A/B write-up + rollback ledger: [docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md). Remaining follow-ups (mechanical dedup; MS7 retrieval-quality check of the 28% zero-entity rate; hybrid as fallback) are tracked there, not blocking. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 7 — migration executed end to end).
+**Status: migration executed (2026-09-09).** Phases 0-6 done. **Phase 7 — the D1 decision and the re-promotion are done; its functional/throughput checklist is only partly closed** (see §Phase 7). Extraction runs on **qwen3.5-122b-a10b + `EXTRACTION_INSTRUCTIONS`**, embeddings on **nomic-embed-text** — both Spark-local. `mem-fabric-local` (295 tier-1 episodes, 768-dim, `<harness>-<project>-NNN` names) is the live graph; `.env` flipped. `mem-fabric-gemini` retained untouched for rollback, `mem-fabric-local-glm` kept as the Phase 7 A/B record. Full A/B write-up + rollback ledger: [docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md). Open follow-ups (functional smokes; concurrency/throughput measurement; re-time after Alex pins the models; mechanical dedup; MS7 retrieval-quality check of the 28% zero-entity rate; hybrid as fallback) are tracked in the log, not blocking. **Written:** 2026-09-08. **Revised:** 2026-09-09 (rev 7 — migration executed; Phase 7 decision made, checklist partly open).
 **Scope:** replace the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint.
 
 Related: [plan-active.md](plan-active.md) · [adr/0002-provider-boundaries.md](adr/0002-provider-boundaries.md) · shared Spark Google Doc (Proposed Spec / Services tabs).
@@ -610,13 +610,13 @@ Counts below are from `GRAPH.RO_QUERY mem-fabric-local` on 2026-09-09; the Gemin
 
 **Sequencing:** items 2, 3 and 5 are mechanical and can be fixed independently of the model choice. Items 1, 4 and 6 are extraction-quality and feed directly into the D1 model decision — if the prompt can't be made to fix them on GLM, that is the argument for the hybrid (Gemini extraction, local embeddings) or for scoring Qwen3.5 / `qwen3-coder-30b` on the same inputs.
 
-Functional:
+Functional: *(status 2026-09-09 — after the qwen re-promotion + `.env` flip)*
 
-- [ ] `remember()` round-trips — write an episode, confirm entity + edge extraction landed.
-- [ ] `recall()` returns it with a sane similarity score (not the near-uniform scores that indicate a broken vector space).
-- [ ] `search_wiki` unaffected — file-based, shares no code with this.
-- [ ] `get_context` returns both memory and knowledge hits.
-- [ ] Full suite green: `uv run pytest`. Land or stash the 11 already-modified working-tree files first so failures are attributable.
+- [x] `recall()` returns sane, non-uniform scores against `mem-fabric-local` (768-dim, local nomic embeddings) — top hits on-topic; verified live post-flip.
+- [x] Full suite green: **366 passed, 6 skipped, 7 deselected** on the qwen + semantic-naming code.
+- [ ] `remember()` round-trip as a discrete check — write a fresh episode, confirm entity + edge extraction landed. (The 295-episode promotion exercised this path 295×, but not as an isolated pass/fail.)
+- [ ] `search_wiki` unaffected — file-based, shares no code; assumed-safe, not re-checked.
+- [ ] `get_context` returns both memory and knowledge hits on the local path.
 
 Throughput — **measured, same prompt, cold and warm:**
 
@@ -680,14 +680,14 @@ Not blocking the plan; do these before or during Phase 7 rather than now.
 - [ ] Time a real `remember()` end to end, which settles the 4–6 estimate empirically.
 - [ ] If throughput needs improving, the levers in order: the non-reasoning model above, then `SEMAPHORE_LIMIT` for concurrency. A smaller model is *not* an obvious lever — token throughput was flat at 55-73 tok/s across both models benchmarked, so on this hardware output volume is what costs time.
 
-Quality — where the decision actually gets made:
+Quality — where the decision actually gets made: **DONE 2026-09-09** ([spark-phase7-ab-log.md](spark-phase7-ab-log.md)).
 
-- [ ] Take **20 statements already promoted under Gemini**, re-promote into `mem-fabric-local`, compare extracted entities and edges side by side. The old graph exists precisely for this.
-- [ ] Run the same recall queries against both graphs and compare.
-- [ ] **Score the six first-look symptoms** (above) on both graphs, not just impressionistically: pronoun-entity count (and Todd-as-actor vs. generic split), self-referential edge count, parallel-edge rate for `RELATES_TO` *and* `MENTIONS`, paraphrase-spam / template-token leakage in facts, and — the weighted one — "did extraction name the real-world entities" on a hand-graded sample (the `Spain`/`Morocco` failure mode).
-- [x] Root-caused item 4 (2026-09-09): GLM prompt-regurgitation + degeneration on one `extract_edges` call (1 node pair, ~295 episodes) plus common soft active/passive paraphrase-spam (~55 exact-dup edges). Not test residue, not a graphiti bug. Full write-up in item 4 above.
-- [ ] Decide whether items 2, 3 and 5 (self-edges, parallel-edge dedup, semantic episode names) land as promotion-path fixes now, independent of the model decision.
-- [ ] **The gate:** does GLM extraction produce entity/edge structure comparable to Gemini's? A local model that extracts noticeably worse converts a quota problem into a data-quality problem, which is the worse trade. If quality drops, fall back to the hybrid — local embeddings (high-volume, low-judgment) with Gemini extraction (low-volume, high-judgment). Phase 1's split provider vars make that a config change.
+- [x] Compare extracted entities/edges side by side. Went further than "20 statements": **275 statements** compared Gemini vs GLM straight from the two graphs (both extractions already existed — no re-promotion needed); **38** re-run through qwen3.5-122b and 3-way scored; **295** now in production on the winner.
+- [x] Recall queries against the graphs compared — `recall()` verified live against `mem-fabric-local` post-flip; scores non-uniform, top hits on-topic.
+- [x] **Scored the six symptoms** on all three graphs: GLM had 47 pronoun entities / 8 self-loops / paraphrase-spam / a hallucination; Gemini and qwen-122b had 0/0/0. qwen's weak spot is the real-entity miss (28% zero-entity vs Gemini 22%), not junk.
+- [x] Root-caused item 4 (2026-09-09): GLM prompt-regurgitation on one `extract_edges` call + common active/passive paraphrase-spam. Not test residue, not a graphiti bug.
+- [x] Items 2, 3, 5: **semantic episode names done** (migrated the 295 + wired `_semantic_episode_name` into `promote_reviewed`). Self-edges / parallel-edge dedup deferred — qwen emits 0 self-loops and only 4 dup facts, so it's trivial cleanup, not blocking.
+- [x] **The gate — answered.** GLM did *not* produce Gemini-comparable structure → rejected. `qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS` does (Gemini-class hygiene, ~5-pt recall gap) → adopted, all-local. Hybrid (Gemini extract + local embed) stays the fallback if qwen regresses in MS7 retrieval evaluation.
 
 Now cheap to measure, and worth measuring: whether `gemini-3.8-flash`-class quality was ever needed, or whether its 20 RPD ceiling was the only reason CMF settled on flash-lite.
 
