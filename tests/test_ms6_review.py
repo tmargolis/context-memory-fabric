@@ -32,6 +32,7 @@ from server.review import actions, projects
 from server.review.explain import explain, parse_reason, resolve_evidence
 from server.review.queue import review_queue
 from server.review.store import APPROVED, DEFERRED, PENDING, REJECTED, ReviewStore
+from tests.fixtures import local as local_fixtures
 
 BASE = datetime(2026, 5, 1, tzinfo=timezone.utc)
 
@@ -162,16 +163,29 @@ class TestProjects(unittest.TestCase):
     def test_statement_never_overrides_a_slug_that_matches_nothing(self):
         """Prose mentions words in passing; the slug is the model's own label.
 
-        Matching the statement as a fallback put `condo-art-lighting` in
-        context-memory-fabric on the word "wiki" and `neurologist-follow-up-prep`
-        in mac-infra on "recovery". A slug that matches no rule means `misc`,
-        which is reviewed like any other bucket — a confidently wrong bucket
-        is the expensive outcome, not an honest unknown.
+        A real production bug (see the gitignored regression test below):
+        matching the statement as a fallback put a slug that matched no rule
+        into mac-infra, purely because its free-text statement happened to
+        contain a word mac-infra's regex matches ("nas"). A slug that
+        matches no rule means `misc`, which is reviewed like any other
+        bucket — a confidently wrong bucket is the expensive outcome, not an
+        honest unknown.
         """
         self.assertEqual(
-            self.classify("neurologist-follow-up-prep", "planning data recovery after the appointment"),
+            self.classify("widget-calibration-followup", "checking the nas backup schedule again"),
             projects.MISC,
         )
+
+    def test_statement_never_overrides_a_slug_that_matches_nothing__real_example(self):
+        """Same invariant as above, against the real episode that surfaced the
+        bug in production. Gitignored (tests/fixtures/local/); skips itself
+        when the fixture file isn't present, e.g. in CI or on another machine.
+        """
+        data = local_fixtures.load("ms6_review")
+        if data is None:
+            self.skipTest("tests/fixtures/local/ms6_review.local.json not present")
+        case = data["unmatched_slug_regression"]
+        self.assertEqual(self.classify(case["slug"], case["statement"]), case["expected"])
 
     def test_interlock_wins_over_openclaw_when_both_appear(self):
         # OpenClaw is its own project except when the subject is testing
@@ -182,9 +196,9 @@ class TestProjects(unittest.TestCase):
     def test_override_beats_every_rule(self):
         """A reviewer's exact-match correction outranks the heuristics.
 
-        Corrections are frequently not patterns —
-        "tartan-weaving-mill-order-delay belongs in writing" is a judgement
-        about one thread. Forcing it into a regex would encode a word that
+        Corrections are frequently not patterns — "this one specific thread
+        actually belongs in a different project" is a judgement about one
+        thread, not a rule. Forcing it into a regex would encode a word that
         misfires elsewhere; an exact-match override cannot misfire.
         """
         rules = projects.load_rules(TAXONOMY)
@@ -270,6 +284,24 @@ class TestExplain(MS6Base):
 
     def test_missing_memory_returns_none(self):
         self.assertIsNone(explain(self.cons._conn, "nope"))
+
+    def test_review_verdict_surfaces_separately_from_extraction_state(self):
+        # MS6b Task 1: `approval_state` is the extraction-time pipeline
+        # state, never updated by review — a reviewed memory must not read
+        # as `queued_for_review` with nothing to contradict it.
+        self.journal.append(ev("e0", text="I think SQLite is the right call here"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        result_before = explain(self.cons._conn, "r:0::reasoning-episode@0.2")
+        self.assertEqual(result_before["extraction_state"], "queued_for_review")
+        self.assertIsNone(result_before["review"])
+        self.assertNotIn("approval_state", result_before)
+
+        actions.approve_episode(self.rev, "r:0::reasoning-episode@0.2", reviewer="todd", reason="looks right")
+        result_after = explain(self.cons._conn, "r:0::reasoning-episode@0.2")
+        self.assertEqual(result_after["extraction_state"], "queued_for_review")  # unchanged by review
+        self.assertEqual(result_after["review"]["review_state"], "approved")
+        self.assertEqual(result_after["review"]["reviewer"], "todd")
+        self.assertEqual(result_after["review"]["reason"], "looks right")
 
     def test_evidence_preserves_citation_order_and_flags_pruned_turns(self):
         self.journal.append(ev("e1"))
@@ -738,6 +770,41 @@ class TestPromoteApproved(MS6Base):
         )
         self.assertEqual(result["promoted"], [])
         self.assertEqual(len(self.calls), 0)
+
+    async def test_superseded_by_correction_is_not_reeligible(self):
+        # Production regression (2026-09-11): `reviews` is last-writer-wins
+        # per memory_id and correct_memory never touches it, so an old
+        # memory_id's original `approved` verdict stays on record after a
+        # correction supersedes it. correct_memory also clears the old
+        # memory_id's PromotionStore row (graph identity moved to the new
+        # memory_id). Without excluding superseded rows here, that
+        # combination makes the OLD memory_id look freshly "approved and
+        # not yet promoted" and re-promotes its stale, since-corrected content.
+        ids = self._seed(1)
+        old_id = ids[0]
+        actions.approve_episode(self.rev, old_id)
+        await actions.promote_approved(
+            self.cons, self.journal, self.prom, self.rev, self.ok_remember, dry_run=False, inter_call_delay=0
+        )
+        self.assertEqual(len(self.calls), 1)
+
+        # Simulate what correct_memory does: a new memory_id supersedes the
+        # old one, the old one's derived_memories row moves to
+        # superseded_by_correction, and its PromotionStore row is cleared —
+        # but its `reviews` row is untouched, still `approved`.
+        new_id = f"{old_id}::corrected-test"
+        self.cons._conn.execute(
+            "UPDATE derived_memories SET approval_state='superseded_by_correction', superseded_by=? WHERE memory_id=?",
+            (new_id, old_id),
+        )
+        self.cons._conn.commit()
+        self.prom.delete(old_id)
+
+        result = await actions.promote_approved(
+            self.cons, self.journal, self.prom, self.rev, self.ok_remember, dry_run=False, inter_call_delay=0
+        )
+        self.assertEqual(result.get("promoted", []), [])
+        self.assertEqual(len(self.calls), 1, "the superseded old memory_id must not be re-promoted")
 
     async def test_verdicts_survive_a_promotion_that_stops_early(self):
         # Approval lives in `reviews`, promotion in `promotions` — a quota

@@ -40,6 +40,7 @@ import tempfile
 from graphiti_core.nodes import EpisodeType
 
 from server.consolidation.promotion import PromotionStore
+from server.consolidation.store import ConsolidationStore
 from server.providers.memory_graphiti import EXTRACTION_INSTRUCTIONS, close_graphiti, create_graphiti
 from server.review.correction import correct_memory, delete_memory
 from server.review.graph_explain import explain_graph
@@ -82,6 +83,7 @@ async def main() -> None:
     graphiti = create_graphiti(graph_name=args.graph_name)
     prom = PromotionStore(db_path=db_path)
     rev = ReviewStore(db_path=db_path)
+    cs = ConsolidationStore(db_path=db_path)
 
     try:
         # ------------------------------------------------------------
@@ -101,7 +103,17 @@ async def main() -> None:
             custom_extraction_instructions=EXTRACTION_INSTRUCTIONS,
         )
         prom.record_success(MEMORY_ID, episode_name, args.graph_name)
-        _ok("episode added to scratch graph; PromotionStore seeded")
+        cs._conn.execute(
+            "INSERT INTO derived_memories (memory_id, source_event_id, policy_name, policy_version, "
+            "category, statement, reason, confidence, event_date, date_precision, reasoning_kind, "
+            "evidence_event_ids_json, approval_state, thread_key, project, created_at) VALUES "
+            "(?, 'ev-1', 'reasoning-episode', '0.2', 'episodic', ?, 'why: exit gate fixture', 0.9, "
+            "?, 'day', 'decision', '[\"ev-1\"]', 'queued_for_review', 'ms6b-exit-gate-thread', "
+            "'ms6b-exit-gate', ?)",
+            (MEMORY_ID, ORIGINAL_CONTENT, ref_time.isoformat(), ref_time.isoformat()),
+        )
+        cs._conn.commit()
+        _ok("episode added to scratch graph; PromotionStore + derived_memories seeded")
 
         # ------------------------------------------------------------
         # Step 1 — explain_graph() finds it for real.
@@ -121,7 +133,7 @@ async def main() -> None:
         # ------------------------------------------------------------
         print("\n[2] correct_memory() dry run...")
         dry = await correct_memory(
-            prom, rev, MEMORY_ID, CORRECTED_CONTENT, graphiti,
+            prom, rev, cs, MEMORY_ID, CORRECTED_CONTENT, graphiti,
             reviewer="exit-gate", reason="MS6b exit gate", graph_name=args.graph_name, dry_run=True,
         )
         if not dry.get("dry_run"):
@@ -136,12 +148,13 @@ async def main() -> None:
         # ------------------------------------------------------------
         print("\n[3] correct_memory() --apply...")
         applied = await correct_memory(
-            prom, rev, MEMORY_ID, CORRECTED_CONTENT, graphiti,
+            prom, rev, cs, MEMORY_ID, CORRECTED_CONTENT, graphiti,
             reviewer="exit-gate", reason="MS6b exit gate", graph_name=args.graph_name, dry_run=False,
         )
         if applied.get("dry_run") is not False or "new_episode_name" not in applied:
             _fail("correct_memory apply", f"unexpected result: {applied}")
-        post_correct = await explain_graph(prom, MEMORY_ID, graphiti, graph_name=args.graph_name)
+        new_memory_id = applied["new_memory_id"]
+        post_correct = await explain_graph(prom, new_memory_id, graphiti, graph_name=args.graph_name)
         if post_correct["episode_content"] != CORRECTED_CONTENT:
             _fail("correct_memory apply", f"graph still shows old content: {post_correct['episode_content']!r}")
         if post_correct["episode_name"] != applied["new_episode_name"]:
@@ -151,19 +164,31 @@ async def main() -> None:
         )
         if (old_gone[0] if old_gone and isinstance(old_gone[0], list) else old_gone):
             _fail("correct_memory apply", "old episode still present in the graph after remove_episode")
-        _ok(f"old episode removed, new episode {applied['new_episode_name']!r} carries the corrected content")
+        if prom.is_promoted(MEMORY_ID, args.graph_name):
+            _fail("correct_memory apply", "old memory_id still reports promoted — should have moved to new_memory_id")
+        old_journal = cs.get_derived_memory(MEMORY_ID)
+        if old_journal["approval_state"] != "superseded_by_correction" or old_journal["superseded_by"] != new_memory_id:
+            _fail("correct_memory apply", f"old derived_memories row not superseded correctly: {dict(old_journal)}")
+        new_journal = cs.get_derived_memory(new_memory_id)
+        if new_journal is None or new_journal["statement"] != CORRECTED_CONTENT or new_journal["supersedes"] != MEMORY_ID:
+            _fail("correct_memory apply", f"new derived_memories row missing or wrong: {new_journal and dict(new_journal)}")
+        new_review = rev.get(new_memory_id)
+        if new_review is None or new_review["review_state"] != "approved":
+            _fail("correct_memory apply", f"new memory_id has no carried-forward review verdict: {new_review}")
+        _ok(f"old episode removed, new episode {applied['new_episode_name']!r} carries the corrected content, "
+            f"journal superseded {MEMORY_ID!r} -> {new_memory_id!r}, review verdict carried forward")
 
         # ------------------------------------------------------------
         # Step 4 — delete_memory(): apply, then verify graph + ledger.
         # ------------------------------------------------------------
         print("\n[4] delete_memory() --apply...")
         deleted = await delete_memory(
-            prom, rev, MEMORY_ID, graphiti,
+            prom, rev, new_memory_id, graphiti,
             reviewer="exit-gate", reason="MS6b exit gate cleanup", graph_name=args.graph_name, dry_run=False,
         )
         if deleted.get("dry_run") is not False:
             _fail("delete_memory apply", f"unexpected result: {deleted}")
-        if prom.is_promoted(MEMORY_ID, args.graph_name):
+        if prom.is_promoted(new_memory_id, args.graph_name):
             _fail("delete_memory apply", "PromotionStore still reports this memory_id as promoted")
         gone = await graphiti.driver.execute_query(
             "MATCH (e:Episodic {name: $name}) RETURN e.uuid AS uuid", name=applied["new_episode_name"]
@@ -176,13 +201,15 @@ async def main() -> None:
         # Step 5 — audit trail: two .note() rows, reviews table untouched.
         # ------------------------------------------------------------
         print("\n[5] Audit trail...")
-        audit = rev.audit_for(MEMORY_ID)
-        actions = [a["action"] for a in audit]
-        if actions != ["correct_memory", "delete_memory"]:
-            _fail("audit trail", f"expected [correct_memory, delete_memory], got {actions}")
+        old_actions = [a["action"] for a in rev.audit_for(MEMORY_ID)]
+        if old_actions != ["correct_memory"]:
+            _fail("audit trail", f"expected old memory_id audit=[correct_memory], got {old_actions}")
         if rev.get(MEMORY_ID) is not None:
-            _fail("audit trail", ".note() wrote to `reviews` — it must not touch verdict state")
-        _ok("both actions audited via .note(); no review verdict written")
+            _fail("audit trail", ".note() wrote to `reviews` for the old memory_id — it must not touch verdict state")
+        new_actions = [a["action"] for a in rev.audit_for(new_memory_id)]
+        if new_actions != ["correct_memory", "delete_memory"]:
+            _fail("audit trail", f"expected new memory_id audit=[correct_memory, delete_memory], got {new_actions}")
+        _ok("graph mutation audited on the old id, review verdict + deletion audited on the new id")
 
         print("\nALL STEPS PASSED.")
 
@@ -196,6 +223,7 @@ async def main() -> None:
     finally:
         prom.close()
         rev.close()
+        cs.close()
         await close_graphiti()
         if tmp_dir is not None:
             tmp_dir.cleanup()

@@ -447,11 +447,32 @@ async def promote_approved(
     `wait_through_rate_limit=False`) still resumes exactly where it left
     off either way, because approval lives in `reviews` and promotion
     lives in `promotions` — two ledgers, neither lost.
+
+    Excludes memory_ids whose `derived_memories.approval_state` has since
+    moved to `superseded_by_correction` / `superseded_by_reasoning` /
+    `rejected` — a real bug found in production (2026-09-11): `reviews`
+    is last-writer-wins per memory_id and `correct_memory` never touches
+    it, so an old memory_id's original `approved` verdict from before a
+    correction stays on record. `correct_memory` also clears the old
+    memory_id's `PromotionStore` row (the graph identity moved to the new
+    memory_id). Without this filter, that combination makes the OLD,
+    since-corrected memory_id look freshly "approved and not yet
+    promoted" and re-promotes its stale content — which is exactly what
+    happened to the 360-cam/eclipse correction before this fix: the
+    original wrong episode got silently re-created in the graph.
     """
     approved = [
         r["memory_id"]
         for r in review_store.conn.execute(
-            "SELECT memory_id FROM reviews WHERE review_state = ? ORDER BY reviewed_at", (APPROVED,)
+            """
+            SELECT r.memory_id FROM reviews r
+            LEFT JOIN derived_memories dm ON dm.memory_id = r.memory_id
+            WHERE r.review_state = ?
+              AND (dm.approval_state IS NULL OR dm.approval_state NOT IN
+                   ('rejected', 'superseded_by_reasoning', 'superseded_by_correction'))
+            ORDER BY r.reviewed_at
+            """,
+            (APPROVED,),
         )
     ]
     pending = [m for m in approved if not promotion_store.is_promoted(m)]

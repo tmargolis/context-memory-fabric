@@ -868,6 +868,16 @@ async def edit_memory(
 ) -> str | dict[str, Any]:
     """Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.
 
+    Writes are scoped to whatever `target_query` directly matches (by
+    name/content/summary substring or exact uuid) — never to nodes only
+    reached by walking MENTIONS from a match (an entity co-occurring in the
+    same episode, an episode mentioning the same entity). `matched_entities`
+    / `matched_episodes` in the result still include that wider connected
+    context for display, but only nodes in the direct match set can appear
+    in `modified_entities` / `modified_episodes`. A broad `target_query`
+    that directly matches several nodes still edits all of them — narrow
+    the query (prefer an exact uuid) to scope a correction to one node.
+
     Args:
         target_query: Search string, entity name, episode name, or UUID identifying the memory to edit.
         new_reference_time: New date/timestamp for the episode (e.g. '2025-01-13' or '2025-01-13T00:00:00Z').
@@ -927,6 +937,19 @@ async def edit_memory(
         for r in ep_rows[0]:
             episodes_map[r["uuid"]] = dict(r)
 
+    # Nodes `target_query` actually matched — writes are scoped to these,
+    # never to the connected context pulled in below. Before this fix, a
+    # query matching one entity (e.g. by exact uuid) would still write
+    # `new_summary`/`new_content`/`new_name`/`new_reference_time` to every
+    # OTHER entity/episode that happens to co-occur with it in some episode
+    # — MS6b's entity-audit dry-run caught this: targeting a single entity
+    # by uuid matched 6 entities for a `new_summary` write. The expanded
+    # `entities_map`/`episodes_map` below is still built and returned
+    # (`matched_entities`/`matched_episodes`) as read-only context — useful
+    # for seeing what's connected — it is just never mutated.
+    direct_entity_uuids = set(entities_map.keys())
+    direct_episode_uuids = set(episodes_map.keys())
+
     # For each matched Entity, find connected Episodes
     for ent_uuid in list(entities_map.keys()):
         cypher_conn_ep = (
@@ -953,8 +976,14 @@ async def edit_memory(
                 if r["uuid"] not in entities_map:
                     entities_map[r["uuid"]] = dict(r)
 
-    # 3. Find connected Edges
+    # 3. Find connected Edges. Same direct-vs-connected split as entities/
+    # episodes above: edges_map (built from the full connected episode set)
+    # is display-only context; direct_edge_uuids (built from directly-
+    # matched episodes only) is what re-dating is actually allowed to touch
+    # — an edge belonging to a bystander episode pulled in only because it
+    # shares an entity with the real target must not get re-dated too.
     edges_map: dict[str, dict[str, Any]] = {}
+    direct_edge_uuids: set[str] = set()
     for ep_uuid in episodes_map.keys():
         cypher_edge = (
             "MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity) "
@@ -965,6 +994,8 @@ async def edit_memory(
         if edge_rows and len(edge_rows) > 0 and isinstance(edge_rows[0], list):
             for r in edge_rows[0]:
                 edges_map[r["uuid"]] = dict(r)
+                if ep_uuid in direct_episode_uuids:
+                    direct_edge_uuids.add(r["uuid"])
 
     # 4. Plan and track modifications
     modified_episodes: list[dict[str, Any]] = []
@@ -972,11 +1003,14 @@ async def edit_memory(
     modified_edges: list[dict[str, Any]] = []
     registry_updates: list[dict[str, Any]] = []
 
-    # Extract old date string candidates from matched episodes if re-dating
+    # Extract old date string candidates from directly-matched episodes only
+    # if re-dating — this only ever needs to know the dates being replaced
+    # on the episodes actually being written to.
     old_date_strs: set[str] = set()
     old_compact_strs: set[str] = set()
 
-    for ep in episodes_map.values():
+    for ep_uuid in direct_episode_uuids:
+        ep = episodes_map[ep_uuid]
         old_val = ep.get("valid_at")
         if old_val:
             d_match = re.search(r"(\d{4}-\d{2}-\d{2})", str(old_val))
@@ -984,14 +1018,15 @@ async def edit_memory(
                 old_date_strs.add(d_match.group(1))
                 old_compact_strs.add(d_match.group(1).replace("-", ""))
 
-    for ep in episodes_map.values():
-        old_content = ep.get("content") or ""
+    for ep_uuid in direct_episode_uuids:
+        old_content = episodes_map[ep_uuid].get("content") or ""
         for m in re.finditer(r"\b(\d{4}-\d{2}-\d{2})\b", old_content):
             old_date_strs.add(m.group(1))
             old_compact_strs.add(m.group(1).replace("-", ""))
 
-    # Process Episode modifications
-    for ep_uuid, ep in episodes_map.items():
+    # Process Episode modifications — scoped to directly-matched episodes only.
+    for ep_uuid in direct_episode_uuids:
+        ep = episodes_map[ep_uuid]
         old_valid_at = ep.get("valid_at")
         old_content = ep.get("content") or ""
         old_name = ep.get("name") or ""
@@ -1059,8 +1094,9 @@ async def edit_memory(
                     name=target_name,
                 )
 
-    # Process Entity modifications
-    for ent_uuid, ent in entities_map.items():
+    # Process Entity modifications — scoped to directly-matched entities only.
+    for ent_uuid in direct_entity_uuids:
+        ent = entities_map[ent_uuid]
         old_summary = ent.get("summary") or ""
         target_summary = old_summary
         summary_changed = False
@@ -1092,8 +1128,9 @@ async def edit_memory(
                     summary=target_summary,
                 )
 
-    # Process Edge modifications
-    for edge_uuid, edge in edges_map.items():
+    # Process Edge modifications — scoped to edges of directly-matched episodes only.
+    for edge_uuid in direct_edge_uuids:
+        edge = edges_map[edge_uuid]
         old_valid_at = edge.get("valid_at")
         target_valid_at = old_valid_at
         valid_at_changed = False

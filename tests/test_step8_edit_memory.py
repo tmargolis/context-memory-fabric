@@ -32,6 +32,7 @@ from server.memory import (
     reconcile_memories as reconcile_episodic_memories,
     remember,
 )
+from tests.fixtures import local as local_fixtures
 
 
 class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
@@ -82,34 +83,126 @@ class TestStep8EditMemory(unittest.IsolatedAsyncioTestCase):
         # graph the suite is pointed at (see tests/conftest.py).
         await remember(
             content=(
-                "On 2025-01-14, a synthetic test subject was diagnosed with a "
-                "C7 right transverse process fracture (fixture data, not a real record)."
+                "On 2025-01-14, a synthetic test appliance was configured with "
+                "firmware build 7-Q4-92 (fixture data, not a real record)."
             ),
-            name="test_fixture_edit_memory_c7_fracture",
+            name="test_fixture_edit_memory_firmware_build",
             source_description="test_step8_edit_memory synthetic fixture",
         )
 
-        # Use target query for C7 right transverse process fracture
         res = await edit_memory(
-            target_query="C7 right transverse process fracture",
+            target_query="firmware build 7-Q4-92",
             new_reference_time="2025-01-13",
             dry_run=True,
             format_for_mcp=False,
         )
         self.assertIsInstance(res, dict)
         self.assertTrue(res["dry_run"])
-        self.assertEqual(res["target_query"], "C7 right transverse process fracture")
+        self.assertEqual(res["target_query"], "firmware build 7-Q4-92")
         self.assertTrue(len(res["matched_entities"]) > 0 or len(res["matched_episodes"]) > 0)
 
         # Verify Markdown formatting
         md_res = await edit_memory(
-            target_query="C7 right transverse process fracture",
+            target_query="firmware build 7-Q4-92",
             new_reference_time="2025-01-13",
             dry_run=True,
             format_for_mcp=True,
         )
         self.assertIn("DRY RUN", md_res)
-        self.assertIn("C7 right transverse process fracture", md_res)
+        self.assertIn("firmware build 7-Q4-92", md_res)
+
+    @pytest.mark.live
+    async def test_edit_memory_dry_run__real_example(self):
+        """Same behavior as above, against the original fixture content this
+        test used to hardcode directly (medical-sounding, even though marked
+        synthetic — no reason for that to sit in a public repo regardless).
+        Gitignored (tests/fixtures/local/); skips itself when the fixture
+        file isn't present, e.g. in CI or on another machine.
+        """
+        data = local_fixtures.load("edit_memory")
+        if data is None:
+            self.skipTest("tests/fixtures/local/edit_memory.local.json not present")
+        case = data["dry_run_example"]
+
+        await remember(
+            content=case["content"],
+            name=case["episode_name"],
+            source_description="test_step8_edit_memory local fixture",
+        )
+
+        res = await edit_memory(
+            target_query=case["target_query"],
+            new_reference_time=case["new_reference_time"],
+            dry_run=True,
+            format_for_mcp=False,
+        )
+        self.assertIsInstance(res, dict)
+        self.assertTrue(res["dry_run"])
+        self.assertEqual(res["target_query"], case["target_query"])
+        self.assertTrue(len(res["matched_entities"]) > 0 or len(res["matched_episodes"]) > 0)
+
+    async def test_edit_memory_scopes_writes_to_directly_matched_nodes(self):
+        """MS6b regression: a `new_summary` targeted at one entity by exact
+        uuid must not overwrite an unrelated entity's summary just because
+        they co-occur in the same episode. No LLM call needed — nodes are
+        seeded directly via Cypher, not through remember()/extraction."""
+        graphiti = get_graphiti()
+        driver = graphiti.driver
+        import uuid as uuid_mod
+        from datetime import datetime, timezone
+
+        target_uuid = f"test-target-{uuid_mod.uuid4().hex}"
+        bystander_uuid = f"test-bystander-{uuid_mod.uuid4().hex}"
+        episode_uuid = f"test-episode-{uuid_mod.uuid4().hex}"
+        now = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await driver.execute_query(
+                "CREATE (n:Entity {uuid: $u, name: $name, summary: $s, group_id: 'test'})",
+                u=target_uuid, name=f"TargetEntity-{target_uuid[:8]}", s="original target summary",
+            )
+            await driver.execute_query(
+                "CREATE (n:Entity {uuid: $u, name: $name, summary: $s, group_id: 'test'})",
+                u=bystander_uuid, name=f"BystanderEntity-{bystander_uuid[:8]}", s="original bystander summary",
+            )
+            await driver.execute_query(
+                "CREATE (e:Episodic {uuid: $u, name: $name, content: 'test episode', "
+                "valid_at: $now, group_id: 'test', source: 'text', source_description: 'test'})",
+                u=episode_uuid, name=f"test-episode-{episode_uuid[:8]}", now=now,
+            )
+            # Both entities mentioned by the same episode — the shape that
+            # previously caused the bystander to be swept into the write.
+            await driver.execute_query(
+                "MATCH (e:Episodic {uuid: $eu}), (n:Entity {uuid: $nu}) CREATE (e)-[:MENTIONS]->(n)",
+                eu=episode_uuid, nu=target_uuid,
+            )
+            await driver.execute_query(
+                "MATCH (e:Episodic {uuid: $eu}), (n:Entity {uuid: $nu}) CREATE (e)-[:MENTIONS]->(n)",
+                eu=episode_uuid, nu=bystander_uuid,
+            )
+
+            result = await edit_memory(
+                target_query=target_uuid,
+                new_summary="corrected target summary",
+                dry_run=False,
+                format_for_mcp=False,
+            )
+            modified_uuids = {e["uuid"] for e in result["matched_entities"]}
+            self.assertIn(target_uuid, modified_uuids)
+            self.assertNotIn(bystander_uuid, modified_uuids)
+
+            rows, _, _ = await driver.execute_query(
+                "MATCH (n:Entity) WHERE n.uuid IN [$t, $b] RETURN n.uuid AS uuid, n.summary AS summary",
+                t=target_uuid, b=bystander_uuid,
+            )
+            summaries = {r["uuid"]: r["summary"] for r in rows}
+            self.assertEqual(summaries[target_uuid], "corrected target summary")
+            self.assertEqual(summaries[bystander_uuid], "original bystander summary")
+        finally:
+            await driver.execute_query(
+                "MATCH (n) WHERE n.uuid IN [$t, $b, $e] DETACH DELETE n",
+                t=target_uuid, b=bystander_uuid, e=episode_uuid,
+            )
 
     async def test_edit_memory_empty_query_error(self):
         """Verify empty target_query raises ValueError."""

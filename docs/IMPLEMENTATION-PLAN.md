@@ -7,7 +7,7 @@ This file is the **index**. Detail lives in two companions:
 | File | Contents |
 |---|---|
 | **[plan-active.md](plan-active.md)** | the milestones still to do — full task lists, acceptance tests, exit gates |
-| **[plan-history.md](plan-history.md)** | completed milestones (MS0.5–MS3.6, MS4a, MS6a) + the Spark local-inference migration — decisions, corrections found while building, exit-gate answers |
+| **[plan-history.md](plan-history.md)** | completed milestones (MS0.5–MS3.6, MS4a build, MS6a, MS6b) + the Spark local-inference migration — decisions, corrections found while building, exit-gate answers |
 
 ## How to use
 
@@ -31,39 +31,45 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | done 2026-09-07 |
 | 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | done 2026-09-08 |
 | — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
-| 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements) |
+| 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog) |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | [**MS6b**](plan-active.md#ms6b--governance--next) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation, scopes | **built 2026-09-10** — `explain_graph`/`correct_memory`/`delete_memory`, unit-tested against fakes; live-FalkorDB pass + scopes pending ← here |
-| 10 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification pending |
-| 11 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
-| 12 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
-| 13 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | |
-| 14 | [MS5](plan-active.md#ms5--knowledge-provider-generalization) | Knowledge-provider generalization | |
-| 15 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | |
-| 16 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | |
+| 9 | [MS6b](plan-history.md#ms6b--governance) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation | **done 2026-09-11** — live-FalkorDB exit gate passed 6/6; a corpus review pass ([plan-active Backlog](plan-active.md#backlog)) then took the graph 295 → 465 episodes using it |
+| 10 | [**MS6c**](plan-active.md#ms6c--mcp-server-cross-agent-verification-2026-09-11) | MCP server cross-agent verification — Claude Desktop (Cowork → Code mode) → Gemini Spark (web/mobile) → ChatGPT | new 2026-09-11, subsumes MS4a's live-verification exit gate ← here |
+| 11 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification folded into MS6c Phases 1-2 |
+| 12 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
+| 13 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
+| 14 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | |
+| 15 | [MS5](plan-active.md#ms5--knowledge-provider-generalization) | Knowledge-provider generalization | |
+| 16 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | |
+| 17 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | |
 
-**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — MS7 (assembly quality) is **done** — `get_context` measurably beats both single-provider baselines (80% of a complete answer vs 50–53%), with the answer-quality eval kept as a reusable instrument. MS6b (correction / deletion / `explain()` into the graph) was sequenced *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS4b–MS4d and MS5 come after the retrieval loop is proven.
+**Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — MS7 (assembly quality) is **done** — `get_context` measurably beats both single-provider baselines (80% of a complete answer vs 50–53%), with the answer-quality eval kept as a reusable instrument. MS6b (correction / deletion / `explain()` into the graph) was sequenced *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS6b's exit gate then unblocked a full corpus review pass (295 → 465 episodes) — with a real graph now worth retrieving from, **MS6c** checks that the MCP server actually works from the real client apps before more capture adapters (MS4b–MS4d) get built on top of it. MS5 comes after the retrieval loop is proven.
 
 ---
 
-## Current state (2026-09-10)
+## Current state (2026-09-11)
 
-**Done through MS6a + the Spark migration.** The pipeline runs end-to-end on Spark-local inference:
+**Done through MS6b + the corpus review pass.** The pipeline runs end-to-end on Spark-local inference:
 
 ```text
 source exports → journal (19,012 events) → per-event classification (heuristic v1.2)
-                                          → reasoning episodes (model v0.3): ~1,243 staged / 659 threads
+                                          → reasoning episodes (model v0.3): ~1,310 staged / 659 threads
                                           → MS6a tier-1 review: 295 approved / 6 rejected (2026-09-08)
+                                          → MS6b + corpus review pass: +170 more approved (2026-09-11)
                                           → promotion → mem-fabric-local (qwen3.5-122b + nomic, 768-dim)
                                           → recall() / get_context() return them, entity-extracted
 ```
 
-- **Live graph `mem-fabric-local`:** 295 Episodic · 393 Entity · 263 RELATES_TO · 768-dim. Extraction on `unsloth/qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`, embeddings on `nomic-embed-text`, both Spark-local. Episodes named `<harness>-<project>-NNN`. Hygiene matches Gemini (0 pronoun entities / 0 self-loops); 28% of statements yield no entities (vs Gemini's 22%).
+- **Live graph `mem-fabric-local`:** 465 Episodic · 665 Entity · 501 RELATES_TO · 768-dim (up from 295/393/263 as of MS6a). Extraction on `unsloth/qwen3.5-122b-a10b` + `EXTRACTION_INSTRUCTIONS`, embeddings on `nomic-embed-text`, both Spark-local. Episodes named `<harness>-<project>-NNN`.
 - **Retained graphs:** `mem-fabric-gemini` (pre-migration, 1024-dim, untouched — the rollback path); `mem-fabric-local-glm` (rejected Phase 7 GLM build, kept as the A/B record).
-- **Staged, not yet reviewed:** ~942 tier-2 reasoning episodes (work-journal, stay in-thread, not promoted) + 6,582 heuristic `queued_for_review` + 3,251 `superseded_by_reasoning` (confirm-only). Tier-1 is done.
+- **Remaining backlog:** 25,961 heuristic `queued_for_review` rows, never individually reviewed (mostly re-judged duplicates per MS3.6's assessment) — [plan-active Backlog](plan-active.md#backlog).
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
-**MS6b — governance** ([plan-active.md](plan-active.md#ms6b--governance--next)): `explain()` into the graph, `correct_memory` (re-issue via `remove_episode` + `add_episode`, preserving `reference_time`), and deletion propagation are built and unit-tested against fake Graphiti/FalkorDB doubles (`tests/test_ms6b_governance.py`) — not yet run against the live `mem-fabric-local` graph or wired into the review artifact's UI. Scopes remains deferred to MS9/MS4c, per MS6a's original cut rationale. MS7 is done — its unfinished task-list items (intent routing, time-aware modes, explicit conflict signals, `search_wiki` semantic retrieval, …) are tracked in [plan-active Backlog](plan-active.md#backlog--deferred-assembly-refinements).
+**MS6b — governance — done** ([plan-history.md](plan-history.md#ms6b--governance)): `explain()` into the graph, `correct_memory`, and deletion propagation built, unit-tested, and the live-FalkorDB exit gate passed 6/6 (2026-09-11). Exercising it for real against the corpus surfaced and fixed four bugs along the way (an `edit_memory` unscoped-write hazard, `explain()` surfacing the wrong approval field, a misattributed episode, and a `promote_approved` reversion hazard) — all in [plan-history.md](plan-history.md#ms6b--governance) and [plan-active Backlog](plan-active.md#backlog). Scopes remains deferred to MS9/MS4c, per MS6a's original cut rationale.
+
+**MS6c — MCP server cross-agent verification — new** ([plan-active.md](plan-active.md#ms6c--mcp-server-cross-agent-verification-2026-09-11)): verify the MCP server actually works inside Claude Desktop's Cowork mode, Claude Desktop's Code mode (this is Todd's actual Claude Code usage — he doesn't run the standalone CLI), Gemini Spark (`gemini.google.com/app` / `gemini.google.com/spark/apps` — not the Gemini CLI, which Todd also doesn't use), and ChatGPT, in that order, and correct `docs/CLIENTS.md` against reality. Gemini Spark and ChatGPT share one prerequisite neither had before: a public HTTPS endpoint (the server's existing `streamable-http` transport + a tunnel), since neither supports a local/stdio server. Subsumes MS4a's outstanding live cross-harness test as its Phase 1+2 acceptance test (Cowork writes, Code mode reads/corrects).
+
+MS7 is done — its unfinished task-list items (intent routing, time-aware modes, explicit conflict signals, `search_wiki` semantic retrieval, …) are tracked in [plan-active Backlog](plan-active.md#backlog).
 
 ### Spark local-inference migration — done 2026-09-09
 
@@ -132,10 +138,12 @@ Rows in **execution order**, not milestone-number order. Estimates assume agent-
 | MS6a (review surface + tier-1 pass) | 5–6 | ~33 | done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
 | Spark migration (Gemini → Spark-local) | ~4 | ~37 | done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
 | MS7 (context assembly quality) | 4–5 | ~42 | **done 2026-09-10** |
-| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **built 2026-09-10** — unit-tested against fakes; live-graph pass + scopes pending |
-| MS4a (live cross-harness verification) | 1 | ~46 | built; needs a live Claude Desktop session |
-| MS4b (Claude Code) | 3–4 | ~50 | |
-| MS4c (OpenClaw) | 4–5 | ~55 | |
-| MS4d (Codex, Gemini CLI) | 4–6 | ~61 | |
-| MS5 (knowledge-provider generalization) | 3–4 | ~65 | |
-| MS8–MS9 (replay/eval, distribution) | 8–11 | ~75 | |
+| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **done 2026-09-11** — live-graph exit gate passed 6/6; 4 bugs found and fixed exercising it for real |
+| Corpus review pass (295 → 465 episodes) | 1 | ~46 | done 2026-09-11 — [plan-active Backlog](plan-active.md#backlog) |
+| MS6c (MCP server cross-agent verification) | 2–3 | ~49 | new 2026-09-11 — Claude Desktop (Cowork → Code mode) → Gemini Spark → ChatGPT; subsumes MS4a's live-verification gate |
+| MS4a (live cross-harness verification) | — | ~49 | built; verification folded into MS6c Phases 1-2, no separate effort |
+| MS4b (Claude Code) | 3–4 | ~53 | |
+| MS4c (OpenClaw) | 4–5 | ~58 | |
+| MS4d (Codex, Gemini CLI) | 4–6 | ~64 | |
+| MS5 (knowledge-provider generalization) | 3–4 | ~68 | |
+| MS8–MS9 (replay/eval, distribution) | 8–11 | ~78 | |

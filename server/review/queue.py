@@ -29,7 +29,7 @@ from server.review.explain import parse_reason, resolve_evidence
 from server.review.store import PENDING, ReviewStore
 
 # Approval states that mean "already resolved upstream of review".
-_EXCLUDED_STATES = ("rejected", "superseded_by_reasoning")
+_EXCLUDED_STATES = ("rejected", "superseded_by_reasoning", "superseded_by_correction")
 
 
 def review_queue(

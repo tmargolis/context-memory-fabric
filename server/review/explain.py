@@ -138,6 +138,26 @@ def explain(conn: sqlite3.Connection, memory_id: str, max_chars: int = 1200) -> 
         except sqlite3.OperationalError:
             thread = None
 
+    # `reviews` is ReviewStore's schema, not ConsolidationStore's — a
+    # connection that never opened a ReviewStore against this file (a fresh
+    # db, or a test fixture) may not have the table yet. Same
+    # degrade-don't-fail treatment as `reasoning_threads` above. This is the
+    # actual review verdict; `approval_state` below is the extraction-time
+    # pipeline state (queued_for_review / auto_accepted / rejected /
+    # superseded_by_reasoning / superseded_by_correction) and is never
+    # updated by a human review — MS6b Task 1 found the two were being
+    # conflated: a fully reviewed-and-promoted memory still reported
+    # `approval_state=queued_for_review` here with nothing to contradict it.
+    review = None
+    try:
+        r = conn.execute(
+            "SELECT review_state, tier, reviewer, reviewed_at, reason FROM reviews WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchone()
+        review = dict(r) if r else None
+    except sqlite3.OperationalError:
+        review = None
+
     return {
         "memory_id": memory_id,
         "statement": row["statement"],
@@ -146,7 +166,10 @@ def explain(conn: sqlite3.Connection, memory_id: str, max_chars: int = 1200) -> 
         "confidence": row["confidence"],
         "event_date": row["event_date"],
         "date_precision": row["date_precision"],
-        "approval_state": row["approval_state"],
+        "extraction_state": row["approval_state"],
+        "review": review,
+        "supersedes": row["supersedes"] if "supersedes" in keys else None,
+        "superseded_by": row["superseded_by"] if "superseded_by" in keys else None,
         "project": row["project"] if "project" in keys else None,
         "thread_key": thread_key,
         "thread": thread,

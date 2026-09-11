@@ -18,6 +18,18 @@ not a reusable identifier. Entities and edges are regenerated from the
 corrected text, not patched: there is no cheaper path once the source text
 changes.
 
+**The journal side follows the same supersedes convention MS3 established**
+for policy-version reprocessing (server.consolidation.store.
+`record_correction`): a corrected statement is a *new* `derived_memories`
+row linked via `supersedes`/`superseded_by`, never an overwrite of the
+original memory_id's `statement`. The old memory_id moves to
+`approval_state='superseded_by_correction'`; `PromotionStore`'s graph
+mapping moves from the old memory_id to the new one (the old memory_id no
+longer resolves in the graph — `explain()` follows `superseded_by` to the
+new one); the new memory_id gets its own `reviews` row (`approved`, same
+reviewer) so a promoted memory_id always has a review verdict to answer to
+— the invariant Task 1 of MS6b confirmed holds for the whole graph today.
+
 **Deletion is promotion's audited inverse.** It removes the Graphiti
 episode and deletes the `PromotionStore` row so `promote_reviewed`'s
 idempotency check no longer reports it promoted, but leaves
@@ -41,8 +53,9 @@ from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
 
 from server.consolidation.promotion import PromotionStore
+from server.consolidation.store import ConsolidationStore
 from server.providers.memory_graphiti import parse_iso_datetime
-from server.review.store import ReviewStore
+from server.review.store import APPROVED, ReviewStore
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +76,7 @@ def _as_reference_time(valid_at: Any) -> Optional[datetime]:
 async def correct_memory(
     promotion_store: PromotionStore,
     review_store: ReviewStore,
+    consolidation_store: ConsolidationStore,
     memory_id: str,
     new_content: str,
     graphiti: Graphiti,
@@ -71,7 +85,8 @@ async def correct_memory(
     graph_name: Optional[str] = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
-    """Re-issue a promoted episode's content, preserving its reference_time.
+    """Re-issue a promoted episode's content, preserving its reference_time,
+    and record the correction in the journal as a superseding derivation.
 
     Args:
         new_content: the corrected episode body. Extraction re-runs against
@@ -79,11 +94,16 @@ async def correct_memory(
             episode, since they may no longer be correct either.
         reason: required — this is what a future reviewer reads to
             understand why the graph's content diverges from what
-            promotion originally wrote.
+            promotion originally wrote, and becomes part of the new
+            journal row's `reason` field.
     """
     row = promotion_store.get(memory_id, graph_name)
     if row is None or row["status"] != "succeeded":
         return {"error": f"memory_id={memory_id!r} is not a successful promotion in this graph", "memory_id": memory_id}
+
+    journal_row = consolidation_store.get_derived_memory(memory_id)
+    if journal_row is None:
+        return {"error": f"no derived_memories row for memory_id={memory_id!r} — cannot record a superseding entry", "memory_id": memory_id}
 
     old_episode_name = row["episode_name"]
     graph = row["graph_name"]
@@ -109,12 +129,15 @@ async def correct_memory(
             "note": "new_content is identical to the graph's current content; nothing to do",
         }
 
-    new_episode_name = f"{old_episode_name}-corrected-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    new_episode_name = f"{old_episode_name}-corrected-{stamp}"
+    new_memory_id = f"{memory_id}::corrected-{stamp}"
 
     if dry_run:
         return {
             "dry_run": True,
             "memory_id": memory_id,
+            "new_memory_id": new_memory_id,
             "old_episode_name": old_episode_name,
             "new_episode_name": new_episode_name,
             "old_content": old_content,
@@ -131,18 +154,35 @@ async def correct_memory(
         reference_time=reference_time or datetime.now(timezone.utc),
         source=EpisodeType.text,
     )
-    promotion_store.record_success(memory_id, new_episode_name, graph)
-    audit_id = review_store.note(
+
+    # Graph identity moves to the new memory_id — the old one is superseded,
+    # not promoted, and explain() follows `superseded_by` to reach the
+    # current graph presence rather than resolving the old id directly.
+    promotion_store.delete(memory_id, graph)
+    promotion_store.record_success(new_memory_id, new_episode_name, graph)
+
+    consolidation_store.record_correction(memory_id, new_memory_id, new_content, reviewer, reason)
+
+    prior_review = review_store.get(memory_id)
+    tier = prior_review["tier"] if prior_review is not None else None
+    review_audit_id = review_store.record(
+        new_memory_id, "correct_memory", APPROVED, reviewer,
+        reason=f"correction of {memory_id}: {reason}", tier=tier,
+        prior_state={"corrected_from": memory_id, "old_content": old_content},
+    )
+    graph_audit_id = review_store.note(
         memory_id, "correct_memory", reviewer, reason,
         prior_state={"episode_name": old_episode_name, "content": old_content},
-        new_state={"episode_name": new_episode_name, "content": new_content},
+        new_state={"episode_name": new_episode_name, "content": new_content, "new_memory_id": new_memory_id},
     )
     return {
         "dry_run": False,
         "memory_id": memory_id,
+        "new_memory_id": new_memory_id,
         "old_episode_name": old_episode_name,
         "new_episode_name": new_episode_name,
-        "audit_id": audit_id,
+        "graph_audit_id": graph_audit_id,
+        "review_audit_id": review_audit_id,
     }
 
 

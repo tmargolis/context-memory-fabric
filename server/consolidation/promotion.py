@@ -465,7 +465,7 @@ def tier1_review_queue(
     rows = consolidation_store.query_reasoning_episodes(
         policy_version=policy_version,
         kinds=sorted(TIER1_KINDS),
-        exclude_approval_states=["rejected", "superseded_by_reasoning"],
+        exclude_approval_states=["rejected", "superseded_by_reasoning", "superseded_by_correction"],
     )
     return [r for r in rows if not promotion_store.is_promoted(r["memory_id"])]
 

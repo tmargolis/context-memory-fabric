@@ -448,6 +448,71 @@ class ConsolidationStore:
             "applied_at": now,
         }
 
+    def record_correction(
+        self, old_memory_id: str, new_memory_id: str, new_statement: str, reviewer: str, reason: str
+    ) -> dict[str, Any]:
+        """MS6b `correct_memory`'s journal-side counterpart: a corrected
+        statement is a new derivation, not an overwrite of the old one —
+        the same convention `mark_superseded_by_reasoning` uses. Copies the
+        old row's classification (category, reasoning_kind, confidence,
+        event_date, date_precision, evidence, project, thread_key) since
+        only the statement text changed; `policy_name`/`policy_version`
+        stay whatever originally derived it, so lineage queries by policy
+        are unaffected by a later correction.
+
+        The old row moves to `approval_state='superseded_by_correction'`
+        (excluded from the review queue and promotion eligibility, same as
+        `superseded_by_reasoning`) with `superseded_by` pointing at the new
+        memory_id. The new row starts `queued_for_review` — matching every
+        other reasoning-episode row — with `supersedes` pointing back.
+
+        Raises if `old_memory_id` doesn't exist. One transaction.
+        """
+        old = self.get_derived_memory(old_memory_id)
+        if old is None:
+            raise ValueError(f"no derived_memories row for memory_id={old_memory_id!r}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO derived_memories (
+                memory_id, source_event_id, policy_name, policy_version, category,
+                statement, reason, confidence, event_date, date_precision,
+                reasoning_kind, evidence_event_ids_json, approval_state, supersedes,
+                thread_key, project, created_at
+            ) VALUES (
+                :memory_id, :source_event_id, :policy_name, :policy_version, :category,
+                :statement, :reason, :confidence, :event_date, :date_precision,
+                :reasoning_kind, :evidence_event_ids_json, 'queued_for_review', :supersedes,
+                :thread_key, :project, :created_at
+            )
+            """,
+            {
+                "memory_id": new_memory_id,
+                "source_event_id": old["source_event_id"],
+                "policy_name": old["policy_name"],
+                "policy_version": old["policy_version"],
+                "category": old["category"],
+                "statement": new_statement,
+                "reason": f"{old['reason']} | corrected by {reviewer}: {reason}",
+                "confidence": old["confidence"],
+                "event_date": old["event_date"],
+                "date_precision": old["date_precision"],
+                "reasoning_kind": old["reasoning_kind"],
+                "evidence_event_ids_json": old["evidence_event_ids_json"],
+                "supersedes": old_memory_id,
+                "thread_key": old["thread_key"],
+                "project": old["project"],
+                "created_at": now,
+            },
+        )
+        self._conn.execute(
+            "UPDATE derived_memories SET approval_state='superseded_by_correction', superseded_by=? WHERE memory_id=?",
+            (new_memory_id, old_memory_id),
+        )
+        self._conn.commit()
+        return {"old_memory_id": old_memory_id, "new_memory_id": new_memory_id, "applied_at": now}
+
     def revert_superseded_by_reasoning(self) -> int:
         """Put every `superseded_by_reasoning` heuristic row back to
         `queued_for_review` (clears `superseded_by`). Returns the count."""

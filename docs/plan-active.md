@@ -4,89 +4,63 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ---
 
-## MS6a — Review surface — **built**
+## MS6c — MCP server cross-agent verification (2026-09-11)
 
-**Goal:** Make the staged backlog reviewable at all, and get real material into the graph.
+**Goal:** Verify the CMF MCP server actually works, end-to-end, as an installed connector inside the real client apps Todd uses. Produce a corrected, followable install/configure guide for each. Order: **Claude Desktop — Cowork mode → Claude Desktop — Code mode → Gemini Spark (web/mobile) → ChatGPT.**
 
-**What the corpus actually says.** Three measurements taken before writing code changed the design:
+**Corrected 2026-09-11 (Todd):** Todd does not run the standalone Claude Code CLI/TUI — "Claude Code" here means **Claude Desktop's Code tab**, the same app as Cowork, not a separate product. This session is itself running in that tab. And "Gemini" means the consumer **Gemini web/mobile app** (`gemini.google.com/app`, `gemini.google.com/spark/apps`) — not the Gemini CLI, which Todd doesn't use either. Both corrections changed the actual mechanism below, not just the label.
 
-1. **The thread is the wrong review unit.** The 315 unpromoted tier-1 episodes fall into 215 threads — a 1.47x reduction, 73% of them singletons. `thread_key` is a free-text slug the extraction model invents per window and matches by exact equality (`consolidation/threads.py`), so `openclaw-gateway-connection` and `openclaw-gateway-setup` are two threads. Corpus-wide that is 1.9 episodes per thread and no queue design improves it. **Grouping by project bucket instead gives 301 -> 20 buckets (15.8x), median bucket 11, one singleton.** Reading is unchanged; what drops by an order of magnitude is *re-orientation*.
-2. **There is no dedup shortcut.** Near-duplicate detection over the tier-1 statements finds one pair. These are 314 genuinely distinct claims across 180 topics and 10 months.
-3. **The heuristic pile is a quarter the size it looks.** 25,961 `queued_for_review` heuristic rows cover only **9,757 distinct events** — the same turns were re-judged under policy versions 1.0, 1.1 and 1.2 and every pass was left queued; 16,303 rows carry an explicit `supersedes` pointer. The original plan's "~9,800 heuristic candidates" and "6,582" (the v1.2 count) were both correct. Retiring stale versions is bookkeeping, not review.
+**Why now:** The graph now holds 465 real episodes worth retrieving (the [Backlog](#backlog)'s review pass just finished) and MS6b's governance tools are done — there's finally something substantive to verify retrieval/correction *against* from a second context. This subsumes [MS4a](#ms4a--mcp-boundary-capture--live-verification)'s outstanding five-step live cross-harness test as Phase 1+2's combined acceptance test; once that passes, MS4a's exit gate is answered too, not just this milestone's.
 
-### Built
+**What this is not:** new capability. `docs/CLIENTS.md` already documents stdio config for Claude Desktop/Cursor/VS Code and a generic remote-HTTP path (`--transport streamable-http`/`sse`) for remote clients — the server already supports all three transports (`server/mcp.py`'s `--transport {stdio,sse,streamable-http}`). This milestone is about *actually running* those configs against each real client and fixing whatever CLIENTS.md gets wrong.
 
-- **`server/review/projects.py`** — the project taxonomy (21 ordered first-match rules) plus `backfill()`. `thread_key` and `project` are now real columns on `derived_memories`; `thread_key` had only ever been serialised into the `reason` text.
-- **`server/review/store.py`** — `reviews` + append-only `review_audit`. **Every mutation routes through `ReviewStore.record()` / `record_bulk()`** — one chokepoint, not per-action discipline. A bulk action writes one audit row carrying the filter and prior-state histogram, plus per-row verdicts.
-- **`server/review/queue.py`** — `review_queue()` returning project buckets ordered by tier-1 density, UI-ready dicts, evidence optionally inlined.
-- **`server/review/explain.py`** — the journal half of `explain()`: statement, unpacked rationale, resolved evidence turns, thread. The Graphiti half is MS6b.
-- **`server/review/actions.py`** — `approve/reject/defer_episode`, `apply_verdicts`, `bulk_reject`, `bulk_reject_stale_policy_versions`, `bulk_confirm_superseded`, `sample_audit`, `revert_batch`, `promote_approved`.
-- **`server/review/cli.py`** — `backfill`, `stats`, `queue`, `export`, `apply`, `explain`, `retire-stale-versions`, `bulk-reject`, `confirm-superseded`, `sample-audit`, `revert-batch`, `promote`. Every mutating command is dry-run by default and needs `--apply`.
-- **Review artifact** — keyboard-driven, project-batched, evidence inlined, verdicts persisted to the artifact's own store so state survives across devices. It reports running keep rate and wall-clock, which is what the exit gate measures.
-- **`tests/test_ms6_review.py`** — 41 tests.
+### Phase 1 — Claude Desktop: Cowork mode
 
-### Cut from the original plan, deliberately
+- [ ] Install per `docs/CLIENTS.md` §1 (stdio, `claude_desktop_config.json`); restart; confirm tool discovery (12 tools with `LLM_WIKI_PATH` set, 10 without — verify the count actually matches, CLIENTS.md's claim is untested).
+- [ ] Functional pass: call each read-only tool (`get_context`, `search_wiki`, `recall_mem`, `capture_health`) from Cowork; confirm sane, correctly-formatted output (Markdown rendering inside Cowork's UI is a real risk, not just "does the call succeed").
+- [ ] `remember()` a real test decision from Cowork.
+- [ ] Correct CLIENTS.md §1 against what actually happened (restart behavior, `LLM_WIKI_PATH` gating, anything undocumented).
 
-- **`approve_thread` / `reject_thread`** — 73% of threads hold one tier-1 episode; a thread action is an episode action with extra machinery.
-- **`retier`** — tier 2 is "never promoted"; retiering then approving is just approving.
-- **Scopes (`personal` / `project`)** — one person, one graph, and no `recall` caller that would be scoped. Acceptance test 6 tested a feature with no user. Deferred to MS9 access control.
-- **`correct_memory` + Graphiti re-issue, deletion propagation** — deferred to MS6b. Both serve the 22 promoted rows, and the correction path cannot be designed well before watching a real review pass.
+### Phase 2 — Claude Desktop: Code mode
 
-### Acceptance tests — as built
+- [ ] Check whether the Code tab shares Desktop's global `mcpServers` config automatically, or needs its own `.mcp.json`/project-level config the way the standalone Claude Code CLI does — this is a real open question, not an assumption either way, since Desktop's Code tab may not behave identically to the CLI it's built on.
+- [ ] Same tool-discovery + functional pass as Phase 1.
+- [ ] **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
+- [ ] Capture-identity check: confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
+- [ ] Add a dedicated **Claude Desktop Code mode** note to `docs/CLIENTS.md` §1 (currently silent on whether Cowork and Code need separate configuration).
 
-1. `explain()` returns statement, unpacked rationale, resolved evidence turns and thread. ✅
-2. Approval promotes exactly the approved set, idempotently; verdicts survive a promotion that stops early on quota (two ledgers: `reviews` and `promotions`). ✅
-3. Every mutation writes an audit row with actor, time, reason and prior state — asserted per action type. ✅
-4. A bulk action writes **one** audit row, not one per memory, and `revert_batch` restores the prior `approval_state`. ✅
-5. A date-scoped bulk action never sweeps a row whose `event_date` is unknown. ✅
-6. ~~scoped recall~~ — cut, see above.
-7. **Rewritten.** The plan's "decisions-made vs episodes-reviewed" passes at 215-vs-315 while saving nothing. The property that matters is the grouping: few buckets, no singleton piles. Asserted directly, and the real gate is wall-clock, instrumented by the review surface.
+### Phase 3 — Gemini Spark (web + mobile)
 
-### Exit gate — answered by the 2026-09-08 pass (see Update 2026-09-09 below)
+- [ ] **Requires a public MCP server URL** — Gemini Spark's Connected Apps only take a hosted MCP endpoint, no local/stdio option (confirmed 2026-09-11 against Google's own support docs: [support.google.com/gemini/answer/17209137](https://support.google.com/gemini/answer/17209137)). Same underlying requirement as Phase 4 (ChatGPT) — **share one tunnel setup across both phases** rather than building it twice: run `server/mcp.py --transport streamable-http --port 8000` and expose it via a persistent tunnel (Cloudflare Tunnel/ngrok), ideally as a `launchd` service mirroring `com.cmf.spark-tunnel.plist` from this session.
+- [ ] Connect: `gemini.google.com` → Settings & help → Connected Apps → "Custom apps for Spark" → Add a custom app → paste the MCP server URL. If the server doesn't support Dynamic Client Registration (CMF's doesn't yet), use "Show more" under Advanced features to enter credentials manually.
+- [ ] Decide auth for this path specifically — DCR/OAuth is the primary expected flow per Google's docs; verify whether the manual-credentials fallback actually accepts a simple bearer token in practice, or requires something closer to real OAuth. Don't assume; this is exactly the kind of detail that changes on contact with the real UI.
+- [ ] **Note the real constraints:** personal Google account only (no work/school account), 18+, US region, and — per Google's own guidance — custom third-party MCP servers are "outside Google's control," so this is Todd's own server he already trusts, not a third-party risk.
+- [ ] Usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registers as) inside a Spark task, not available in plain Gemini chat outside Spark — confirm this doesn't silently limit which of CMF's tools actually get invoked in practice.
+- [ ] Same functional + capture-identity pass.
+- [ ] Add a **Gemini Spark** section to `docs/CLIENTS.md` (today's §4 is generic "remote harnesses" language; this replaces the Gemini-CLI-shaped assumption that was here before the correction).
 
-- **Wall clock.** Target was under 3 hours of measured review time. Not recoverable from the journal (bulk verdict write) — the review artifact holds it.
-- **Tier-1 keep rate.** ~98% on the tier-1-routed slice (295/301). Settles the ranker question: the `reasoning_kind` router already does the triage a ranker would, so a ranker is only worth building for a future source that lacks one.
+### Phase 4 — ChatGPT
 
-**Effort:** ~2 sessions. **Status:** surface built; **tier-1 pass completed 2026-09-08.**
+- [ ] Reuse Phase 3's tunnel — same `streamable-http` endpoint, no separate infra needed.
+- [ ] Connect: Settings → Apps & Connectors → enable Developer Mode → Create connector → server URL must end in `/mcp` → OAuth or bearer token (confirmed 2026-09-11).
+- [ ] Decide auth: a bearer token is almost certainly the right call for personal single-user use over full OAuth — flag as the recommended default, don't build OAuth unless it's actually needed.
+- [ ] Same tool-discovery + functional + capture-identity pass.
+- [ ] Update CLIENTS.md §4 with the concrete, current ChatGPT steps — today it's generic where it could be exact.
 
-### Update 2026-09-09 — the tier-1 pass is done, and it fed the Spark rebuild
+### Acceptance tests
 
-The `reviews` table records reviewer `todd`, 2026-09-08: **295 tier-1 episodes approved, 6 rejected**, of the ~301 routed to tier 1 by `reasoning_kind`. Those 295 approved episodes are exactly what was promoted — into `mem-fabric-gemini` (285 succeeded + 24 transient-failed) and then, on the [Spark local-inference migration](SPARK-MIGRATION-PLAN.md)'s Phase 6, into the fresh **`mem-fabric-local`** (295 succeeded) on GLM-4.7-Flash + `nomic-embed`. So `mem-fabric-local` is the reviewed tier-1 corpus re-run through local models, not raw material.
+1. All 4 contexts (Cowork, Code, Gemini Spark, ChatGPT) can list and successfully call every registered CMF tool, with correctly-rendered output.
+2. MS4a's 5-step cross-harness capture+correction test passes end-to-end using Cowork and Code mode as the two harnesses.
+3. Capture-journal harness identity is checked for all 4 — and it's an explicit finding, not a silent assumption, whether Cowork/Code collapse to one identity or resolve distinctly.
+4. `docs/CLIENTS.md` is corrected/expanded so a new user could follow it start-to-finish for any of the 4 without hitting an undocumented gap.
+5. One shared tunnel serves both Gemini Spark and ChatGPT without reconfiguration.
 
-- **Keep-rate exit gate — answered.** ~98% kept **on the tier-1-routed slice** (295/301). The routing did the filtering; within tier 1 almost everything was a keep. The earlier 25–68% guesses were over *all* statements, not the routed subset — so an LLM triage *ranker* for the next corpus is only worth building if a future source lacks a comparable `reasoning_kind` router. Not urgent.
-- **Wall-clock exit gate.** Verdicts were bulk-written from the review artifact (all 301 `reviewed_at` within ~0.05s), so measured review time isn't in the journal — read it off the artifact's own instrumentation if the number still matters.
-- **Verdicts are graph-independent.** They live in `reviews` / `derived_memories`, not FalkorDB, so re-promoting the same set into whichever graph wins the Phase 7 A/B is cheap (`promote_reviewed`, local models, no quota).
-- **Open decision: which graph is production.** `.env` still points at `mem-fabric-gemini`. Making `mem-fabric-local` the live graph needs the deliberate `CMF_LLM_PROVIDER` + `CMF_EMBED_PROVIDER` + `FALKORDB_DATABASE` + `EMBEDDING_DIM` flip (they move together — SPARK plan §"Note for Phase 6"), and Phase 7's A/B is what settles whether to make it.
+### Exit gate
 
-**Update 2026-09-09 (Phase 7 answered + executed).** The A/B ([docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md)) rejected GLM-4.7-Flash and adopted **`unsloth/qwen3.5-122b-a10b` + an `EXTRACTION_INSTRUCTIONS` nudge**: Gemini-class hygiene, ~5-pt recall gap, fully local. **Migration executed same day:** GLM graph → `mem-fabric-local-glm`; fresh `mem-fabric-local` re-promoted from the 295 tier-1 episodes on qwen3.5-122b + nomic (295/295, 0 failed); episodes renamed `<harness>-<project>-NNN`; `.env` flipped — `mem-fabric-local` is now the live graph. `mem-fabric-gemini` retained for rollback. So the tier-1 corpus is retrievable on fully-local inference; MS7 evaluation now runs against that graph.
-- **MS6a and Spark Phase 7 share a sample.** Both want a hand-graded set of promoted episodes compared across the two graphs — run them together.
+Does the MCP server actually work, end-to-end, inside Claude Desktop (both modes), Gemini Spark, and ChatGPT — and does `docs/CLIENTS.md` reflect that reality closely enough for a stranger to follow? Which of MS4a's outstanding live-verification steps does this pass answer for free?
 
----
-
-## MS6b — Governance — **next**
-
-MS7 is done (see [plan-history.md](plan-history.md#ms7--context-assembly-quality)); MS6b is the active milestone. Deferred from MS6 on the grounds that all of it serves the promoted rows, and the correction path should be designed after a real assembly pass rather than before it.
-
-- [x] **`explain()` into Graphiti** — `server/review/graph_explain.py`'s `explain_graph()` resolves `memory_id` -> `episode_name` via `PromotionStore`, then walks the FalkorDB `Episodic` node, its `MENTIONS` entities and the `RELATES_TO` edges citing it. Returns `None` for a never-promoted memory (fall back to the journal-only `explain()`) and `found_in_graph: False` when the ledger says promoted but the episode is actually absent, rather than raising. Wired into the CLI as `explain <memory_id> --graph`. 11 tests against a hand-rolled `FakeDriver`/`FakeGraphiti` (no real FalkorDB) — `tests/test_ms6b_governance.py`.
-- [x] **`correct_memory`** — `server/review/correction.py`. Re-issues via `remove_episode` + `add_episode` under the *original* episode's `valid_at` (preserved from the graph read, not re-derived), with a fresh episode name (a removed episode's name isn't reusable) and re-run extraction against the corrected text. Updates `PromotionStore` to the new episode name so it stays the resolvable identity for this `memory_id`; audited via `ReviewStore.note()` (not `.record()` — this isn't a keep/drop verdict). No-ops when the new content matches the graph's current content. CLI: `correct-memory <memory_id> --content "..." --reason "..."`.
-- [x] **Deletion propagation** — `delete_memory` in the same module: removes the Graphiti episode and deletes the `PromotionStore` row (new `PromotionStore.delete()`), leaving `derived_memories` and the journal untouched — takes back a promotion, doesn't un-happen the reviewed event. Tolerates the episode already being absent from the graph (logs and clears the ledger anyway) rather than failing. Re-promoting the same `memory_id` (`promote_reviewed`) is the recovery path. CLI: `delete-memory <memory_id> --reason "..."`.
-- [ ] **Scopes** — revisit as access control alongside MS9, or MS4c if remote ingest needs it first. Not attempted here — see MS6a's original cut rationale (one person, one graph, no scoped caller yet).
-
-**Effort:** 2-3 sessions. **Risk:** Medium — the correction re-issue path is the one genuinely fiddly piece. **Status (2026-09-10):** the three graph-touching pieces are built and unit-tested against fakes; not yet exercised against a real FalkorDB graph or wired into the review artifact's UI. Scopes deliberately deferred.
-
-### Exit gate — live round-trip (not yet run)
-
-The plan never defined acceptance tests for MS6b the way MS6a did; `tests/test_ms6b_governance.py`'s 11 tests prove the logic against a hand-rolled `FakeDriver`/`FakeGraphiti` — real correctness of the Cypher against Graphiti's actual schema, and of `remove_episode`/`add_episode` sequencing, is unverified until this runs against a real graph. Two checks, in order:
-
-1. **Read-only, against production, zero mutation risk.** `explain --graph` never writes. Pick any real promoted memory_id (a `reviews` row with `review_state='approved'`) and confirm the entities/edges it returns look right:
-   ```
-   uv run python -m server.review.cli explain <memory_id> --graph
-   ```
-2. **Full round-trip, fully isolated from production.** `scripts/ms6b_exit_gate.py` seeds one real episode into its own scratch FalkorDB graph (`cmf-ms6b-exit-gate` by default — refuses to run against `mem-fabric-local`/`mem-fabric-gemini`/`mem-fabric-local-glm`) and a scratch SQLite file (a tempfile, never `imports/journal/journal.db`), then runs `explain_graph` → `correct_memory` (dry run, then applied) → `delete_memory`, asserting at each step against the real graph state (old episode actually gone, new content actually present, `PromotionStore` actually cleared) rather than mocks. Exits non-zero on the first failed assertion:
-   ```
-   uv run python scripts/ms6b_exit_gate.py --cleanup
-   ```
-   Passing both is what would flip this section's status to "done."
+**Effort:** 2-3 sessions — live/interactive testing plus doc corrections; the tunnel (shared by Phases 3-4) is the one piece of real new infra work.
+**Risk:** Low-medium. The tunnel is the main new operational surface — same class of concern as the Spark SSH tunnel (needs to stay up reliably, exposes a port that needs real auth, not "trust the network"). Gemini Spark's DCR/OAuth requirement is an unknown until tested — may need real OAuth implementation work, not just a bearer token, unlike ChatGPT.
 
 ---
 
@@ -235,6 +209,7 @@ Not a blocker for MS6 / MS7. Do it opportunistically the next time Claude Deskto
 - [ ] Adapter and provider development kits + conformance tests.
 - [ ] Migration and backup tools (journal identity, provenance, config).
 - [ ] Threat model and privacy guide.
+- [ ] **Scopes (`personal` / `project`)** — access control model, deferred from MS6b (one person, one graph, no scoped caller yet). MS4c may need it sooner if OpenClaw's multi-agent writes require per-agent scoping.
 - [ ] A web review/governance UI on top of the MS6 APIs.
 - [ ] Sample deployments: individual, developer-team, self-hosted server.
 
@@ -247,7 +222,25 @@ Not a blocker for MS6 / MS7. Do it opportunistically the next time Claude Deskto
 
 ---
 
-## Backlog — deferred assembly refinements
+## Backlog
+
+Two unrelated piles, previously kept as separate top-level sections (the corpus one used to sit at the top of this file) — merged here since neither is an active milestone with its own exit gate.
+
+### Corpus & review backlog (found 2026-09-11, closed out same day)
+
+MS6b's governance tooling ([plan-history.md](plan-history.md#ms6b--governance)) surfaced this once `explain --graph`, `correct-memory`, and the review CLI could actually be pointed at the corpus. Measured directly against the live journal, not the MS6a/MS3.5-era estimates (several bulk actions and ongoing capture had moved these numbers since 2026-09-08):
+
+- [x] **27 tier-1-shaped v0.1 orphans, reviewed (2026-09-11).** All were `decision`×16/`plan`×8/`rejected_alternative`×3, `policy_version=0.1`, correctly excluded from `tier1_review_queue()`'s v0.2 filter but never formally retired. Checked each against v0.2 for actual evidence-event overlap rather than assuming duplication: **19 confirmed duplicates** (same evidence, reprocessed under v0.2, `rejected` with reason citing the duplication) and **8 with no v0.2 counterpart**, individually read in full (statement + rationale + evidence) — **4 approved** (specific, confirmed-accurate technical/narrative decisions: Saturn-mode print resolution, moon/sun/Saturn mask config, Java-over-Kotlin for the Android project, integrating the fine-arts narrative into the career-navigator cover letter) and **4 rejected** (two were literal task instructions, not durable facts, one still `status=open`; two were thin one-off wording edits on a resume/LinkedIn post with no lasting reference value).
+- [x] **969 tier-2 episodes, reviewed and promoted (2026-09-11) — closed out.** `finding`×16, `hypothesis`×33, `experiment`×138, `investigation`×755 (the live count moved from the 981 estimate — ongoing capture). Read individually — statement, rationale, status, and evidence turns for ambiguous ones — against one standard: promote only if the statement itself states a durable, specific, resolved conclusion; reject pure process narration, open unresolved threads, or task instructions misclassified as reasoning; defer anything genuinely uncertain or sensitive rather than guessing. First pass: **163 approved, 797 rejected, 9 deferred**. Promote rate varied by kind as expected (`decision`-adjacent kinds like `finding`/`hypothesis` ran ~35-50%; `investigation`/`experiment`, which are mostly exploration without a stated resolution, ran ~12-31%) — confirms MS3.5's own observation that `reasoning_kind` is a routing hint, not a keep/drop gate; individual content had to be read either way. Verdicts applied via `apply_verdicts` (the same chokepoint MS6a's tier-1 pass used).
+  - **The 9 deferred, resolved by Todd (2026-09-11):** *Sensitive/personal (5)* — a finding connecting current binocular vision instability to a past brain injury + neuro-ophthalmologic history; the matching hypothesis and investigation episodes from the same thread (astigmatism theory, single-eye-vs-both testing); an investigation seeking medical guidance on OTC pain relievers after a head injury; an investigation analyzing a condo board-meeting transcript evaluating specific named candidates (Ken, Kevin, Brian) for board openings — **Todd approved all 5**. *Genuinely uncertain (4)* — a home-AV finding describing a symptom mid-troubleshooting (Shield/projector power state); a hypothesis about whether current homeowners insurance covers required EV-charger terms; a hypothesis interpreting the condo board's resistance motive as capacity-hoarding rather than genuine cost concern; an experiment with real measured data (Jackery AC-vs-DC power draw) the user themself questioned the accuracy of — Todd rejected the home-AV symptom and the power-draw measurement, approved both EV-charging hypotheses.
+  - **Final tally: 171 approved, 799 rejected, 0 deferred**, all 171 promoted into `mem-fabric-local` across three batches, **171/171 succeeded, 0 failed** (real qwen3.5-122b extraction per episode, local/unmetered). Graph grew **295 → 465 Episodic nodes** (verified via direct Cypher count), entities 393→665, `RELATES_TO` edges →501.
+  - **A real bug surfaced when Todd asked why the first batch was 164, not 163** (2026-09-11): one of the 164 wasn't a tier-2 approval at all — it was the *original, pre-correction* 360-cam/eclipse episode (the misattribution `correct_memory` fixed earlier in the MS6b work), silently re-promoted with its stale wrong content. Root cause: `reviews` is last-writer-wins per memory_id and `correct_memory` never touches it, so the old memory_id's `approved` verdict from 2026-09-08 stayed on record after the correction superseded it; `correct_memory` separately clears the old memory_id's `PromotionStore` row (the graph identity moved to the new memory_id). Those two facts together made `actions.promote_approved`'s "approved and not yet promoted" query — which had no idea `derived_memories.approval_state` existed — treat the superseded old memory_id as freshly eligible. **Fixed:** the query now excludes any memory_id whose `derived_memories.approval_state` is `rejected`/`superseded_by_reasoning`/`superseded_by_correction`, joining against `derived_memories` rather than reading `reviews` alone (`server/review/actions.py`). New regression test `test_superseded_by_correction_is_not_reeligible` (`tests/test_ms6_review.py`) reproduces the exact sequence and passed on the very next real promotion batch (the 2 final EV-charging approvals). **Cleanup:** the wrongly-revived `chatgpt-photo-006` episode (uuid `2734ac71-...`) removed from `mem-fabric-local`, its stray `PromotionStore` row deleted.
+- [ ] **25,961 heuristic-pattern rows still `queued_for_review`**, none ever routed through `ReviewStore` (0 have a `reviews` row — every heuristic-pattern state change so far, including the 27,516 already `rejected` and 3,251 `superseded_by_reasoning`, was a direct bulk `UPDATE`, not an individually reviewed verdict). MS3.6's own assessment stands: mostly re-judged duplicates across policy versions and low-signal raw turns, not undiscovered content. `retire-stale-versions` / `bulk-reject-stale-policy-versions` already exist for this — the open question is whether it's worth running them again now, or whether this pile is simply not worth further attention.
+- [ ] **The corpus is growing, not static.** The reasoning-episode pool alone grew from 1,243 rows (the 2026-09-05/06 reprocess) to 1,310 by 2026-09-11 — capture (MCP-boundary + imports) kept running after the 2026-09-08 review pass. A recurring/periodic tier-1 review pass is probably the more accurate framing going forward, rather than treating any fixed count as a target to eventually finish. `uv run python -m server.review.cli queue --tier 1` shows what's currently outstanding.
+- **Not sourced from new adapters at all yet:** MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI) remain unbuilt — none of the above touches those.
+- **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
+
+### Assembly refinements (deferred out of MS7)
 
 Out of MS7 with the exit gate met (`get_context` at 80% of a complete answer, beating every single-provider baseline — [plan-history.md](plan-history.md#ms7--context-assembly-quality)). These push the number higher but were not blockers. Roughly in value order:
 

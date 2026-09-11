@@ -169,10 +169,10 @@ def cmd_correct_memory(args: argparse.Namespace) -> int:
     from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
     from server.review.correction import correct_memory
 
-    with PromotionStore(args.db) as ps, ReviewStore(args.db) as rs:
+    with PromotionStore(args.db) as ps, ReviewStore(args.db) as rs, ConsolidationStore(args.db) as cs:
         result = asyncio.run(
             correct_memory(
-                ps, rs, args.memory_id, args.content, get_graphiti(),
+                ps, rs, cs, args.memory_id, args.content, get_graphiti(),
                 reviewer=args.reviewer, reason=args.reason, dry_run=not args.apply,
             )
         )

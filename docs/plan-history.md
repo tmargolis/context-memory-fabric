@@ -233,6 +233,65 @@ A promoted reasoning episode survives `remember()` → `recall()` with the synth
 
 ---
 
+## MS6a — Review surface
+
+**Goal:** Make the staged backlog reviewable at all, and get real material into the graph.
+
+**What the corpus actually says.** Three measurements taken before writing code changed the design:
+
+1. **The thread is the wrong review unit.** The 315 unpromoted tier-1 episodes fall into 215 threads — a 1.47x reduction, 73% of them singletons. `thread_key` is a free-text slug the extraction model invents per window and matches by exact equality (`consolidation/threads.py`), so `openclaw-gateway-connection` and `openclaw-gateway-setup` are two threads. Corpus-wide that is 1.9 episodes per thread and no queue design improves it. **Grouping by project bucket instead gives 301 -> 20 buckets (15.8x), median bucket 11, one singleton.** Reading is unchanged; what drops by an order of magnitude is *re-orientation*.
+2. **There is no dedup shortcut.** Near-duplicate detection over the tier-1 statements finds one pair. These are 314 genuinely distinct claims across 180 topics and 10 months.
+3. **The heuristic pile is a quarter the size it looks.** 25,961 `queued_for_review` heuristic rows cover only **9,757 distinct events** — the same turns were re-judged under policy versions 1.0, 1.1 and 1.2 and every pass was left queued; 16,303 rows carry an explicit `supersedes` pointer. The original plan's "~9,800 heuristic candidates" and "6,582" (the v1.2 count) were both correct. Retiring stale versions is bookkeeping, not review.
+
+### Built
+
+- **`server/review/projects.py`** — the project taxonomy (21 ordered first-match rules) plus `backfill()`. `thread_key` and `project` are now real columns on `derived_memories`; `thread_key` had only ever been serialised into the `reason` text.
+- **`server/review/store.py`** — `reviews` + append-only `review_audit`. **Every mutation routes through `ReviewStore.record()` / `record_bulk()`** — one chokepoint, not per-action discipline. A bulk action writes one audit row carrying the filter and prior-state histogram, plus per-row verdicts.
+- **`server/review/queue.py`** — `review_queue()` returning project buckets ordered by tier-1 density, UI-ready dicts, evidence optionally inlined.
+- **`server/review/explain.py`** — the journal half of `explain()`: statement, unpacked rationale, resolved evidence turns, thread. The Graphiti half is MS6b.
+- **`server/review/actions.py`** — `approve/reject/defer_episode`, `apply_verdicts`, `bulk_reject`, `bulk_reject_stale_policy_versions`, `bulk_confirm_superseded`, `sample_audit`, `revert_batch`, `promote_approved`.
+- **`server/review/cli.py`** — `backfill`, `stats`, `queue`, `export`, `apply`, `explain`, `retire-stale-versions`, `bulk-reject`, `confirm-superseded`, `sample-audit`, `revert-batch`, `promote`. Every mutating command is dry-run by default and needs `--apply`.
+- **Review artifact** — keyboard-driven, project-batched, evidence inlined, verdicts persisted to the artifact's own store so state survives across devices. It reports running keep rate and wall-clock, which is what the exit gate measures.
+- **`tests/test_ms6_review.py`** — 41 tests.
+
+### Cut from the original plan, deliberately
+
+- **`approve_thread` / `reject_thread`** — 73% of threads hold one tier-1 episode; a thread action is an episode action with extra machinery.
+- **`retier`** — tier 2 is "never promoted"; retiering then approving is just approving.
+- **Scopes (`personal` / `project`)** — one person, one graph, and no `recall` caller that would be scoped. Acceptance test 6 tested a feature with no user. Deferred to MS9 access control.
+- **`correct_memory` + Graphiti re-issue, deletion propagation** — deferred to MS6b. Both serve the 22 promoted rows, and the correction path cannot be designed well before watching a real review pass.
+
+### Acceptance tests — as built
+
+1. `explain()` returns statement, unpacked rationale, resolved evidence turns and thread. ✅
+2. Approval promotes exactly the approved set, idempotently; verdicts survive a promotion that stops early on quota (two ledgers: `reviews` and `promotions`). ✅
+3. Every mutation writes an audit row with actor, time, reason and prior state — asserted per action type. ✅
+4. A bulk action writes **one** audit row, not one per memory, and `revert_batch` restores the prior `approval_state`. ✅
+5. A date-scoped bulk action never sweeps a row whose `event_date` is unknown. ✅
+6. ~~scoped recall~~ — cut, see above.
+7. **Rewritten.** The plan's "decisions-made vs episodes-reviewed" passes at 215-vs-315 while saving nothing. The property that matters is the grouping: few buckets, no singleton piles. Asserted directly, and the real gate is wall-clock, instrumented by the review surface.
+
+### Exit gate — answered by the 2026-09-08 pass (see Update 2026-09-09 below)
+
+- **Wall clock.** Target was under 3 hours of measured review time. Not recoverable from the journal (bulk verdict write) — the review artifact holds it.
+- **Tier-1 keep rate.** ~98% on the tier-1-routed slice (295/301). Settles the ranker question: the `reasoning_kind` router already does the triage a ranker would, so a ranker is only worth building for a future source that lacks one.
+
+**Effort:** ~2 sessions. **Status:** surface built; **tier-1 pass completed 2026-09-08.**
+
+### Update 2026-09-09 — the tier-1 pass is done, and it fed the Spark rebuild
+
+The `reviews` table records reviewer `todd`, 2026-09-08: **295 tier-1 episodes approved, 6 rejected**, of the ~301 routed to tier 1 by `reasoning_kind`. Those 295 approved episodes are exactly what was promoted — into `mem-fabric-gemini` (285 succeeded + 24 transient-failed) and then, on the [Spark local-inference migration](SPARK-MIGRATION-PLAN.md)'s Phase 6, into the fresh **`mem-fabric-local`** (295 succeeded) on GLM-4.7-Flash + `nomic-embed`. So `mem-fabric-local` is the reviewed tier-1 corpus re-run through local models, not raw material.
+
+- **Keep-rate exit gate — answered.** ~98% kept **on the tier-1-routed slice** (295/301). The routing did the filtering; within tier 1 almost everything was a keep. The earlier 25–68% guesses were over *all* statements, not the routed subset — so an LLM triage *ranker* for the next corpus is only worth building if a future source lacks a comparable `reasoning_kind` router. Not urgent.
+- **Wall-clock exit gate.** Verdicts were bulk-written from the review artifact (all 301 `reviewed_at` within ~0.05s), so measured review time isn't in the journal — read it off the artifact's own instrumentation if the number still matters.
+- **Verdicts are graph-independent.** They live in `reviews` / `derived_memories`, not FalkorDB, so re-promoting the same set into whichever graph wins the Phase 7 A/B is cheap (`promote_reviewed`, local models, no quota).
+- **Open decision: which graph is production.** `.env` still points at `mem-fabric-gemini`. Making `mem-fabric-local` the live graph needs the deliberate `CMF_LLM_PROVIDER` + `CMF_EMBED_PROVIDER` + `FALKORDB_DATABASE` + `EMBEDDING_DIM` flip (they move together — SPARK plan §"Note for Phase 6"), and Phase 7's A/B is what settles whether to make it.
+
+**Update 2026-09-09 (Phase 7 answered + executed).** The A/B ([docs/spark-phase7-ab-log.md](spark-phase7-ab-log.md)) rejected GLM-4.7-Flash and adopted **`unsloth/qwen3.5-122b-a10b` + an `EXTRACTION_INSTRUCTIONS` nudge**: Gemini-class hygiene, ~5-pt recall gap, fully local. **Migration executed same day:** GLM graph → `mem-fabric-local-glm`; fresh `mem-fabric-local` re-promoted from the 295 tier-1 episodes on qwen3.5-122b + nomic (295/295, 0 failed); episodes renamed `<harness>-<project>-NNN`; `.env` flipped — `mem-fabric-local` is now the live graph. `mem-fabric-gemini` retained for rollback. So the tier-1 corpus is retrievable on fully-local inference; MS7 evaluation now runs against that graph.
+- **MS6a and Spark Phase 7 share a sample.** Both want a hand-graded set of promoted episodes compared across the two graphs — run them together.
+
+---
+
 ## Spark local-inference migration — Phases 0-6 (2026-09-08 → 09)
 
 Not an IMPLEMENTATION-PLAN milestone — a parallel track with its own file, [SPARK-MIGRATION-PLAN.md](SPARK-MIGRATION-PLAN.md). Replaces the Google Gemini Developer API as CMF's LLM + embedding + reranking backend with models served from the DGX Spark (`nanospark`) over LM Studio's OpenAI-compatible endpoint. **Phases 0-6 done; Phase 7 (quality A/B) is still open and lives in [plan-active.md](plan-active.md) alongside MS6a.**
@@ -322,4 +381,38 @@ Progression: bare `get_context` **0.07 → 1.07** after Steps 1+2+fixes → **1.
 
 ### Deferred to backlog
 
-MS7's exit gate is met; the remaining task-list items are refinements, tracked in **[plan-active.md → Backlog](plan-active.md#backlog--deferred-assembly-refinements)**: `search_wiki` semantic retrieval (the largest remaining retrieval lever — a one-time corpus embed, not per-write cost); explicit conflict/staleness callouts (acceptance test 3) and truncation/omission disclosure (test 4); query-intent routing, time-aware modes, context templates, token-budget allocation, retrieval-explanation debug mode; and the residual eval misses (A1's friend's-Spark episode reachable by neither arm; B7 `+memory` regression; C6's lexical dead-end).
+MS7's exit gate is met; the remaining task-list items are refinements, tracked in **[plan-active.md → Backlog](plan-active.md#backlog)**: `search_wiki` semantic retrieval (the largest remaining retrieval lever — a one-time corpus embed, not per-write cost); explicit conflict/staleness callouts (acceptance test 3) and truncation/omission disclosure (test 4); query-intent routing, time-aware modes, context templates, token-budget allocation, retrieval-explanation debug mode; and the residual eval misses (A1's friend's-Spark episode reachable by neither arm; B7 `+memory` regression; C6's lexical dead-end).
+
+---
+
+## MS6b — Governance
+
+**Goal:** Correction, deletion propagation, and `explain()` into Graphiti — the differentiation demo, once the graph held real content. Deferred from MS6a on the grounds that all of it serves the promoted rows, and the correction path should be designed after a real assembly pass rather than before it.
+
+### What was built
+
+- **`explain()` into Graphiti** (`server/review/graph_explain.py`, `explain_graph()`) — resolves `memory_id` → `episode_name` via `PromotionStore`, walks the FalkorDB `Episodic` node, its `MENTIONS` entities and `RELATES_TO` edges. `None` for a never-promoted memory (falls back to the journal-only `explain()`); `found_in_graph: False` when the ledger says promoted but the episode is actually absent, rather than raising. CLI: `explain <memory_id> --graph`.
+- **`correct_memory`** (`server/review/correction.py`) — Graphiti has no in-place update, so this is `remove_episode` + `add_episode` under the *original* episode's `valid_at`, fresh episode name, re-run extraction against the corrected text. No-ops when new content matches current graph content. CLI: `correct-memory <memory_id> --content "..." --reason "..."`.
+- **`delete_memory`** (same module) — removes the Graphiti episode and the `PromotionStore` row, leaving `derived_memories` and the journal untouched (takes back a graph presence, doesn't un-happen the reviewed event). Tolerates the episode already being absent. Recovery path: re-promote via `promote_reviewed`. CLI: `delete-memory <memory_id> --reason "..."`.
+- **Journal-side supersession for corrections** (2026-09-11, at Todd's direction, after the initial build) — the first version left `derived_memories.statement` stale while the graph moved on; reworked to match MS3's supersedes convention. `ConsolidationStore.record_correction()` inserts a new `derived_memories` row (`memory_id = "<old>::corrected-<timestamp>"`, `supersedes=<old>`, everything but the statement copied from the old row) and flips the old row to `approval_state='superseded_by_correction'` + `superseded_by=<new>` (excluded from the review queue and promotion eligibility, same as `superseded_by_reasoning`). `PromotionStore`'s graph mapping moves to the new memory_id; the new memory_id gets its own `reviews` row (`approved`, same reviewer) so a promoted memory_id always has a review verdict. `explain()` surfaces `supersedes`/`superseded_by` so the chain is followable.
+- **Test coverage:** `tests/test_ms6b_governance.py`, 15 tests against a hand-rolled `FakeDriver`/`FakeGraphiti` (no real FalkorDB needed for the logic).
+
+### Exit gate — ANSWERED (2026-09-11)
+
+No acceptance tests were defined for MS6b the way MS6a had them; the fakes proved the logic, not the real Cypher against Graphiti's actual schema. Two checks, both passed against a real FalkorDB graph:
+
+1. **Read-only, against production.** `explain --graph` (never writes) against real promoted memory_ids, repeatedly during this session's exploration.
+2. **Full round-trip, isolated from production.** `scripts/ms6b_exit_gate.py` — seeds one real episode into its own scratch FalkorDB graph (refuses to run against any real graph name) and a scratch SQLite file, then runs `explain_graph` → `correct_memory` (dry run, then applied) → `delete_memory`, asserting against real graph state at each step. **PASSED, 2026-09-11**, all 6 steps, including the supersedes rework (journal row superseded, review verdict carried forward, audit trail split correctly across old/new memory_ids).
+
+A prerequisite for both: the SSH tunnel to the Spark (needed for any local-inference call, including a fresh `add_episode`) had been run manually (`ssh -N -L 12345:127.0.0.1:1234 spark` in a foreground terminal) and gotten killed. Replaced with a `launchd` agent (`~/Library/LaunchAgents/com.cmf.spark-tunnel.plist`, `RunAtLoad`+`KeepAlive`+`ThrottleInterval`, logs to `~/Library/Logs/cmf-spark-tunnel.{,err.}log`) so the tunnel survives logout/reboot and stops depending on a terminal staying open.
+
+### Exercising the tooling on the real corpus found three more things, all fixed same-session (2026-09-11)
+
+- **The 360-cam/eclipse episode was misattributed.** `explain --graph` on a promoted "decision" episode read as Todd's own gear choice; the full ChatGPT thread showed it was actually a friend's camera purchase, with Todd advising. First hypothesis (triage dropped a correction turn) was wrong — falsified by the job record (`status=succeeded`, and the episode's own window bounds already included the final turn). Actual cause: the extraction model saw the disambiguating turn ("Draft a sorry msg I can text my friend who's interested in purchasing this...") and still wrote "the user decides..." while linking only one evidence turn — an extractor evidence-linking/subject-attribution miss, not a pipeline bug. Corrected via `correct-memory`; re-extraction on the corrected text went from 1 entity/0 edges to 5 entities/4 edges. `scripts/audit_single_evidence_episodes.py` (new) checked the other 29 single-evidence promoted episodes for the same shape (a subject-correction phrase in a turn just after the evidence turn) — zero flagged, so this looks isolated rather than systemic, though the heuristic doesn't prove the other 29 are correct, only that this particular pattern didn't recur.
+- **Entity sense-collapse in the graph, and a worse bug behind it.** `scripts/entity_audit.py` (new, read-only) found 31 of 393 graph entities span more than one `project` bucket — most are legitimate (`Mac Pro`, `macOS`, `rsync`, `Photoshop` genuinely recur across projects, the fabric thesis working as intended). Two were genuine sense-collapses — `Anthropic` (employer vs. AI/API vendor, 6 episodes) and `Phase 1` (a CMF dataviz phase vs. career-navigator's "Phase 1F") — cleaned with disambiguating summaries. Attempting that cleanup via `edit_memory` surfaced something more serious: it applies `new_summary`/`new_content`/`new_reference_time`/`new_name` to every node in the *connected* context (every entity co-occurring in a matched episode, every episode mentioning a matched entity), not just what `target_query` actually matched — a dry-run targeting `Anthropic` by exact uuid matched 6 entities for a summary write. No existing test caught it. **Fixed:** direct-match uuids are now captured before the connected-context expansion runs, and all four mutation loops (episode content/name/valid_at, entity summary, edge valid_at — same bug, same fix) are scoped to them; `matched_entities`/`matched_episodes`/`matched_edges` in the result are unaffected since they already only reported the modified set. New regression test seeds two co-occurring entities via raw Cypher (no LLM call) and asserts a bystander stays untouched. The two entity cleanups above were applied via direct scoped Cypher specifically to avoid this bug while it was still open.
+- **`explain()` was surfacing the wrong approval field.** Its top-level `approval_state` read `derived_memories.approval_state` — set once at extraction time, never updated by review — so a fully reviewed-and-promoted memory still reported `queued_for_review`. The real verdict lives in `reviews.review_state`. Investigated coverage first (at Todd's request): all 295 promoted episodes have a `reviews` row, no orphans either direction, so the fix was a straight join. `explain()` now returns `extraction_state` (renamed, same pipeline-state value) plus a `review` sub-object (`review_state`/`tier`/`reviewer`/`reviewed_at`/`reason`, `None` if never reviewed), degrading gracefully if a connection's `reviews` table doesn't exist. `graph_name` on `reviews` and inlining the supersedes chain into the join were both considered and deliberately skipped — no multi-graph deployment exists yet, and the chain is already in the journal-only output.
+- **A fourth bug, found a day later exercising `correct_memory` for real** (2026-09-11, during the [review-backlog](plan-active.md#review-backlog--corpus-beyond-the-reviewed-295-found-2026-09-11) pass): `actions.promote_approved`'s "everything approved and not yet promoted" query read only `reviews.review_state`, with no idea `derived_memories.approval_state` existed. `reviews` is last-writer-wins per memory_id and `correct_memory` never touches it, so the 360-cam episode's original `approved` verdict (from the 2026-09-08 tier-1 pass) stayed on record after its correction superseded it — and `correct_memory` separately clears the *old* memory_id's `PromotionStore` row, since the graph identity moved to the new one. Those two facts combined made the superseded old memory_id look freshly eligible: the very next `promote --apply` run silently re-created it in the graph with its original, wrong, pre-correction content, alongside the correct one. Fixed by joining `derived_memories` into the eligibility query and excluding `rejected`/`superseded_by_reasoning`/`superseded_by_correction` states (`server/review/actions.py`); regression test `test_superseded_by_correction_is_not_reeligible` reproduces the exact sequence. Cleanup: the wrongly-revived episode removed from `mem-fabric-local`, its stray promotion row deleted.
+
+### What's left — moved to [plan-active.md → Review backlog](plan-active.md#review-backlog--corpus-beyond-the-reviewed-295-found-2026-09-11)
+
+MS6b's tooling is done; what it surfaced about the rest of the corpus (27 never-reviewed v0.1 tier-1 episodes, 981 deliberately-unpromoted tier-2 episodes, the 25,961-row heuristic pile, and a stale `cmf_test` vector index unrelated to any of this) is tracked there, not here — it's ongoing corpus/review work, not a milestone with a fixed exit gate.
