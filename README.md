@@ -54,9 +54,9 @@ episodic       factual      mutation /       durable          context        pro
 | Claude Sonnet 5, its own siloed memory of the user | 18% |
 | **Claude + `get_context` (this project)** | **80%** |
 
-*CMF get_context() achieved roughly a 4–5× improvement over native model memory, reaching 80% complete-answer quality versus 10–18% natively.*
+**CMF get_context() achieved roughly a 4–5× improvement over native model memory, reaching 80% complete-answer quality versus 10–18% natively.**
 
-**Each assistant's built-in memory answers only 5–8 of the 30 questions at all — mostly the facts repeated often enough to have stuck — and several of those answers are confidently wrong: a garage electrical spec that contradicts the site report, an out-of-date positioning claim, an invented list of agent names. `get_context` answers 25 of 30 at least partially, and every claim it returns is tied to a specific stored decision or document. Method and full results: [docs/plan-active.md](docs/plan-active.md) (MS7) and [docs/spark-ms7-episode-vector-spike.md](docs/spark-ms7-episode-vector-spike.md).**
+*Each assistant's built-in memory answers only 5–8 of the 30 questions at all — mostly the facts repeated often enough to have stuck — and several of those answers are confidently wrong: a garage electrical spec that contradicts the site report, an out-of-date positioning claim, an invented list of agent names. `get_context` answers 25 of 30 at least partially, and every claim it returns is tied to a specific stored decision or document. Method and full results: [docs/plan-active.md](docs/plan-active.md) (MS7) and [docs/spark-ms7-episode-vector-spike.md](docs/spark-ms7-episode-vector-spike.md).*
 
 ---
 
