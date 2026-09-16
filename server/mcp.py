@@ -39,7 +39,7 @@ from server.memory import (
     reconcile_memories as reconcile_episodic_memories,
     remember as remember_memory,
 )
-from server.providers.memory_graphiti import remember_queued
+from server.providers.memory_graphiti import remember_queued, resolve_target_database
 from server.proposals import (
     apply_proposal,
     bulk_reject_proposals,
@@ -1135,6 +1135,12 @@ def main():
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_ShortNameFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+
+    # Which FalkorDB graph this process will actually read/write is easy to
+    # get wrong silently (Todd, 2026-09-16, after a live default switch left
+    # 2 real episodes written the day before invisible on restart — see
+    # ADR 0003). Log it plainly on every transport, not just streamable-http.
+    logger.info(f"FalkorDB target graph: '{resolve_target_database()}'")
 
     if args.transport in ("sse", "streamable-http"):
         import uvicorn
