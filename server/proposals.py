@@ -55,6 +55,14 @@ class WikiProposal:
     proposed_sha256: str = ""
     proposed_content: str = ""
     unified_diff: str = ""
+    # MS6d — review/apply state. Absent on any of the 76 pre-MS6d proposal
+    # files; every field here defaults to None so from_dict(**data) loads
+    # them unchanged rather than needing a migration pass.
+    reviewer: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    review_notes: Optional[str] = None
+    applied_at: Optional[str] = None
+    applied_commit_sha: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +70,12 @@ class WikiProposal:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "WikiProposal":
         return cls(**data)
+
+
+# Terminal review verdicts. "applied" is a separate status apply_proposal()
+# sets on success — never accepted directly as a review verdict, since that
+# would let review_proposal() claim a canonical write happened without one.
+REVIEW_VERDICTS = ("approved", "rejected")
 
 
 def get_proposals_dir(custom_dir: Optional[Path] = None) -> Path:
@@ -266,3 +280,244 @@ def get_proposal(
     except Exception as e:
         logger.warning(f"Failed loading proposal {target}: {e}")
         return None
+
+
+def _save_proposal(proposal: WikiProposal, proposals_dir: Optional[Path] = None) -> None:
+    store_dir = get_proposals_dir(proposals_dir)
+    file_path = store_dir / f"{proposal.proposal_id}.json"
+    file_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
+
+
+def review_proposal(
+    proposal_id: str,
+    verdict: str,
+    reviewer: str = "todd",
+    notes: Optional[str] = None,
+    proposals_dir: Optional[Path] = None,
+) -> WikiProposal:
+    """Record a human decision on a pending proposal. Does NOT touch LLM_Wiki.
+
+    This is the split MS6d's design relies on for safety: a verdict here is a
+    decision, not a write. Only `apply_proposal()` — and only on a proposal
+    already `approved` here — ever touches the corpus.
+
+    Raises:
+        ValueError: unknown proposal_id, unknown verdict, or the proposal is
+            not currently `pending_review` (re-reviewing an already-decided
+            proposal is refused rather than silently overwriting the first
+            verdict — re-open by editing the JSON directly if that's truly
+            intended, which is deliberately not a one-call operation).
+    """
+    if verdict not in REVIEW_VERDICTS:
+        raise ValueError(f"Unknown verdict '{verdict}'; must be one of {REVIEW_VERDICTS}.")
+
+    proposal = get_proposal(proposal_id, proposals_dir)
+    if proposal is None:
+        raise ValueError(f"No proposal found with id '{proposal_id}'.")
+    if proposal.status != "pending_review":
+        raise ValueError(
+            f"Proposal '{proposal_id}' is already '{proposal.status}', not 'pending_review' — "
+            "re-review is refused rather than overwriting the prior verdict."
+        )
+
+    proposal.status = verdict
+    proposal.reviewer = reviewer
+    proposal.reviewed_at = datetime.now(timezone.utc).isoformat()
+    proposal.review_notes = notes.strip() if notes else None
+
+    _save_proposal(proposal, proposals_dir)
+    logger.info(f"Proposal '{proposal_id}' reviewed: {verdict} by {reviewer}")
+    return proposal
+
+
+def bulk_reject_proposals(
+    proposal_ids: list[str],
+    reason: str,
+    reviewer: str = "todd",
+    proposals_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Reject a batch of pending proposals with one recorded reason each.
+
+    Mirrors the episodic side's bulk-reject shape (server/review/actions.py):
+    one reason applied across a set the caller has already filtered (e.g. via
+    list_proposals(status="pending_review")), each still individually
+    recorded rather than one bulk row.
+    """
+    rejected: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for pid in proposal_ids:
+        try:
+            review_proposal(pid, "rejected", reviewer=reviewer, notes=reason, proposals_dir=proposals_dir)
+            rejected.append(pid)
+        except ValueError as e:
+            skipped.append({"proposal_id": pid, "reason": str(e)})
+    return {"rejected": rejected, "skipped": skipped}
+
+
+def apply_proposal(
+    proposal_id: str,
+    expected_sha256: Optional[str] = None,
+    dry_run: bool = True,
+    wiki_root: Optional[Path] = None,
+    proposals_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Write an approved proposal's content into LLM_Wiki. The only function
+    in this module that touches the canonical corpus.
+
+    Two independent guards, both required:
+    - `expected_sha256` must match `proposal.proposed_sha256` — forces the
+      caller to have actually re-fetched this proposal (via get_proposal)
+      before applying it, not be acting on a stale in-context copy.
+    - The live target file's current hash must match `proposal.current_sha256`
+      (the base it was diffed against at creation time) for an "update", or
+      must not exist for a "create". Either drift is refused by name, not
+      silently overwritten — with 76 proposals up to weeks old, this is a
+      real case, not a theoretical one.
+
+    On a real (non-dry-run) apply: writes proposed_content to the resolved
+    target, commits it in the LLM_Wiki git repo if one is present (best
+    effort — a missing git repo does not block the apply, since the write
+    itself is the durable action), and marks the proposal 'applied'.
+
+    Raises:
+        ValueError: unknown proposal_id, not yet 'approved', sha mismatch on
+            either guard, or a "create" whose target now exists.
+    """
+    proposal = get_proposal(proposal_id, proposals_dir)
+    if proposal is None:
+        raise ValueError(f"No proposal found with id '{proposal_id}'.")
+    if proposal.status != "approved":
+        raise ValueError(
+            f"Proposal '{proposal_id}' is '{proposal.status}', not 'approved' — "
+            "review it first via review_proposal(verdict='approved')."
+        )
+    if expected_sha256 and expected_sha256 != proposal.proposed_sha256:
+        raise ValueError(
+            f"expected_sha256 does not match this proposal's proposed content "
+            f"(expected {proposal.proposed_sha256}, got {expected_sha256}) — "
+            "re-fetch via get_proposal() before applying."
+        )
+
+    root = wiki_root if wiki_root is not None else get_corpus_root()
+    resolved_target = validate_target_path(proposal.target_path, root)
+
+    if proposal.operation == "create":
+        if resolved_target.exists():
+            raise ValueError(
+                f"Proposal '{proposal_id}' is a CREATE for '{proposal.target_path}', "
+                "but that file now exists — created by something else since this "
+                "proposal was made. Refusing to overwrite."
+            )
+    else:  # "update"
+        if not resolved_target.exists():
+            raise ValueError(
+                f"Proposal '{proposal_id}' is an UPDATE for '{proposal.target_path}', "
+                "but that file no longer exists. Refusing to apply against a moved target."
+            )
+        live_text = resolved_target.read_text(encoding="utf-8", errors="replace")
+        live_sha = hashlib.sha256(live_text.encode("utf-8")).hexdigest()
+        if live_sha != proposal.current_sha256:
+            raise ValueError(
+                f"Proposal '{proposal_id}' was diffed against sha {proposal.current_sha256}, "
+                f"but '{proposal.target_path}' now hashes to {live_sha} — it changed since "
+                "this proposal was created. Refusing to apply against a stale base; "
+                "create a fresh proposal against the current content instead."
+            )
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "proposal_id": proposal_id,
+            "would_write": proposal.target_path,
+            "operation": proposal.operation,
+        }
+
+    resolved_target.parent.mkdir(parents=True, exist_ok=True)
+    resolved_target.write_text(proposal.proposed_content, encoding="utf-8")
+
+    commit_sha = _git_commit_change(root, resolved_target, proposal)
+
+    proposal.status = "applied"
+    proposal.applied_at = datetime.now(timezone.utc).isoformat()
+    proposal.applied_commit_sha = commit_sha
+    _save_proposal(proposal, proposals_dir)
+    logger.info(f"Proposal '{proposal_id}' applied to '{proposal.target_path}' (commit {commit_sha})")
+
+    return {
+        "dry_run": False,
+        "proposal_id": proposal_id,
+        "wrote": proposal.target_path,
+        "operation": proposal.operation,
+        "commit_sha": commit_sha,
+    }
+
+
+def _git_commit_change(wiki_root: Path, resolved_target: Path, proposal: WikiProposal) -> Optional[str]:
+    """Best-effort commit of an applied proposal inside the LLM_Wiki repo.
+
+    Not required for the apply to succeed — the file write is the durable
+    action, this is the free undo path on top of it. Returns the new commit
+    sha, or None if wiki_root isn't a git repo or the commit otherwise fails
+    (logged, not raised).
+    """
+    import subprocess
+
+    try:
+        rel = resolved_target.relative_to(wiki_root.resolve())
+        subprocess.run(
+            ["git", "-C", str(wiki_root), "add", "--", str(rel)],
+            check=True, capture_output=True, text=True,
+        )
+        message = f"proposal {proposal.proposal_id}: {proposal.operation} {rel.as_posix()}\n\n{proposal.rationale}"
+        subprocess.run(
+            ["git", "-C", str(wiki_root), "commit", "-m", message],
+            check=True, capture_output=True, text=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", str(wiki_root), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logger.warning(f"Best-effort git commit skipped/failed for proposal {proposal.proposal_id}: {e}")
+        return None
+
+
+def format_proposal_list(proposals: list[WikiProposal]) -> str:
+    """Format a list of proposals as a compact Markdown table for MCP tool responses."""
+    if not proposals:
+        return "No proposals found."
+    lines = ["| Proposal ID | Status | Operation | Target Path | Created |", "|---|---|---|---|---|"]
+    for p in proposals:
+        lines.append(f"| `{p.proposal_id}` | {p.status} | {p.operation} | `{p.target_path}` | {p.created_at} |")
+    return "\n".join(lines)
+
+
+def format_review_result(proposal: WikiProposal) -> str:
+    lines = [
+        f"### Proposal `{proposal.proposal_id}` — {proposal.status}",
+        f"- **Reviewer:** {proposal.reviewer}",
+        f"- **Reviewed At:** {proposal.reviewed_at}",
+    ]
+    if proposal.review_notes:
+        lines.append(f"- **Notes:** {proposal.review_notes}")
+    if proposal.status == "approved":
+        lines.append(
+            f"\n> Ready to apply. Call `apply_wiki_proposal(proposal_id=\"{proposal.proposal_id}\", "
+            f"expected_sha256=\"{proposal.proposed_sha256}\")` with `dry_run=True` first."
+        )
+    return "\n".join(lines)
+
+
+def format_apply_result(result: dict[str, Any]) -> str:
+    if result["dry_run"]:
+        return (
+            f"### 🔍 Dry run — nothing written\n"
+            f"Would **{result['operation'].upper()}** `{result['would_write']}`.\n\n"
+            f"Re-call with `dry_run=False` to actually apply."
+        )
+    commit_note = f" (commit `{result['commit_sha']}`)" if result["commit_sha"] else " (no git commit — target is not a git repo, or commit failed; see server logs)"
+    return (
+        f"### ✅ Applied\n"
+        f"**{result['operation'].upper()}** wrote `{result['wrote']}`{commit_note}."
+    )

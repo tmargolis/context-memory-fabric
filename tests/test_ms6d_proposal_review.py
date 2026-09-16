@@ -1,0 +1,281 @@
+"""MS6d — durable-knowledge proposal review/apply loop.
+
+Validates the review -> apply split that is MS6d's whole safety property:
+no single call gets from a fresh proposal to a canonical LLM_Wiki write.
+
+- review_proposal(): approve/reject, notes, re-review refusal
+- apply_proposal(): approval gate, both sha guards (stale base, drifted
+  create-target), dry_run default, real write + git commit
+- bulk_reject_proposals(): partial success (some ids already decided)
+"""
+
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from server.proposals import (
+    apply_proposal,
+    bulk_reject_proposals,
+    create_wiki_proposal,
+    get_proposal,
+    list_proposals,
+    review_proposal,
+)
+
+
+def _git(*args, cwd):
+    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
+
+
+class TestMS6dProposalReview(unittest.TestCase):
+    def setUp(self):
+        self.temp_wiki = tempfile.TemporaryDirectory()
+        self.wiki_root = Path(self.temp_wiki.name)
+
+        self.temp_proposals = tempfile.TemporaryDirectory()
+        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
+
+        wiki_dir = self.wiki_root / "WIKI"
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        self.project_md = wiki_dir / "project.md"
+        self.initial_content = "# Project Atlas\nProject Atlas uses PostgreSQL."
+        self.project_md.write_text(self.initial_content, encoding="utf-8")
+
+        # Real git repo, so apply_proposal's commit path is exercised for real,
+        # not mocked — this is the first CMF code that writes into LLM_WIKI_PATH.
+        _git("init", "-q", cwd=self.wiki_root)
+        _git("config", "user.email", "test@example.com", cwd=self.wiki_root)
+        _git("config", "user.name", "Test", cwd=self.wiki_root)
+        _git("add", "-A", cwd=self.wiki_root)
+        _git("commit", "-q", "-m", "initial", cwd=self.wiki_root)
+
+    def tearDown(self):
+        self.temp_wiki.cleanup()
+        self.temp_proposals.cleanup()
+
+    def _make_proposal(self, content="# Project Atlas\nProject Atlas uses PostgreSQL and Redis."):
+        return create_wiki_proposal(
+            target_path="WIKI/project.md",
+            proposed_content=content,
+            rationale="Adding Redis for caching layer.",
+            wiki_root=self.wiki_root,
+            proposals_dir=self.proposals_dir,
+        )
+
+    # -- review_proposal ------------------------------------------------
+
+    def test_review_approve_records_reviewer_and_notes(self):
+        proposal = self._make_proposal()
+        reviewed = review_proposal(
+            proposal.proposal_id, "approved", reviewer="todd", notes="looks right",
+            proposals_dir=self.proposals_dir,
+        )
+        self.assertEqual(reviewed.status, "approved")
+        self.assertEqual(reviewed.reviewer, "todd")
+        self.assertEqual(reviewed.review_notes, "looks right")
+        self.assertIsNotNone(reviewed.reviewed_at)
+
+        # persisted, not just returned
+        reloaded = get_proposal(proposal.proposal_id, proposals_dir=self.proposals_dir)
+        self.assertEqual(reloaded.status, "approved")
+
+    def test_review_unknown_verdict_rejected(self):
+        proposal = self._make_proposal()
+        with self.assertRaises(ValueError):
+            review_proposal(proposal.proposal_id, "maybe", proposals_dir=self.proposals_dir)
+
+    def test_review_unknown_proposal_id_rejected(self):
+        with self.assertRaises(ValueError):
+            review_proposal("prop_does_not_exist", "approved", proposals_dir=self.proposals_dir)
+
+    def test_re_review_refused_not_overwritten(self):
+        """A second verdict on an already-decided proposal is refused, not silently applied."""
+        proposal = self._make_proposal()
+        review_proposal(proposal.proposal_id, "approved", notes="first", proposals_dir=self.proposals_dir)
+        with self.assertRaises(ValueError):
+            review_proposal(proposal.proposal_id, "rejected", notes="changed my mind", proposals_dir=self.proposals_dir)
+
+        # first verdict survives untouched
+        reloaded = get_proposal(proposal.proposal_id, proposals_dir=self.proposals_dir)
+        self.assertEqual(reloaded.status, "approved")
+        self.assertEqual(reloaded.review_notes, "first")
+
+    # -- apply_proposal: the approval gate --------------------------------
+
+    def test_apply_refused_without_approval(self):
+        """The core safety property: no path from a fresh proposal straight to a write."""
+        proposal = self._make_proposal()
+        with self.assertRaises(ValueError):
+            apply_proposal(
+                proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+                dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+            )
+        # file untouched
+        self.assertEqual(self.project_md.read_text(), self.initial_content)
+
+    def test_apply_refused_on_wrong_expected_sha(self):
+        proposal = self._make_proposal()
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        with self.assertRaises(ValueError):
+            apply_proposal(
+                proposal.proposal_id, expected_sha256="0" * 64,
+                dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+            )
+        self.assertEqual(self.project_md.read_text(), self.initial_content)
+
+    # -- apply_proposal: dry run vs real -------------------------------------
+
+    def test_dry_run_writes_nothing(self):
+        proposal = self._make_proposal()
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        result = apply_proposal(
+            proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+            dry_run=True, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+        )
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(self.project_md.read_text(), self.initial_content)
+        # status stays 'approved', not advanced to 'applied' by a dry run
+        reloaded = get_proposal(proposal.proposal_id, proposals_dir=self.proposals_dir)
+        self.assertEqual(reloaded.status, "approved")
+
+    def test_real_apply_writes_and_commits(self):
+        proposal = self._make_proposal()
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        result = apply_proposal(
+            proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+            dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+        )
+        self.assertFalse(result["dry_run"])
+        self.assertEqual(
+            self.project_md.read_text(),
+            "# Project Atlas\nProject Atlas uses PostgreSQL and Redis.",
+        )
+        self.assertIsNotNone(result["commit_sha"])
+
+        # the commit is real, in the real repo
+        log = subprocess.run(
+            ["git", "-C", str(self.wiki_root), "log", "--oneline", "-1"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        self.assertIn(proposal.proposal_id, log)
+
+        reloaded = get_proposal(proposal.proposal_id, proposals_dir=self.proposals_dir)
+        self.assertEqual(reloaded.status, "applied")
+        self.assertEqual(reloaded.applied_commit_sha, result["commit_sha"])
+
+    def test_apply_refused_on_stale_base(self):
+        """The target changed since the proposal was created — refused by name, not overwritten."""
+        proposal = self._make_proposal()
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+
+        # simulate independent drift after the proposal was made
+        self.project_md.write_text("# Project Atlas\nSomeone else changed this.", encoding="utf-8")
+
+        with self.assertRaises(ValueError) as ctx:
+            apply_proposal(
+                proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+                dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+            )
+        self.assertIn("changed since", str(ctx.exception))
+        self.assertEqual(self.project_md.read_text(), "# Project Atlas\nSomeone else changed this.")
+
+    def test_create_operation_refused_if_target_now_exists(self):
+        """A CREATE proposal whose target was created by something else in the meantime."""
+        proposal = create_wiki_proposal(
+            target_path="WIKI/new-note.md",
+            proposed_content="# New Note\nBrand new.",
+            rationale="A new page.",
+            wiki_root=self.wiki_root,
+            proposals_dir=self.proposals_dir,
+        )
+        self.assertEqual(proposal.operation, "create")
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+
+        # someone/something else creates the file first
+        target = self.wiki_root / "WIKI" / "new-note.md"
+        target.write_text("# New Note\nSomeone beat us to it.", encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            apply_proposal(
+                proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+                dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+            )
+        self.assertEqual(target.read_text(), "# New Note\nSomeone beat us to it.")
+
+    def test_create_operation_applies_cleanly(self):
+        proposal = create_wiki_proposal(
+            target_path="WIKI/new-note.md",
+            proposed_content="# New Note\nBrand new.",
+            rationale="A new page.",
+            wiki_root=self.wiki_root,
+            proposals_dir=self.proposals_dir,
+        )
+        review_proposal(proposal.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        result = apply_proposal(
+            proposal.proposal_id, expected_sha256=proposal.proposed_sha256,
+            dry_run=False, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+        )
+        self.assertFalse(result["dry_run"])
+        target = self.wiki_root / "WIKI" / "new-note.md"
+        self.assertEqual(target.read_text(), "# New Note\nBrand new.")
+
+    # -- bulk_reject_proposals -----------------------------------------------
+
+    def test_bulk_reject_partial_success(self):
+        p1 = self._make_proposal("# Project Atlas\nVariant one.")
+        p2 = self._make_proposal("# Project Atlas\nVariant two.")
+        p3 = self._make_proposal("# Project Atlas\nVariant three.")
+        review_proposal(p3.proposal_id, "approved", proposals_dir=self.proposals_dir)  # already decided
+
+        result = bulk_reject_proposals(
+            [p1.proposal_id, p2.proposal_id, p3.proposal_id],
+            reason="superseded",
+            proposals_dir=self.proposals_dir,
+        )
+        self.assertEqual(sorted(result["rejected"]), sorted([p1.proposal_id, p2.proposal_id]))
+        self.assertEqual(len(result["skipped"]), 1)
+        self.assertEqual(result["skipped"][0]["proposal_id"], p3.proposal_id)
+
+        for pid in (p1.proposal_id, p2.proposal_id):
+            self.assertEqual(get_proposal(pid, proposals_dir=self.proposals_dir).status, "rejected")
+        # p3's prior approval is untouched by the bulk call
+        self.assertEqual(get_proposal(p3.proposal_id, proposals_dir=self.proposals_dir).status, "approved")
+
+    # -- list_proposals still works with the new fields ------------------
+
+    def test_list_proposals_filters_by_new_statuses(self):
+        p1 = self._make_proposal("# Project Atlas\nA.")
+        p2 = self._make_proposal("# Project Atlas\nB.")
+        review_proposal(p1.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        review_proposal(p2.proposal_id, "rejected", proposals_dir=self.proposals_dir)
+
+        approved = list_proposals(proposals_dir=self.proposals_dir, status="approved")
+        rejected = list_proposals(proposals_dir=self.proposals_dir, status="rejected")
+        self.assertEqual([p.proposal_id for p in approved], [p1.proposal_id])
+        self.assertEqual([p.proposal_id for p in rejected], [p2.proposal_id])
+
+    def test_old_proposal_json_without_new_fields_still_loads(self):
+        """Backward compatibility with the 76 pre-MS6d proposal files on disk."""
+        proposal = self._make_proposal()
+        # simulate a pre-MS6d file: strip the new keys entirely
+        import json
+        path = self.proposals_dir / f"{proposal.proposal_id}.json"
+        data = json.loads(path.read_text())
+        for key in ("reviewer", "reviewed_at", "review_notes", "applied_at", "applied_commit_sha"):
+            data.pop(key, None)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        reloaded = get_proposal(proposal.proposal_id, proposals_dir=self.proposals_dir)
+        self.assertIsNotNone(reloaded)
+        self.assertIsNone(reloaded.reviewer)
+        self.assertEqual(reloaded.status, "pending_review")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -40,7 +40,18 @@ from server.memory import (
     remember as remember_memory,
 )
 from server.providers.memory_graphiti import remember_queued
-from server.proposals import create_wiki_proposal, format_proposal_for_mcp
+from server.proposals import (
+    apply_proposal,
+    bulk_reject_proposals,
+    create_wiki_proposal,
+    format_apply_result,
+    format_proposal_for_mcp,
+    format_proposal_list,
+    format_review_result,
+    get_proposal,
+    list_proposals,
+    review_proposal,
+)
 from server.wiki import search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
@@ -552,6 +563,222 @@ if _config.knowledge_enabled:
             open_world_hint=False,
         ),
     )(propose_wiki_update)
+
+
+async def list_wiki_proposals(
+    status: Annotated[
+        Optional[str],
+        Field(
+            description="Filter by status: 'pending_review', 'approved', 'rejected', or 'applied'. Omit to list all proposals."
+        ),
+    ] = None,
+) -> str:
+    """List durable-knowledge Wiki proposals (MS6d). Read-only.
+
+    WHEN TO USE:
+    - Use to see what's waiting for review, or to check the outcome of a past proposal.
+    - Use before review_wiki_proposal/apply_wiki_proposal, to find the proposal_id.
+
+    EXAMPLES OF USER INTENT:
+    - 'What wiki proposals are still pending?'
+    - 'Show me all the proposals I've approved but not yet applied.'
+
+    DISTINCTIONS:
+    - Read-only listing. Use get_wiki_proposal for one proposal's full diff and rationale.
+    """
+    try:
+        proposals = list_proposals(status=status)
+        return format_proposal_list(proposals)
+    except Exception as e:
+        logger.error(f"Error listing wiki proposals: {e}")
+        return f"Error listing wiki proposals: {e}"
+
+
+async def get_wiki_proposal(
+    proposal_id: Annotated[str, Field(description="The proposal_id to retrieve, e.g. 'prop_20260916_125736_a33f295a'.")],
+) -> str:
+    """Retrieve one durable-knowledge Wiki proposal's full detail (MS6d): rationale,
+    unified diff, and the sha256 hashes needed to review or apply it. Read-only.
+
+    WHEN TO USE:
+    - Use to read a specific proposal's diff before deciding to approve or reject it.
+
+    DISTINCTIONS:
+    - Read-only. review_wiki_proposal records the decision; apply_wiki_proposal writes it.
+    """
+    try:
+        proposal = get_proposal(proposal_id)
+        if proposal is None:
+            return f"No proposal found with id '{proposal_id}'."
+        return format_proposal_for_mcp(proposal)
+    except Exception as e:
+        logger.error(f"Error retrieving wiki proposal '{proposal_id}': {e}")
+        return f"Error retrieving wiki proposal '{proposal_id}': {e}"
+
+
+async def review_wiki_proposal(
+    proposal_id: Annotated[str, Field(description="The proposal_id to review.")],
+    verdict: Annotated[str, Field(description="'approved' or 'rejected'.")],
+    notes: Annotated[
+        Optional[str],
+        Field(description="Why this verdict — a verdict with no recorded reason loses why it was made."),
+    ] = None,
+    reviewer: Annotated[
+        Optional[str],
+        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+    ] = None,
+) -> str:
+    """Record a human decision on a pending Wiki proposal (MS6d). Does NOT modify LLM_Wiki.
+
+    WHEN TO USE:
+    - Use after reading a proposal's diff via get_wiki_proposal, to approve or reject it.
+
+    CRITICAL SAFETY CONTRACT:
+    - This tool only records a decision. It never writes to the canonical Wiki — only
+      apply_wiki_proposal does that, and only on a proposal this tool has already approved.
+      No single tool call can get from a fresh proposal to a canonical write.
+
+    DISTINCTIONS:
+    - Refuses a proposal that isn't currently 'pending_review' — re-review is not a silent
+      overwrite of a prior verdict.
+    """
+    try:
+        proposal = review_proposal(
+            proposal_id, verdict, reviewer=reviewer or "todd", notes=notes
+        )
+        return format_review_result(proposal)
+    except ValueError as e:
+        return f"Could not review proposal '{proposal_id}': {e}"
+    except Exception as e:
+        logger.error(f"Error reviewing wiki proposal '{proposal_id}': {e}")
+        return f"Error reviewing wiki proposal '{proposal_id}': {e}"
+
+
+async def apply_wiki_proposal(
+    proposal_id: Annotated[str, Field(description="The proposal_id to apply. Must already be 'approved'.")],
+    expected_sha256: Annotated[
+        str,
+        Field(
+            description="The proposal's proposed_sha256, as returned by get_wiki_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy."
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        Field(description="If true (default), reports what would happen without writing anything. Set false to actually apply."),
+    ] = True,
+) -> str:
+    """Write an approved Wiki proposal's content into LLM_Wiki (MS6d). The only MCP tool
+    that modifies the canonical durable-knowledge corpus.
+
+    WHEN TO USE:
+    - Use once a proposal has been reviewed and approved via review_wiki_proposal, to
+      actually apply it. Always dry-run first.
+
+    CRITICAL SAFETY CONTRACT:
+    - Refuses any proposal not already 'approved'.
+    - Refuses if the live target file has changed since the proposal was created (its
+      current hash no longer matches what the proposal was diffed against), or — for a
+      new-file proposal — if the target now exists. Either drift is reported by name, not
+      silently overwritten.
+    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one
+      is present, as a free undo path.
+
+    SIDE EFFECTS:
+    - dry_run=True (default): none. dry_run=False: writes the target file inside
+      LLM_WIKI_PATH and, best-effort, a git commit there.
+    """
+    try:
+        result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run)
+        return format_apply_result(result)
+    except ValueError as e:
+        return f"Could not apply proposal '{proposal_id}': {e}"
+    except Exception as e:
+        logger.error(f"Error applying wiki proposal '{proposal_id}': {e}")
+        return f"Error applying wiki proposal '{proposal_id}': {e}"
+
+
+async def bulk_reject_wiki_proposals(
+    proposal_ids: Annotated[
+        list[str],
+        Field(description="The proposal_ids to reject, e.g. from a list_wiki_proposals(status='pending_review') result."),
+    ],
+    reason: Annotated[str, Field(description="One reason recorded against every proposal in this batch.")],
+) -> str:
+    """Reject a batch of pending Wiki proposals with one recorded reason each (MS6d).
+
+    WHEN TO USE:
+    - Use to triage the pending-review backlog in one pass rather than one call per
+      proposal — each rejection is still individually recorded, just sharing one reason.
+
+    DISTINCTIONS:
+    - Each proposal_id not currently 'pending_review' is skipped and reported, not silently
+      dropped or treated as an error for the whole batch.
+    """
+    try:
+        result = bulk_reject_proposals(proposal_ids, reason=reason)
+        lines = [f"Rejected {len(result['rejected'])} of {len(proposal_ids)}."]
+        if result["rejected"]:
+            lines.append("**Rejected:** " + ", ".join(f"`{r}`" for r in result["rejected"]))
+        if result["skipped"]:
+            lines.append("**Skipped:**")
+            for s in result["skipped"]:
+                lines.append(f"- `{s['proposal_id']}`: {s['reason']}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error bulk-rejecting wiki proposals: {e}")
+        return f"Error bulk-rejecting wiki proposals: {e}"
+
+
+if _config.knowledge_enabled:
+    app.tool(
+        title="List Wiki Proposals",
+        annotations=types.ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+    )(list_wiki_proposals)
+
+    app.tool(
+        title="Get Wiki Proposal",
+        annotations=types.ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+    )(get_wiki_proposal)
+
+    app.tool(
+        title="Review Wiki Proposal",
+        annotations=types.ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+    )(review_wiki_proposal)
+
+    app.tool(
+        title="Apply Wiki Proposal",
+        annotations=types.ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+    )(apply_wiki_proposal)
+
+    app.tool(
+        title="Bulk Reject Wiki Proposals",
+        annotations=types.ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        ),
+    )(bulk_reject_wiki_proposals)
 
 
 @app.tool(

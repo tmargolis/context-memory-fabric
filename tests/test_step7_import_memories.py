@@ -405,6 +405,12 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "capture_note",  # MS4a MCP-boundary capture
             "capture_health",  # MS4a MCP-boundary capture
             "promote_auto_accepted_memories",
+            # MS6d — durable-knowledge proposal review/apply loop
+            "list_wiki_proposals",
+            "get_wiki_proposal",
+            "review_wiki_proposal",
+            "apply_wiki_proposal",
+            "bulk_reject_wiki_proposals",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

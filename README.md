@@ -90,6 +90,9 @@ All project documentation beyond this README lives under [`docs/`](docs/).
 | **`capture_note(content, kind)`** | Evidence Write | Milestone 4a: explicit checkpoint captured to the append-only evidence journal — not episodic memory (`remember` is for that). Fire-and-forget. |
 | **`capture_health()`** | Read-Only | Milestone 4a: in-process MCP-boundary capture status — events captured, dropped, redacted, current queue depth. |
 | **`promote_auto_accepted_memories(dry_run, limit)`** | Memory Write | Promotes consolidation candidates already classified `auto_accepted` (Milestone 3) into episodic memory in FalkorDB. Idempotent — a candidate promoted once is never promoted twice. |
+| **`list_wiki_proposals(status)`** / **`get_wiki_proposal(proposal_id)`** | Read-Only | Milestone 6d: list pending/decided proposals, or read one's full diff and rationale. |
+| **`review_wiki_proposal(proposal_id, verdict, notes, reviewer)`** / **`bulk_reject_wiki_proposals(proposal_ids, reason)`** | Decision Record | Milestone 6d: records approve/reject on a proposal. Never touches `LLM_Wiki` — only gates `apply_wiki_proposal`. |
+| **`apply_wiki_proposal(proposal_id, expected_sha256, dry_run)`** | Corpus Write, Destructive | Milestone 6d: the only tool that writes into `LLM_Wiki`. Refuses anything not `approved`, or drifted since the proposal was made. `dry_run=True` by default; commits the change in the Wiki's own git repo. |
 
 ### Historical memory imports
 

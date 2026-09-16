@@ -56,6 +56,9 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_note", "capture_health",  # MS4a MCP-boundary capture
             "promote_auto_accepted_memories",
+            # MS6d — durable-knowledge proposal review/apply loop
+            "list_wiki_proposals", "get_wiki_proposal", "review_wiki_proposal",
+            "apply_wiki_proposal", "bulk_reject_wiki_proposals",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 
@@ -76,7 +79,13 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tool_dict["edit_memory"].annotations.read_only_hint)
 
         for name, tool in tool_dict.items():
+            if name == "apply_wiki_proposal":
+                continue  # MS6d — deliberately destructive_hint=True; it's the one tool that writes LLM_Wiki
             self.assertFalse(tool.annotations.destructive_hint, f"Tool {name} should not be marked destructive")
+        self.assertTrue(
+            tool_dict["apply_wiki_proposal"].annotations.destructive_hint,
+            "apply_wiki_proposal must stay marked destructive — it's the only tool that writes to LLM_Wiki",
+        )
 
         # 5. Routing Keywords & Safety Contracts in Descriptions
         self.assertIn("DEFAULT personal-context retrieval tool", tool_dict["get_context"].description)

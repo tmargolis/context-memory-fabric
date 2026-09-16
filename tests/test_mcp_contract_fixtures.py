@@ -73,7 +73,8 @@ class TestMCPContractFixtures(unittest.TestCase):
         # message is missed. Update deliberately alongside README.md/CLIENTS.md.
         # 11 as of Milestone 4a (added capture_note, capture_health).
         # 12 as of the auto_accepted promotion tool (promote_auto_accepted_memories).
-        self.assertEqual(len(self.expected), 12)
+        # 17 as of MS6d (added list/get/review/apply/bulk_reject_wiki_proposals).
+        self.assertEqual(len(self.expected), 17)
 
 
 if __name__ == "__main__":

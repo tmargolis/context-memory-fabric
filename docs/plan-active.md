@@ -225,23 +225,23 @@ Edges: `Section-[:CONTAINS]->Section`, `Section-[:MENTIONS]->Entity`, `Section-[
 
 ### Tasks
 
-- [ ] `list_wiki_proposals(status=...)` — register the existing `list_proposals()`. Read-only.
-- [ ] `get_wiki_proposal(proposal_id)` — register the existing `get_proposal()`; returns rationale, unified diff, and `current_sha256`.
-- [ ] `review_wiki_proposal(proposal_id, verdict, notes=None)` — sets `approved`/`rejected`, records reviewer, timestamp, and free-text notes (`notes` per Todd, 2026-09-16 — a verdict without a reason loses why it was made). Records a decision; touches nothing canonical.
-- [ ] `apply_wiki_proposal(proposal_id, expected_sha256, dry_run=True)` — the only tool that writes to `LLM_WIKI_PATH`. Refuses any proposal not already `approved`, so no single call gets from draft to canonical write. `dry_run=True` default. `destructive_hint=True` so clients surface a confirmation.
-- [ ] **Stale-base guard.** `current_sha256` is recorded at creation and read by nothing. On apply, re-hash the target and refuse on mismatch; for `operation: "create"`, refuse if the file now exists. With 76 proposals up to two weeks old this will fire in practice, not just in theory.
-- [ ] **Git commit in the corpus on apply.** `LLM_WIKI_PATH` (`/Users/todd/LLM_Wiki`) is a git repo, so one commit per applied proposal is a free undo path.
-- [ ] `bulk_reject_wiki_proposals(...)` — for triaging the 76-item backlog without 76 round-trips. Mirrors `bulk-reject`'s recorded-action shape from the episodic side.
-- [ ] **Status vocabulary + migration.** Decide the terminal states (`applied` distinct from `approved`?) and how an applied proposal records the resulting commit sha. Existing 76 files must keep loading — `WikiProposal.from_dict` maps JSON keys positionally onto the dataclass, so any new field needs a default.
-- [ ] **Post-apply staleness.** `search_wiki` caches its filesystem scan (`force_rescan` clears it) and MS7b's wiki-derived graph layer is built offline, so an applied proposal leaves both stale. Decide whether apply invalidates the cache itself or just says so.
-- [ ] Tests, including a stale-base rejection and an apply-without-approval rejection.
+- [x] `list_wiki_proposals(status=...)` — registers `list_proposals()`. Read-only.
+- [x] `get_wiki_proposal(proposal_id)` — registers `get_proposal()`; returns rationale, unified diff, and `current_sha256`.
+- [x] `review_wiki_proposal(proposal_id, verdict, notes=None, reviewer="todd")` — sets `approved`/`rejected`, records reviewer, `reviewed_at`, and `notes`. Refuses re-review of an already-decided proposal rather than overwriting the first verdict. Records a decision; touches nothing canonical.
+- [x] `apply_wiki_proposal(proposal_id, expected_sha256, dry_run=True)` — the only tool that writes to `LLM_WIKI_PATH`. Refuses any proposal not already `approved`. `dry_run=True` default. `destructive_hint=True` — verified via a dedicated contract test that it's the only tool carrying that flag.
+- [x] **Stale-base guard, both directions.** `expected_sha256` must match the proposal's own `proposed_sha256` (proves the caller re-fetched it, not acting on a stale in-context copy); separately, the live target's current hash must match `current_sha256` (the base it was diffed against) for an update, or the target must not exist for a create. Both refuse by name, tested against real drift, not just absence of drift.
+- [x] **Git commit in the corpus on apply.** Real `git add`/`commit`/`rev-parse HEAD` via subprocess in `LLM_WIKI_PATH`, best-effort (a missing/broken git repo doesn't block the apply — the file write is the durable action). Exercised in tests against a real temp git repo, not mocked.
+- [x] `bulk_reject_wiki_proposals(proposal_ids, reason, reviewer="todd")` — rejects a batch, one recorded reason each; an already-decided id in the batch is skipped and reported, not silently dropped or failing the whole call.
+- [x] **Status vocabulary decided.** Terminal states: `pending_review` → `approved`/`rejected` (via `review_wiki_proposal`) → `applied` (via `apply_wiki_proposal`, approved-only). `applied_at` + `applied_commit_sha` recorded on apply. Five new `Optional[...] = None` dataclass fields — confirmed all 76 pre-MS6d files still load (`test_old_proposal_json_without_new_fields_still_loads`, plus a live check against the real 76-file backlog).
+- [ ] **Post-apply staleness — still open, not built.** `search_wiki`'s filesystem-scan cache and MS7b's offline-built wiki-derived graph layer both go stale the moment a proposal is applied; `apply_wiki_proposal` does neither invalidation nor says so in its own output. Decide whether apply should call `force_rescan` itself, or just document the gap.
+- [x] Tests — `tests/test_ms6d_proposal_review.py`, 14 cases (approve/reject, re-review refusal, both sha guards' actual failure paths not just their absence, dry-run-writes-nothing, real apply with a real git commit verified in the repo log, create-vs-update, bulk-reject partial success, backward-compat load). Contract-fixture (`tool_schemas.json`) and 3 hardcoded tool-count assertions across other test files updated for 12→17 tools; full suite 397 passed / 6 skipped / 8 deselected.
 
 ### Acceptance tests
 
-1. From a single MCP client, with no shell access: list pending proposals, read one's diff, approve it with notes, dry-run the apply, then apply it — and see the change in `LLM_Wiki` with a matching git commit.
-2. `apply_wiki_proposal` on a `pending_review` proposal is refused.
-3. A proposal whose target changed since creation is refused with a message naming the drift, not silently overwritten.
-4. `prop_20260916_125736_a33f295a` — the proposal that started this — reaches a terminal state.
+1. **Not yet run as a live end-to-end client trip** — the flow is verified through direct function calls under pytest, not through an actual MCP client round-trip (list → read → approve → dry-run → apply → see the git commit). Cheap to do once a client is at hand.
+2. ✅ `apply_wiki_proposal` on a `pending_review` proposal is refused — `test_apply_refused_without_approval`.
+3. ✅ A proposal whose target changed since creation is refused, naming the drift — `test_apply_refused_on_stale_base`.
+4. **Not yet reached a terminal state.** `prop_20260916_125736_a33f295a` is still `pending_review` — the tools exist now, the decision on this specific proposal hasn't been made through them yet.
 5. The other 75 are triaged to a terminal state, or the backlog is deliberately kept with a recorded reason.
 
 ### Exit gate

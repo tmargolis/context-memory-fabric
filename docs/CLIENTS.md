@@ -244,7 +244,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 12 Context Memory Fabric tools (10 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` are only registered when a knowledge provider is configured):
+All connected clients receive access to the full suite of 17 Context Memory Fabric tools (12 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured):
 
 1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
 2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
@@ -258,3 +258,8 @@ All connected clients receive access to the full suite of 12 Context Memory Fabr
 10. **`capture_note(content, kind)`** *(Evidence Write)* — Milestone 4a: explicit checkpoint captured to the evidence journal (not episodic memory — see `remember` for that). Fire-and-forget.
 11. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth.
 12. **`promote_auto_accepted_memories(dry_run, limit)`** *(Memory Write)* — Promotes consolidation candidates already classified `auto_accepted` into episodic memory (Graphiti/FalkorDB). Idempotent; only `auto_accepted` candidates are eligible — everything else needs Milestone 6 review tooling.
+13. **`list_wiki_proposals(status)`** *(Read-Only)* — MS6d: lists Wiki proposals, optionally filtered by status (`pending_review`/`approved`/`rejected`/`applied`).
+14. **`get_wiki_proposal(proposal_id)`** *(Read-Only)* — MS6d: full detail for one proposal — rationale, unified diff, and the sha256 hashes needed to review or apply it.
+15. **`review_wiki_proposal(proposal_id, verdict, notes, reviewer)`** *(Decision Record)* — MS6d: records approve/reject on a pending proposal. Never touches `LLM_Wiki` — only records the decision that gates `apply_wiki_proposal`.
+16. **`apply_wiki_proposal(proposal_id, expected_sha256, dry_run)`** *(Corpus Write, Destructive)* — MS6d: the only tool that writes into `LLM_WIKI_PATH`. Refuses anything not already `approved`; refuses on target drift since the proposal was created; `dry_run=True` by default; best-effort git commit in the Wiki repo on a real apply.
+17. **`bulk_reject_wiki_proposals(proposal_ids, reason)`** *(Decision Record)* — MS6d: rejects a batch of pending proposals with one recorded reason each, for triaging the review backlog.
