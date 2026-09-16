@@ -48,3 +48,35 @@ No code change follows from this: decision 3 above (the `cmf_test` isolation fix
 
 - **Merge `default_db`'s content into `memory-fabric` immediately** (plan option B). Rejected: merges pre-journal data carrying a known parser defect (see the validity/expiration-date regression in `tests/test_regressions_baseline.py`) directly into production, and `cmf_chatgpt_000`'s 20 episodes overlap `memory-fabric`'s 57, creating dedup risk with no journal-level dedup mechanism yet to resolve it safely.
 - **Keep `default_db` as production, re-import the 57 into it** (plan option C). Rejected: discards the already-verified idempotent production import and re-spends Gemini extraction cost for no benefit.
+
+## Update (2026-09-16, during MS6c): the no-default rule is relaxed to a sandbox default
+
+This ADR's original decision made `resolve_target_database()` raise
+`MissingGraphConfigurationError` when neither an explicit `graph_name` nor
+`FALKORDB_DATABASE` resolved — failing loudly rather than picking a graph.
+
+MS6c's cross-client harness work (ChatGPT, Gemini, and other MCP clients
+connecting over `streamable-http`) made that untenable as a hard failure: a
+third-party client that CMF does not control has no way to set a server-side
+env var, so every tool call from an unconfigured client failed outright rather
+than degrading. `resolve_target_database()` now falls back to
+`DEFAULT_GRAPH_NAME` (`"default_db"`) instead of raising.
+
+The original ADR's reasoning is preserved by the *choice* of fallback, not by
+the raise: `default_db` is deliberately a throwaway sandbox rather than
+`mem-fabric-local-ep` or `mem-fabric-local-wiki`, so a misconfigured client
+still cannot silently read or write production episodic data. The failure mode
+changes from "loud error" to "writes land somewhere harmless and visibly wrong,"
+which is the tradeoff MS6c accepts to let unconfigured clients connect at all.
+
+`MissingGraphConfigurationError` remains defined and importable for callers
+that still want to treat an unresolved graph as fatal.
+
+**This supersedes one invariant stated above.** The "discovered non-issue"
+section says to treat a `default_db` containing episode data as a real bug.
+That is no longer true: as of MS6c, episode data in `default_db` is the
+expected result of a client connecting without `FALKORDB_DATABASE` set. An
+empty `default_db` remains harmless for the `graphiti-core` reason described
+there. What should now be treated as a bug is production data *missing* from
+the configured graph while `default_db` accumulates it — the signal that a
+client intended to be configured is not.

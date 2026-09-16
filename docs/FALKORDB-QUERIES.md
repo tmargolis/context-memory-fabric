@@ -340,11 +340,11 @@ ORDER BY e.valid_at ASC
 ## H2. Project Grouping (CMF-local — not written by Graphiti)
 
 > [!NOTE]
-> Added to `mem-fabric-local` as a post-promotion pass (2026-09-09). Three parallel handles for the same `derived_memories.project` label: a node property, an extra label per episode, and a `Project` hub node. Graphiti never reads any of them — `MATCH (e:Episodic …)` is unaffected. A fresh re-promotion recreates Episodic nodes *without* these, so the pass must be re-run after one.
+> Added to `mem-fabric-local` as a post-promotion pass, now `scripts/tag_projects.py` (originally 2026-09-09; re-run and re-labeled 2026-09-12 after the FalkorDB persistence incident — see `cmf-falkordb-persistence-incident` memory — wiped and required rebuilding this graph). Two episode-level handles for `derived_memories.project`, plus a `Project` hub node wired to **entities**, not episodes. Graphiti never reads any of this — `MATCH (e:Episodic …)` / `MATCH (n:Entity …)` are unaffected, and `build_communities()` only ever matches `RELATES_TO`, so `IN_PROJECT` is invisible to it too. A fresh re-promotion, or a ledger rebuild (`scripts/rebuild_graph_from_ledger.py`), recreates Episodic/Entity nodes *without* any of this, so `scripts/tag_projects.py --graph mem-fabric-local` must be re-run after either.
 >
-> - **`e.project`** — plain string property on every `:Episodic` node. For code / precise filters.
-> - **`ep_<name>` label** — second label on each episode (`['Episodic','ep_condo']`), sanitized (`career-navigator` → `ep_job_hunt`). Gives per-project **colour** in the FalkorDB Browser graph view. Does **not** give single-click hide — the Browser shows a node while *any* of its labels is on, and `:Episodic` must stay.
-> - **`(:Project {name})` + `[:IN_PROJECT]`** — one hub node per project, edge from each episode. Episode-level only (never wired to `:Entity`), so `build_communities()` is untouched. Drives force-view clustering.
+> - **`e.project`** — plain string property on every `:Episodic` node, the raw project id (e.g. `career-navigator`). For code / precise filters.
+> - **project label** — second label on each episode (`['Episodic','job_hunt']`), sanitized (dashes → underscores; `career-navigator` → `job_hunt` is the one display-name override, see `DISPLAY_OVERRIDES` in the script). No `ep_` prefix as of 2026-09-12 (dropped — the prefix bought nothing once the label itself is already a project name and never collides with `:Entity`/`:Episodic`). Gives per-project **colour** in the FalkorDB Browser graph view. Does **not** give single-click hide — the Browser shows a node while *any* of its labels is on, and `:Episodic` must stay.
+> - **`(:Project {name})` + `[:IN_PROJECT]`** — one hub node per project, wired primarily to `:Entity` (never `:Episodic` directly gets one *unless* it has to — see below). Always `:Project`, never `:Entity`. Changed 2026-09-12 from episode-level to entity-level per Todd — entities are the more useful clustering target for the force-view, and unlike episodes an entity can genuinely belong to more than one project (e.g. "Mac Pro" links to `openclaw`, `mac_infra`, `personal_admin`, *and* `misc`), so this is many-to-many by construction: one `IN_PROJECT` edge per distinct project among an entity's mentioning episodes, derived from `MENTIONS` + `e.project`, not the ledger. **~25% of episodes extract zero entities** (no `MENTIONS` edges at all), which left them totally disconnected from the hub the first time this shipped — `scripts/tag_projects.py` now gives those a direct `Episodic-[:IN_PROJECT]->Project` edge as a fallback, so every project-tagged episode reaches its hub one way or the other, never both.
 
 ### All Episodes in One Project (property — exact)
 ```cypher
@@ -355,7 +355,7 @@ ORDER BY e.valid_at ASC
 
 ### Isolate One Project + Its Neighbourhood (label — for the Browser)
 ```cypher
-MATCH (e:ep_condo)
+MATCH (e:condo)
 OPTIONAL MATCH (e)-[r]-(m)
 RETURN *
 ```
@@ -363,7 +363,7 @@ RETURN *
 ### Everything EXCEPT One Project
 ```cypher
 MATCH (e:Episodic)
-WHERE NOT 'ep_condo' IN labels(e)
+WHERE NOT 'condo' IN labels(e)
 OPTIONAL MATCH (e)-[r]-(m)
 RETURN *
 LIMIT 500
@@ -371,30 +371,56 @@ LIMIT 500
 
 ### Expand a Project Hub Node
 ```cypher
-MATCH (p:Project {name: 'condo'})<-[:IN_PROJECT]-(e:Episodic)
-OPTIONAL MATCH (e)-[:MENTIONS]->(n:Entity)
-RETURN p, e, n
+// Both link kinds at once: entities in the project (with their mentioning
+// episodes) plus entity-less episodes linked to it directly.
+MATCH (p:Project {name: 'condo'})<-[:IN_PROJECT]-(x)
+OPTIONAL MATCH (x)<-[:MENTIONS]-(e:Episodic)  // only matches when x is an Entity
+RETURN p, x, e
 ```
 
-### Episode Count per Project
+### Entity Count per Project
 ```cypher
-MATCH (p:Project)<-[:IN_PROJECT]-(e:Episodic)
-RETURN p.name AS project, count(e) AS episodes
+MATCH (p:Project)<-[:IN_PROJECT]-(n:Entity)
+RETURN p.name AS project, count(n) AS entities
+ORDER BY entities DESC
+```
+
+### Episode Count per Project (property, not the hub)
+```cypher
+MATCH (e:Episodic)
+WHERE e.project IS NOT NULL
+RETURN e.project AS project, count(e) AS episodes
 ORDER BY episodes DESC
 ```
 
-### Entities Shared Across Two Projects (cross-project links)
+### Entities Belonging to More Than One Project
+```cypher
+MATCH (n:Entity)-[:IN_PROJECT]->(p:Project)
+WITH n, collect(p.name) AS projects
+WHERE size(projects) > 1
+RETURN n.name AS entity, projects
+ORDER BY size(projects) DESC
+```
+
+### Entities Shared Across Two Projects (via the hub)
+```cypher
+MATCH (a:Project {name: 'openclaw'})<-[:IN_PROJECT]-(n:Entity)-[:IN_PROJECT]->(b:Project {name: 'obsidian'})
+RETURN DISTINCT n.name AS shared_entity
+ORDER BY shared_entity
+```
+
+### Entities Shared Across Two Projects (via episode mentions — equivalent, no hub needed)
 ```cypher
 MATCH (a:Episodic {project: 'openclaw'})-[:MENTIONS]->(n:Entity)<-[:MENTIONS]-(b:Episodic {project: 'obsidian'})
 RETURN DISTINCT n.name AS shared_entity
 ORDER BY shared_entity
 ```
 
-### List Every `ep_*` Label With Its Count
+### List Every Project Label With Its Count
 ```cypher
 MATCH (e:Episodic)
 UNWIND labels(e) AS l
-WITH l WHERE l STARTS WITH 'ep_'
+WITH l WHERE l <> 'Episodic'
 RETURN l AS project_label, count(*) AS episodes
 ORDER BY episodes DESC
 ```
