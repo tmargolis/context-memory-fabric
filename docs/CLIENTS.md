@@ -133,6 +133,9 @@ Claude Desktop can launch and manage Context Memory Fabric automatically in the 
 
 3. Restart Claude Desktop (`Cmd + Q` and reopen). All Context Memory Fabric tools will appear in the connectors/tool list — see [Available MCP Tools Summary](#available-mcp-tools-summary) below for the full, current list (count varies with whether `LLM_WIKI_PATH` is configured).
 
+> [!NOTE]
+> **Cowork tab vs. Code tab.** These are two separate connections to the same server, not one shared connection — each needs its own connector entry configured (whether stdio per above, or the network connector below), and each registers as its own OAuth client if OAuth is configured (confirmed 2026-09-14: six separate `Claude`-named DCR client registrations exist for one person's Desktop app, one per tab/session that connected). Verified in the journal (2026-09-16) that the two resolve to **distinct** harness identities — `claude_desktop` and `claude_code` — not a collapsed single identity, so capture and `explain()` provenance correctly attribute a call to the tab it came from.
+
 ---
 
 ### Alternative: Network Connector (streamable-http or SSE)
@@ -195,7 +198,26 @@ Cloud-hosted clients (ChatGPT's connector, Gemini's web app, etc.) run outside y
 2. Expose the port via one of:
    - **Tailscale Funnel** (see below, if your tailnet is already set up) — quickest if you're already on Tailscale.
    - A reverse proxy, Cloudflare Tunnel, or other HTTPS gateway.
-3. Configure the remote MCP connector URL in the client's developer settings — `https://<your-tunnel-host>/mcp` (streamable-http) or `.../sse` (SSE).
+3. Configure the remote MCP connector URL in the client's developer settings, per the client-specific steps below. Both share one tunnel — no separate infra needed per client.
+
+### ChatGPT
+
+Confirmed working 2026-09-14.
+
+1. **Settings → Apps & Connectors → enable Developer Mode → Create connector.**
+2. Server URL must end in `/mcp` — the streamable-http URL from step 3 above.
+3. **Authentication: leave on OAuth** (Dynamic Client Registration, the default). It self-registers and walks you through §0's consent page; the "Advanced OAuth settings" panel's Client ID/Secret/endpoint fields don't need touching.
+
+A bearer token looked like the simpler choice going in, but ChatGPT's connector UI has no field for a static header at all — OAuth isn't optional here.
+
+### Gemini Spark (web + mobile)
+
+Confirmed working 2026-09-14. Spark's Connected Apps only take a hosted MCP endpoint — no local/stdio option ([support.google.com/gemini/answer/17209137](https://support.google.com/gemini/answer/17209137)).
+
+1. `gemini.google.com` → **Settings & help → Connected Apps → "Custom apps for Spark" → Add a custom app** → paste the MCP server URL.
+2. **Authentication: OAuth via Dynamic Client Registration** — the primary flow, and the one that actually works; a manual-credentials fallback exists under "Show more" but wasn't needed.
+3. **Real constraints:** personal Google account only (no work/school account), 18+, US region. Per Google's own guidance, a custom third-party MCP server is "outside Google's control" — this is your own server you already trust, not a third-party risk.
+4. **Scoping:** usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registered as) inside a Spark task — it isn't reachable from plain Gemini chat outside a Spark session.
 
 ### Exposing via Tailscale
 

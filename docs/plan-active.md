@@ -29,7 +29,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 - [ ] Same tool-discovery + functional pass as Phase 1.
 - [ ] **NOT RUN as specified (checked 2026-09-16).** The journal has no `remember` from either `claude_desktop` or `claude_code` — the only harness that ever called `remember` is ChatGPT — and no `edit_memory`/`correct-memory` call from any harness at all. So the write-then-correct-across-harnesses chain has not happened, in either direction. This is MS6c acceptance test 2 **and** MS4a's outstanding exit gate, so it gates both. Cheapest fix: run it ChatGPT→Claude Code, since ChatGPT already writes. **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
 - [x] **Capture-identity check — they resolve distinctly (verified 2026-09-16).** The journal holds both `claude_desktop` (7 events) and `claude_code` (4) as separate harness values, so the feared collapse to one `claude-desktop` identity did not happen. Confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
-- [ ] **Still absent (checked 2026-09-16)** — `docs/CLIENTS.md` contains no "Code mode"/"Code tab" text anywhere. Add a dedicated **Claude Desktop Code mode** note to §1 (currently silent on whether Cowork and Code need separate configuration).
+- [x] **Added (2026-09-16)** — §1 now carries a Cowork-vs-Code note: each tab is a separate connection needing its own connector entry, each registers its own OAuth client (6 separate `Claude` DCR registrations confirmed), and the two resolve to distinct harness identities in the journal.
 
 ### Phase 3 — Gemini Spark (web + mobile)
 
@@ -39,7 +39,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 - [ ] **Note the real constraints:** personal Google account only (no work/school account), 18+, US region, and — per Google's own guidance — custom third-party MCP servers are "outside Google's control," so this is Todd's own server he already trusts, not a third-party risk.
 - [ ] Usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registers as) inside a Spark task, not available in plain Gemini chat outside Spark — confirm this doesn't silently limit which of CMF's tools actually get invoked in practice.
 - [ ] Same functional + capture-identity pass.
-- [ ] **Still absent (checked 2026-09-16)** — §4 is still the generic "Multi-Agent & Remote Harnesses (ChatGPT, Gemini Spark, etc.)" heading, not a Spark-specific walkthrough. Add a **Gemini Spark** section to `docs/CLIENTS.md` (today's §4 is generic "remote harnesses" language; this replaces the Gemini-CLI-shaped assumption that was here before the correction).
+- [x] **Added (2026-09-16)** — §4 now has dedicated **ChatGPT** and **Gemini Spark** subsections with concrete, confirmed-working steps (Connected Apps / Custom apps for Spark; Developer Mode / Create connector), replacing the generic "etc." framing.
 
 ### Phase 4 — ChatGPT
 
@@ -54,10 +54,10 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ### Acceptance tests
 
-1. All 4 contexts (Cowork, Code, Gemini Spark, ChatGPT) can list and successfully call every registered CMF tool, with correctly-rendered output.
-2. MS4a's 5-step cross-harness capture+correction test passes end-to-end using Cowork and Code mode as the two harnesses.
-3. Capture-journal harness identity is checked for all 4 — and it's an explicit finding, not a silent assumption, whether Cowork/Code collapse to one identity or resolve distinctly.
-4. `docs/CLIENTS.md` is corrected/expanded so a new user could follow it start-to-finish for any of the 4 without hitting an undocumented gap.
+1. All 4 contexts (Cowork, Code, Gemini Spark, ChatGPT) can list and successfully call every registered CMF tool, with correctly-rendered output. **Partially evidenced** — real tool calls exist for all 4 (journal counts above), but not a systematic pass over every registered tool per client.
+2. **Not yet met.** MS4a's 5-step cross-harness capture+correction test passes end-to-end using Cowork and Code mode as the two harnesses — never run; no `remember` from either, no correction call from any harness.
+3. ✅ Capture-journal harness identity checked for all 4: `claude_desktop` and `claude_code` resolve **distinctly**, confirmed 2026-09-16 (7 and 4 real events respectively, not collapsed).
+4. ✅ `docs/CLIENTS.md` corrected/expanded (2026-09-16): Cowork-vs-Code note in §1, dedicated ChatGPT and Gemini Spark subsections in §4 replacing the generic "etc." framing.
 5. One shared tunnel serves both Gemini Spark and ChatGPT without reconfiguration.
 
 ### Exit gate
