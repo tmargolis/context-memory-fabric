@@ -1122,12 +1122,19 @@ def main():
     # the race since it happens at import time. basicConfig() is a no-op once
     # the root logger already has handlers, so without force=True this call
     # silently did nothing and every log line stayed timestamp-less.
-    logging.basicConfig(
-        level=logging.INFO,
-        stream=sys.stderr,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        force=True,
-    )
+    #
+    # _ShortNameFormatter trims the logger name to its last dotted component
+    # ("server.capture.middleware" -> "middleware") — the full module path is
+    # noise once you already know which server this is; the short name is
+    # still enough to tell log lines apart (Todd, 2026-09-16).
+    class _ShortNameFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            record.name = record.name.rsplit(".", 1)[-1]
+            return super().format(record)
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_ShortNameFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
     if args.transport in ("sse", "streamable-http"):
         import uvicorn

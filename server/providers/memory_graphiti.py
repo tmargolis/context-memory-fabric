@@ -97,6 +97,14 @@ for _httpx_logger_name in ("httpx", "httpx2"):
 def _call_counts() -> tuple[int, int]:
     return _embedding_call_count.get(), _completion_call_count.get()
 
+
+def _log_query(query: str) -> str:
+    """First 3 words of a query, for log lines — the real query (often a long
+    LLM-synthesized topic string) is noise past that point; full text isn't
+    lost, it's just not in the log (Todd, 2026-09-16)."""
+    words = query.split()
+    return " ".join(words[:3]) + ("..." if len(words) > 3 else "")
+
 # Passed to graphiti's add_episode() as `custom_extraction_instructions`, which
 # it splices into the extract_nodes / extract_edges prompts. CMF's episodes are
 # terse synthesized reasoning-episode summaries; without this nudge a reasoning
@@ -778,7 +786,7 @@ async def recall_mem(
             reranking). No Gemini call is made in this case.
     """
     graphiti, chosen_model = get_graphiti_for_operation()
-    logger.info(f"Recalling episodic memory for query: '{query}' (model: {chosen_model})")
+    logger.info(f"Recalling episodic memory for query: '{_log_query(query)}' (model: {chosen_model})")
     call_start = time.monotonic()
     embed_before, comp_before = _call_counts()
 
@@ -800,7 +808,7 @@ async def recall_mem(
 
     embed_after, comp_after = _call_counts()
     logger.info(
-        f"Recalled '{query}': {embed_after - embed_before} embedding + "
+        f"Recalled '{_log_query(query)}': {embed_after - embed_before} embedding + "
         f"{comp_after - comp_before} completion call(s) in {time.monotonic() - call_start:.1f}s "
         f"({len(results)} raw result(s))"
     )
