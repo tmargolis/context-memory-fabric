@@ -12,6 +12,8 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 **Why now:** The graph now holds 465 real episodes worth retrieving (the [Backlog](#backlog)'s review pass just finished) and MS6b's governance tools are done — there's finally something substantive to verify retrieval/correction *against* from a second context. This subsumes [MS4a](#ms4a--mcp-boundary-capture--live-verification)'s outstanding five-step live cross-harness test as Phase 1+2's combined acceptance test; once that passes, MS4a's exit gate is answered too, not just this milestone's.
 
+**Corrected 2026-09-16 (in build):** Phases 3 and 4 below each assumed a static bearer token would be enough and said in as many words *don't build OAuth unless it's actually needed*. It was needed. Neither ChatGPT's nor Gemini's connector UI has a field for a static header — both drive Dynamic Client Registration + authorization-code/PKCE, and Claude Desktop's own connector flow is OAuth-only too. So MS6c grew a real (single-user) authorization server it was explicitly scoped not to build: `server/core/oauth_provider.py`, `oauth_store.py`, `http_auth.py`, merged to `main` in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). The static-token path survives for scripted/direct access; the two are mutually exclusive at the transport level. **This is the milestone's most load-bearing finding so far** — the "bearer token is almost certainly the right call for personal single-user use" line was wrong about every client that matters.
+
 **What this is not:** new capability. `docs/CLIENTS.md` already documents stdio config for Claude Desktop/Cursor/VS Code and a generic remote-HTTP path (`--transport streamable-http`/`sse`) for remote clients — the server already supports all three transports (`server/mcp.py`'s `--transport {stdio,sse,streamable-http}`). This milestone is about *actually running* those configs against each real client and fixing whatever CLIENTS.md gets wrong.
 
 ### Phase 1 — Claude Desktop: Cowork mode
@@ -26,14 +28,14 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 - [ ] Check whether the Code tab shares Desktop's global `mcpServers` config automatically, or needs its own `.mcp.json`/project-level config the way the standalone Claude Code CLI does — this is a real open question, not an assumption either way, since Desktop's Code tab may not behave identically to the CLI it's built on.
 - [ ] Same tool-discovery + functional pass as Phase 1.
 - [ ] **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
-- [ ] Capture-identity check: confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
+- [x] **Capture-identity check — they resolve distinctly (verified 2026-09-16).** The journal holds both `claude_desktop` (7 events) and `claude_code` (4) as separate harness values, so the feared collapse to one `claude-desktop` identity did not happen. Confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
 - [ ] Add a dedicated **Claude Desktop Code mode** note to `docs/CLIENTS.md` §1 (currently silent on whether Cowork and Code need separate configuration).
 
 ### Phase 3 — Gemini Spark (web + mobile)
 
 - [ ] **Requires a public MCP server URL** — Gemini Spark's Connected Apps only take a hosted MCP endpoint, no local/stdio option (confirmed 2026-09-11 against Google's own support docs: [support.google.com/gemini/answer/17209137](https://support.google.com/gemini/answer/17209137)). Same underlying requirement as Phase 4 (ChatGPT) — **share one tunnel setup across both phases** rather than building it twice: run `server/mcp.py --transport streamable-http --port 8000` and expose it via a persistent tunnel (Cloudflare Tunnel/ngrok), ideally as a `launchd` service mirroring `com.cmf.spark-tunnel.plist` from this session.
-- [ ] Connect: `gemini.google.com` → Settings & help → Connected Apps → "Custom apps for Spark" → Add a custom app → paste the MCP server URL. If the server doesn't support Dynamic Client Registration (CMF's doesn't yet), use "Show more" under Advanced features to enter credentials manually.
-- [ ] Decide auth for this path specifically — DCR/OAuth is the primary expected flow per Google's docs; verify whether the manual-credentials fallback actually accepts a simple bearer token in practice, or requires something closer to real OAuth. Don't assume; this is exactly the kind of detail that changes on contact with the real UI.
+- [x] **Connected (2026-09-14)** — three `Google` DCR registrations in `oauth_clients` (redirect `oauth-redirect-sandbox.googleusercontent.com`). Route: `gemini.google.com` → Settings & help → Connected Apps → "Custom apps for Spark" → Add a custom app → paste the MCP server URL. If the server doesn't support Dynamic Client Registration (CMF's doesn't yet), use "Show more" under Advanced features to enter credentials manually.
+- [x] **Decided: real OAuth, not the bearer fallback (2026-09-14).** Exactly the detail that changed on contact with the real UI, as this task warned — CMF now implements DCR + PKCE rather than leaning on manual credentials. See the 2026-09-16 correction above.
 - [ ] **Note the real constraints:** personal Google account only (no work/school account), 18+, US region, and — per Google's own guidance — custom third-party MCP servers are "outside Google's control," so this is Todd's own server he already trusts, not a third-party risk.
 - [ ] Usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registers as) inside a Spark task, not available in plain Gemini chat outside Spark — confirm this doesn't silently limit which of CMF's tools actually get invoked in practice.
 - [ ] Same functional + capture-identity pass.
@@ -41,9 +43,11 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ### Phase 4 — ChatGPT
 
-- [ ] Reuse Phase 3's tunnel — same `streamable-http` endpoint, no separate infra needed.
-- [ ] Connect: Settings → Apps & Connectors → enable Developer Mode → Create connector → server URL must end in `/mcp` → OAuth or bearer token (confirmed 2026-09-11).
-- [ ] Decide auth: a bearer token is almost certainly the right call for personal single-user use over full OAuth — flag as the recommended default, don't build OAuth unless it's actually needed.
+- [x] Reuse Phase 3's tunnel — same `streamable-http` endpoint, no separate infra needed. Held up: one endpoint served both.
+
+- [ ] **Still open across Phases 1-4:** the per-client *functional* pass. Registration and token issue are evidenced (5 live access/refresh pairs); what is **not** evidenced anywhere is that every tool was actually listed and called from each client with correctly-rendered output, which is what acceptance tests 1 and 4 require. Todd to confirm per client, or re-run.
+- [x] **Connected (2026-09-14)** — one `ChatGPT` DCR registration in `oauth_clients` (redirect `chatgpt.com/connector/oauth/...`). Route: Settings → Apps & Connectors → Developer Mode → Create connector → server URL ending in `/mcp`, Authentication left on **OAuth** (DCR), so the Advanced OAuth client-id/secret fields stay untouched.
+- [x] **Decided, against this task's own recommendation (2026-09-14).** ChatGPT's connector UI has no static-header field at all, so OAuth was not optional. Superseded by the 2026-09-16 correction above.
 - [ ] Same tool-discovery + functional + capture-identity pass.
 - [ ] Update CLIENTS.md §4 with the concrete, current ChatGPT steps — today it's generic where it could be exact.
 
@@ -63,6 +67,46 @@ Does the MCP server actually work, end-to-end, inside Claude Desktop (both modes
 **Risk:** Low-medium. The tunnel is the main new operational surface — same class of concern as the Spark SSH tunnel (needs to stay up reliably, exposes a port that needs real auth, not "trust the network"). Gemini Spark's DCR/OAuth requirement is an unknown until tested — may need real OAuth implementation work, not just a bearer token, unlike ChatGPT.
 
 ---
+
+## MS6d — Durable-knowledge proposal review (2026-09-16)
+
+**Goal:** Make `propose_wiki_update` a loop that closes. Today a proposal can be created and then nothing — there is no way to list, read, approve, reject, or apply one, so every proposal ever made is inert.
+
+**Why now:** Found 2026-09-16 when Todd created `prop_20260916_125736_a33f295a` and asked how to review it. The answer was: you can't. **76 proposals sit in `wiki-proposals/`, every one `pending_review`**, going back to 2026-09-01. This is the unbuilt half of [Milestone 6's](ROADMAP.md#milestone-6--build-memory-review-and-governance) *"proposing durable-knowledge changes"* deliverable: MS6a/MS6b built the episodic review path (`server/review/`), and nothing ever built the durable-knowledge one. `server/review/cli.py`'s `approve_episode`/`promote_approved` operate on the consolidation store and have no knowledge of `wiki-proposals/`.
+
+**State of the code:** `create_wiki_proposal()` exists and works. `list_proposals()` and `get_proposal()` exist in `server/proposals.py` and are unit-tested (`tests/test_step6b_proposals.py`) but were **never registered as MCP tools**. Approve/reject/apply do not exist in any form — `status` is a field only `create` ever sets, and nothing in `server/` writes into the corpus root at all.
+
+**MCP-only, by decision (Todd, 2026-09-16).** An early draft put the mutating half behind a CLI on the MS6 precedent. Rejected: MS6's CLI exists because bulk-triaging 36,000 words of episodic statements in a terminal is cheaper than a chat round-trip per verdict, and a wiki proposal is one diff against one file — chat is the *better* surface, and CMF is meant to be consumed via MCP. The safety property that motivated the CLI is preserved inside MCP instead, by splitting the decision from the write.
+
+### Tasks
+
+- [ ] `list_wiki_proposals(status=...)` — register the existing `list_proposals()`. Read-only.
+- [ ] `get_wiki_proposal(proposal_id)` — register the existing `get_proposal()`; returns rationale, unified diff, and `current_sha256`.
+- [ ] `review_wiki_proposal(proposal_id, verdict, notes=None)` — sets `approved`/`rejected`, records reviewer, timestamp, and free-text notes (`notes` per Todd, 2026-09-16 — a verdict without a reason loses why it was made). Records a decision; touches nothing canonical.
+- [ ] `apply_wiki_proposal(proposal_id, expected_sha256, dry_run=True)` — the only tool that writes to `LLM_WIKI_PATH`. Refuses any proposal not already `approved`, so no single call gets from draft to canonical write. `dry_run=True` default. `destructive_hint=True` so clients surface a confirmation.
+- [ ] **Stale-base guard.** `current_sha256` is recorded at creation and read by nothing. On apply, re-hash the target and refuse on mismatch; for `operation: "create"`, refuse if the file now exists. With 76 proposals up to two weeks old this will fire in practice, not just in theory.
+- [ ] **Git commit in the corpus on apply.** `LLM_WIKI_PATH` (`/Users/todd/LLM_Wiki`) is a git repo, so one commit per applied proposal is a free undo path.
+- [ ] `bulk_reject_wiki_proposals(...)` — for triaging the 76-item backlog without 76 round-trips. Mirrors `bulk-reject`'s recorded-action shape from the episodic side.
+- [ ] **Status vocabulary + migration.** Decide the terminal states (`applied` distinct from `approved`?) and how an applied proposal records the resulting commit sha. Existing 76 files must keep loading — `WikiProposal.from_dict` maps JSON keys positionally onto the dataclass, so any new field needs a default.
+- [ ] **Post-apply staleness.** `search_wiki` caches its filesystem scan (`force_rescan` clears it) and MS7b's wiki-derived graph layer is built offline, so an applied proposal leaves both stale. Decide whether apply invalidates the cache itself or just says so.
+- [ ] Tests, including a stale-base rejection and an apply-without-approval rejection.
+
+### Acceptance tests
+
+1. From a single MCP client, with no shell access: list pending proposals, read one's diff, approve it with notes, dry-run the apply, then apply it — and see the change in `LLM_Wiki` with a matching git commit.
+2. `apply_wiki_proposal` on a `pending_review` proposal is refused.
+3. A proposal whose target changed since creation is refused with a message naming the drift, not silently overwritten.
+4. `prop_20260916_125736_a33f295a` — the proposal that started this — reaches a terminal state.
+5. The other 75 are triaged to a terminal state, or the backlog is deliberately kept with a recorded reason.
+
+### Exit gate
+
+Can durable knowledge be proposed, reviewed, and promoted into the corpus entirely through MCP, without a shell? And does the approve/apply split actually hold — is there any path from a single tool call to a canonical write?
+
+**Effort:** small. Two tools are registration-only; the real work is apply's safety rails, the status migration, and tests.
+
+**Risks:** it is the first code in CMF that writes into `LLM_WIKI_PATH`. Everything to date treats the corpus as read-only, so the blast radius of a bug is Todd's actual wiki — hence the git commit, the dry run, and the sha guard rather than any one of them alone.
+
 
 ## MS4a — MCP-boundary capture — live verification
 
@@ -239,6 +283,16 @@ MS6b's governance tooling ([plan-history.md](plan-history.md#ms6b--governance)) 
 - [ ] **The corpus is growing, not static.** The reasoning-episode pool alone grew from 1,243 rows (the 2026-09-05/06 reprocess) to 1,310 by 2026-09-11 — capture (MCP-boundary + imports) kept running after the 2026-09-08 review pass. A recurring/periodic tier-1 review pass is probably the more accurate framing going forward, rather than treating any fixed count as a target to eventually finish. `uv run python -m server.review.cli queue --tier 1` shows what's currently outstanding.
 - **Not sourced from new adapters at all yet:** MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI) remain unbuilt — none of the above touches those.
 - **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
+
+### Auth hardening (deferred out of MS6c, 2026-09-16)
+
+Raised in review on [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) and consciously merged without fixing (Todd, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`.
+
+- [ ] **The auth layer has no test coverage at all.** No test references `OAuthStore`, `CMFOAuthProvider`, or `BearerTokenAuthMiddleware`; the suite's 383 passing tests do not execute one line of `server/core/oauth_provider.py`, `oauth_store.py`, or `http_auth.py`. For the code standing between the open internet and `remember`/`edit_memory`/`import_chatgpt_exports`, that is the gap worth closing first — the flow has enough state transitions (consent → code → token → refresh → rotate) that a regression would be silent and would present as a client-side bug. Highest value: a full round-trip test through the provider, plus the refusal cases (wrong password, expired code, reused code, wrong client_id on exchange).
+- [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all.
+- [ ] **Tokens are stored in plaintext.** `oauth_access_tokens.token` / `oauth_refresh_tokens.token` are raw values used as PRIMARY KEY, in the same `journal.db` the journal writes. A stray copy or backup is working credentials for 30 and 180 days. Storing SHA-256 and looking up by hash is one line per save/get pair.
+- [ ] **No rate limiting on the consent password**, which is the entire security boundary by design, on an endpoint reachable by anyone who finds the URL. `openssl rand -hex 16` as documented makes brute force infeasible — so the real action is making CLIENTS.md say that recommendation is load-bearing rather than advisory.
+- [ ] **Minor.** `http_auth.py`'s docstring says the SDK's OAuth machinery is "deliberately not" used, which the same PR reversed — a reader hitting that file first concludes OAuth was rejected. `_codes` is pruned only when an entry is read, so approved-but-never-exchanged codes persist for the process lifetime. `secrets.compare_digest` raises `TypeError` on a non-ASCII password rather than cleanly denying.
 
 ### Assembly refinements (deferred out of MS7)
 

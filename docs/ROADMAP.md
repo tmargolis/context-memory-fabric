@@ -372,7 +372,7 @@ Deliverables:
   - viewing conflicts and supersession;
   - editing retention and privacy classifications;
   - exporting or deleting scoped context;
-  - proposing durable-knowledge changes;
+  - proposing durable-knowledge changes — *the episodic half shipped as MS6a/MS6b; the durable-knowledge half is [MS6d](plan-active.md#ms6d--durable-knowledge-proposal-review-2026-09-16), scoped 2026-09-16 after 76 proposals were found inert with no review path*;
 - explicit personal, project, team, and organization scopes;
 - access-policy enforcement at ingestion and retrieval;
 - audit records for memory and knowledge mutations.
