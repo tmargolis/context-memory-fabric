@@ -23,27 +23,27 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 
 | # | Milestone | Focus | Status |
 |--:|---|---|---|
-| 1 | [MS0.5](plan-history.md#ms05--baseline-correctness-and-wiring) | Baseline correctness & wiring | done |
-| 2 | [MS1](plan-history.md#ms1--extract-provider-interfaces-without-changing-behavior) | Provider interfaces | done |
-| 3 | [MS2](plan-history.md#ms2--canonical-event-journal-importers-and-backfill) | Canonical event journal + importers + backfill | done |
-| 4 | [MS3](plan-history.md#ms3--separate-capture-from-consolidation) | Capture / consolidation split | done |
-| 5 | [MS3.5](plan-history.md#ms35--reasoning-episode-consolidation-adr-0005) | Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) | done 2026-09-07 |
-| 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | done 2026-09-07 |
-| 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | done 2026-09-08 |
-| — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
-| 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog) |
+| 1 | [MS0.5](plan-history.md#ms05--baseline-correctness-and-wiring) | Baseline correctness & wiring | 🟢 done |
+| 2 | [MS1](plan-history.md#ms1--extract-provider-interfaces-without-changing-behavior) | Provider interfaces | 🟢 done |
+| 3 | [MS2](plan-history.md#ms2--canonical-event-journal-importers-and-backfill) | Canonical event journal + importers + backfill | 🟢 done |
+| 4 | [MS3](plan-history.md#ms3--separate-capture-from-consolidation) | Capture / consolidation split | 🟢 done |
+| 5 | [MS3.5](plan-history.md#ms35--reasoning-episode-consolidation-adr-0005) | Reasoning-episode consolidation ([ADR 0005](adr/0005-reasoning-episode-capture.md)) | 🟢 done 2026-09-07 |
+| 6 | [MS3.6](plan-history.md#ms36--promotion-staged-memories-into-the-retrievable-graph) | Promotion: staged memories → retrievable graph | 🟢 done 2026-09-07 |
+| 7 | [MS6a](plan-active.md#ms6a--review-surface--built) | Review surface — project-bucketed queue, audit chokepoint, bulk governance; tier-1 pass | 🟢 done 2026-09-08 |
+| — | [*Spark migration*](SPARK-MIGRATION-PLAN.md) | Gemini → Spark-local inference | 🟢 done 2026-09-09 · [history](plan-history.md#spark-local-inference-migration--phases-0-6-2026-09-08--09) |
+| 8 | [MS7](plan-history.md#ms7--context-assembly-quality) | Context assembly quality | 🟢 **done 2026-09-10** — answer-quality eval; `get_context` 0.07 → **1.60 / 80%** of a complete answer, beats every single-provider baseline. Refinements → [plan-active Backlog](plan-active.md#backlog) |
 | | | *— retrieval loop proven end-to-end here —* | |
-| 9 | [MS6b](plan-history.md#ms6b--governance) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation | **done 2026-09-11** — live-FalkorDB exit gate passed 6/6; a corpus review pass ([plan-active Backlog](plan-active.md#backlog)) then took the graph 295 → 465 episodes using it |
-| 10 | [**MS6c**](plan-active.md#ms6c--mcp-server-cross-agent-verification-2026-09-11) | MCP server cross-agent verification — Claude Desktop (Cowork → Code mode) → Gemini Spark (web/mobile) → ChatGPT | in progress — all 4 client families completed OAuth DCR (2026-09-14); the auth server MS6c was scoped *not* to build shipped in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). Functional passes evidenced for all 4 (ChatGPT 25 tool calls, Claude Desktop 7, Code 4, Gemini 2). **Not done:** MS4a's 5-step cross-harness write/correct test (never run — no `remember` from either Claude harness, no correction call from any), plus two CLIENTS.md sections. Hardening → [plan-active Backlog](plan-active.md#backlog) |
-| 10.5 | [**MS6d**](plan-active.md#ms6d--durable-knowledge-proposal-review-2026-09-16) | Durable-knowledge proposal review — list/get/review/apply over MCP | **in progress 2026-09-16** — closes MS6's unbuilt "proposing durable-knowledge changes" deliverable; 76 proposals inert since 2026-09-01 ← here |
-| — | [**MS7b**](plan-active.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) | *Experiment* — wiki-derived entity layer (`mem-fabric-local-wiki`) + enriched episode bodies | in progress, branch `ms7b-wiki-entities` (parked, off `main`). Phases 1–5 done; **adopt-or-discard still undecided** — Phase 5 found `-wiki` does not beat `-ep`. `FALKORDB_DATABASE` points at `-wiki` as interim default only |
-| 11 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | built; verification folded into MS6c Phases 1-2 |
-| 12 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | |
-| 13 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | |
-| 14 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | |
-| 15 | [MS5](plan-active.md#ms5--knowledge-provider-generalization) | Knowledge-provider generalization | |
-| 16 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | |
-| 17 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | |
+| 9 | [MS6b](plan-history.md#ms6b--governance) | Governance — `explain()` into the graph, `correct_memory`, deletion propagation | 🟢 **done 2026-09-11** — live-FalkorDB exit gate passed 6/6; a corpus review pass ([plan-active Backlog](plan-active.md#backlog)) then took the graph 295 → 465 episodes using it |
+| 10 | [**MS6c**](plan-active.md#ms6c--mcp-server-cross-agent-verification-2026-09-11) | MCP server cross-agent verification — Claude Desktop (Cowork → Code mode) → Gemini Spark (web/mobile) → ChatGPT | 🟡 **in progress** — all 4 client families completed OAuth DCR (2026-09-14); the auth server MS6c was scoped *not* to build shipped in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). Functional passes evidenced for all 4 (ChatGPT 25 tool calls, Claude Desktop 7, Code 4, Gemini 2). **Not done:** MS4a's 5-step cross-harness write/correct test (never run — no `remember` from either Claude harness, no correction call from any), plus two CLIENTS.md sections. Hardening → [plan-active Backlog](plan-active.md#backlog) |
+| 10.5 | [**MS6d**](plan-active.md#ms6d--durable-knowledge-proposal-review-2026-09-16) | Durable-knowledge proposal review — list/get/review/apply over MCP | 🟡 **in progress 2026-09-16** — closes MS6's unbuilt "proposing durable-knowledge changes" deliverable; 76 proposals inert since 2026-09-01 |
+| — | [**MS7b**](plan-active.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) | *Experiment* — wiki-derived entity layer (`mem-fabric-local-wiki`) + enriched episode bodies | 🟡 **in progress**, branch `ms7b-wiki-entities` (parked, off `main`). Phases 1–5 done; **adopt-or-discard still undecided** — Phase 5 found `-wiki` does not beat `-ep`. `FALKORDB_DATABASE` points at `-wiki` as interim default only ← here |
+| 11 | [MS4a](plan-active.md#ms4a--mcp-boundary-capture--live-verification) | MCP-boundary capture — live cross-harness verification | 🟡 built; verification folded into MS6c Phases 1-2 |
+| 12 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | ⚪ |
+| 13 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | ⚪ |
+| 14 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | ⚪ |
+| 15 | [MS5](plan-active.md#ms5--knowledge-provider-generalization) | Knowledge-provider generalization | ⚪ |
+| 16 | [MS8](plan-active.md#ms8--replay-and-evaluation) | Replay and evaluation | ⚪ |
+| 17 | [MS9](plan-active.md#ms9--distribution-and-ecosystem) | Distribution | ⚪ |
 
 **Why this order.** `get_context` / `recall` / `search_wiki` already work against whatever is in the graph plus the LLM Wiki. MS6a's tier-1 review is done — **295 reviewed episodes are now in the retrievable graph** (`mem-fabric-local`, Spark-local extraction) — MS7 (assembly quality) is **done** — `get_context` measurably beats both single-provider baselines (80% of a complete answer vs 50–53%), with the answer-quality eval kept as a reusable instrument. MS6b (correction / deletion / `explain()` into the graph) was sequenced *after* MS7: all of it serves the promoted rows, and the correction path should be designed after a real assembly pass, not before. MS6b's exit gate then unblocked a full corpus review pass (295 → 465 episodes) — with a real graph now worth retrieving from, **MS6c** checks that the MCP server actually works from the real client apps before more capture adapters (MS4b–MS4d) get built on top of it. MS5 comes after the retrieval loop is proven.
 
@@ -131,22 +131,23 @@ Rows in **execution order**, not milestone-number order. Estimates assume agent-
 
 | Milestone | Sessions | Cumulative | Status |
 |---|---:|---:|---|
-| MS0.5 | 1–2 | 2 | done |
-| MS1 | 3–4 | 6 | done |
-| MS2 | 5–7 | 13 | done |
-| MS3 | 4–5 | 18 | done |
-| MS3.5 | 5–7 | ~24 | done — 1,243 episodes / 659 threads; no auto-accept threshold; three-tier routing |
-| MS3.6 | 2–3 | ~27 | done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251); 22 keeps, then the full 295 tier-1 set promoted |
-| MS6a (review surface + tier-1 pass) | 5–6 | ~33 | done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
-| Spark migration (Gemini → Spark-local) | ~4 | ~37 | done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
-| MS7 (context assembly quality) | 4–5 | ~42 | **done 2026-09-10** |
-| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | **done 2026-09-11** — live-graph exit gate passed 6/6; 4 bugs found and fixed exercising it for real |
-| Corpus review pass (295 → 465 episodes) | 1 | ~46 | done 2026-09-11 — [plan-active Backlog](plan-active.md#backlog) |
-| MS6c (MCP server cross-agent verification) | 2–3 | ~49 | in progress — grew an unplanned OAuth server (PR #6, 2026-09-16); functional pass outstanding |
-| MS6d (durable-knowledge proposal review) | 1 | ~50 | new 2026-09-16 — MCP-only review/apply loop for `wiki-proposals/`; first code that writes to `LLM_WIKI_PATH` |
-| MS4a (live cross-harness verification) | — | ~49 | built; verification folded into MS6c Phases 1-2, no separate effort |
-| MS4b (Claude Code) | 3–4 | ~53 | |
-| MS4c (OpenClaw) | 4–5 | ~58 | |
-| MS4d (Codex, Gemini CLI) | 4–6 | ~64 | |
-| MS5 (knowledge-provider generalization) | 3–4 | ~68 | |
-| MS8–MS9 (replay/eval, distribution) | 8–11 | ~78 | |
+| MS0.5 | 1–2 | 2 | 🟢 done |
+| MS1 | 3–4 | 6 | 🟢 done |
+| MS2 | 5–7 | 13 | 🟢 done |
+| MS3 | 4–5 | 18 | 🟢 done |
+| MS3.5 | 5–7 | ~24 | 🟢 done — 1,243 episodes / 659 threads; no auto-accept threshold; three-tier routing |
+| MS3.6 | 2–3 | ~27 | 🟢 done — `promote_reviewed`, tier routing, coverage auto-resolve (−3,251); 22 keeps, then the full 295 tier-1 set promoted |
+| MS6a (review surface + tier-1 pass) | 5–6 | ~33 | 🟢 done 2026-09-08 — project-bucketed queue, audit chokepoint, 295 approved / 6 rejected |
+| Spark migration (Gemini → Spark-local) | ~4 | ~37 | 🟢 done 2026-09-09 — qwen3.5-122b + nomic; own plan file |
+| MS7 (context assembly quality) | 4–5 | ~42 | 🟢 **done 2026-09-10** |
+| MS6b (governance — correct / delete / `explain()`) | 2–3 | ~45 | 🟢 **done 2026-09-11** — live-graph exit gate passed 6/6; 4 bugs found and fixed exercising it for real |
+| Corpus review pass (295 → 465 episodes) | 1 | ~46 | 🟢 done 2026-09-11 — [plan-active Backlog](plan-active.md#backlog) |
+| MS6c (MCP server cross-agent verification) | 2–3 | ~49 | 🟡 in progress — grew an unplanned OAuth server (PR #6, 2026-09-16); functional pass outstanding |
+| MS6d (durable-knowledge proposal review) | 1 | ~50 | 🟡 new 2026-09-16 — MCP-only review/apply loop for `wiki-proposals/`; first code that writes to `LLM_WIKI_PATH` |
+| MS7b (wiki-derived entity layer, experiment) | 4 (actual) | ~54 | 🟡 in progress, branch `ms7b-wiki-entities` — Phases 1–5 done, adopt-or-discard undecided |
+| MS4a (live cross-harness verification) | — | ~49 | 🟡 built; verification folded into MS6c Phases 1-2, no separate effort |
+| MS4b (Claude Code) | 3–4 | ~53 | ⚪ |
+| MS4c (OpenClaw) | 4–5 | ~58 | ⚪ |
+| MS4d (Codex, Gemini CLI) | 4–6 | ~64 | ⚪ |
+| MS5 (knowledge-provider generalization) | 3–4 | ~68 | ⚪ |
+| MS8–MS9 (replay/eval, distribution) | 8–11 | ~78 | ⚪ |
