@@ -349,6 +349,18 @@ class WikiCorpusManager:
 _GLOBAL_CORPUS_MANAGER = WikiCorpusManager()
 
 
+def invalidate_corpus_cache() -> None:
+    """Drop the in-memory corpus cache so the next search_wiki call rescans from disk.
+
+    Called after apply_wiki_proposal writes a real change into LLM_Wiki (MS6d), so a
+    newly-applied page isn't invisible behind the cached index until something else
+    happens to pass force_rescan=True. Lazy — does not rescan immediately, just marks
+    the cache stale, since a rescan can be expensive and applies are rare.
+    """
+    _GLOBAL_CORPUS_MANAGER._engine = None
+    _GLOBAL_CORPUS_MANAGER._assets = None
+
+
 def format_search_results_for_mcp(results: list[SearchResult], query: str) -> str:
     """Format SearchResult objects into clean Markdown suitable for MCP tool responses."""
     if not results:

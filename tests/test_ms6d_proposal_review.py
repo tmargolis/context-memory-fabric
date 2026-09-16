@@ -277,5 +277,61 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.assertEqual(reloaded.status, "pending_review")
 
 
+class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
+    """apply_wiki_proposal must invalidate search_wiki's cache on a real apply
+    (found 2026-09-16: a real apply's target was invisible to search_wiki until
+    something else happened to force a rescan)."""
+
+    def test_invalidate_corpus_cache_clears_engine_and_assets(self):
+        from server.wiki import _GLOBAL_CORPUS_MANAGER, invalidate_corpus_cache
+
+        _GLOBAL_CORPUS_MANAGER._engine = object()
+        _GLOBAL_CORPUS_MANAGER._assets = [object()]
+
+        invalidate_corpus_cache()
+
+        self.assertIsNone(_GLOBAL_CORPUS_MANAGER._engine)
+        self.assertIsNone(_GLOBAL_CORPUS_MANAGER._assets)
+
+    async def test_real_apply_invalidates_cache(self):
+        from unittest.mock import patch
+        from server.mcp import apply_wiki_proposal as mcp_apply_wiki_proposal
+
+        fake_result = {
+            "dry_run": False,
+            "proposal_id": "prop_fake",
+            "wrote": "WIKI/fake.md",
+            "operation": "create",
+            "commit_sha": "abc123",
+        }
+        with patch("server.mcp.apply_proposal", return_value=fake_result), \
+             patch("server.mcp.invalidate_corpus_cache") as mock_invalidate:
+            message = await mcp_apply_wiki_proposal(
+                proposal_id="prop_fake", expected_sha256="deadbeef", dry_run=False
+            )
+
+        mock_invalidate.assert_called_once()
+        self.assertIn("cache was invalidated", message)
+
+    async def test_dry_run_apply_does_not_invalidate_cache(self):
+        from unittest.mock import patch
+        from server.mcp import apply_wiki_proposal as mcp_apply_wiki_proposal
+
+        fake_result = {
+            "dry_run": True,
+            "proposal_id": "prop_fake",
+            "would_write": "WIKI/fake.md",
+            "operation": "create",
+        }
+        with patch("server.mcp.apply_proposal", return_value=fake_result), \
+             patch("server.mcp.invalidate_corpus_cache") as mock_invalidate:
+            message = await mcp_apply_wiki_proposal(
+                proposal_id="prop_fake", expected_sha256="deadbeef", dry_run=True
+            )
+
+        mock_invalidate.assert_not_called()
+        self.assertNotIn("cache was invalidated", message)
+
+
 if __name__ == "__main__":
     unittest.main()

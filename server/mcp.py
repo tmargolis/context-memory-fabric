@@ -52,7 +52,7 @@ from server.proposals import (
     list_proposals,
     review_proposal,
 )
-from server.wiki import search_wiki as query_wiki
+from server.wiki import invalidate_corpus_cache, search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
 
@@ -685,11 +685,17 @@ async def apply_wiki_proposal(
 
     SIDE EFFECTS:
     - dry_run=True (default): none. dry_run=False: writes the target file inside
-      LLM_WIKI_PATH and, best-effort, a git commit there.
+      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates
+      search_wiki's in-memory corpus cache so the change is visible on the next
+      search_wiki call rather than sitting behind a stale index.
     """
     try:
         result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run)
-        return format_apply_result(result)
+        message = format_apply_result(result)
+        if not result["dry_run"]:
+            invalidate_corpus_cache()
+            message += "\n\n`search_wiki`'s cache was invalidated — the next call rescans from disk."
+        return message
     except ValueError as e:
         return f"Could not apply proposal '{proposal_id}': {e}"
     except Exception as e:
