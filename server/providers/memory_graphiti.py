@@ -14,6 +14,7 @@ unchanged from their pre-Milestone-1 form.
 """
 
 import asyncio
+import contextvars
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -21,6 +22,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any, Literal, Optional, Union, overload
 
 from dotenv import load_dotenv
@@ -45,6 +47,55 @@ logger = logging.getLogger(__name__)
 
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}
+
+# graphiti_core's own FalkorDB driver logs `Index already exists: ...` at INFO
+# every time add_episode() re-attempts index creation -- which is every call,
+# since the indices are already there after the first run. Never informative
+# past that first run; pure per-episode noise (2026-09-15 log-verbosity pass).
+logging.getLogger("graphiti_core.driver.falkordb_driver").setLevel(logging.WARNING)
+
+# httpx logs one bare `HTTP Request: POST .../embeddings "HTTP/1.1 200 OK"` (or
+# .../chat/completions) line per call, with no indication of which higher-level
+# operation triggered it or why -- a single remember() episode can produce
+# 15-20 of these. Rather than lose that signal entirely, count them (via
+# contextvars so concurrent remember_queued() background tasks don't
+# cross-contaminate counts -- asyncio.create_task() copies the current
+# context, so each background task's counters start independently at 0) and
+# suppress the raw per-request line; remember()/recall_mem() log one summary
+# instead, attributing the counts to the operation that caused them.
+_embedding_call_count: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_embedding_call_count", default=0
+)
+_completion_call_count: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_completion_call_count", default=0
+)
+
+
+class _HttpxCallCounterFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno > logging.INFO:
+            return True  # never suppress a genuine httpx warning/error
+        msg = record.getMessage()
+        if "/embeddings" in msg:
+            _embedding_call_count.set(_embedding_call_count.get() + 1)
+            return False
+        if "/chat/completions" in msg:
+            _completion_call_count.set(_completion_call_count.get() + 1)
+            return False
+        return True
+
+
+# Both loggers are attached: this venv has both `httpx` (0.28.1) and `httpx2`
+# (2.12.0) installed, and the openai SDK version in use here is built on
+# httpx2 specifically (`logging.getLogger("httpx2")` in httpx2/_client.py) --
+# confirmed 2026-09-15 after a first attempt at this fix silently counted
+# zero calls because it only covered the "httpx" name.
+for _httpx_logger_name in ("httpx", "httpx2"):
+    logging.getLogger(_httpx_logger_name).addFilter(_HttpxCallCounterFilter())
+
+
+def _call_counts() -> tuple[int, int]:
+    return _embedding_call_count.get(), _completion_call_count.get()
 
 # Passed to graphiti's add_episode() as `custom_extraction_instructions`, which
 # it splices into the extract_nodes / extract_edges prompts. CMF's episodes are
@@ -73,27 +124,32 @@ EXTRACTION_INSTRUCTIONS = (
 class MissingGraphConfigurationError(RuntimeError):
     """Raised when no FalkorDB target graph can be resolved.
 
-    FALKORDB_DATABASE previously defaulted silently to "default_db" when unset.
-    That caused production reads/writes to diverge from the graph an operator
+    FALKORDB_DATABASE previously defaulted silently to "default_db" when unset,
+    which caused production reads/writes to diverge from the graph an operator
     believed was configured (see docs/adr/0003-graph-and-state-topology.md).
-    Failing loudly here is deliberate: a misconfigured deployment must not
-    silently read or write the wrong episodic graph.
+    As of MS6c, `resolve_target_database()` falls back to `DEFAULT_GRAPH_NAME`
+    instead of raising — kept importable for callers that still want to treat
+    an unresolved graph as fatal.
     """
 
 
+# MS6c: deliberately a non-production sandbox, not mem-fabric-local-ep or
+# mem-fabric-local-wiki, so a client with no FALKORDB_DATABASE configured
+# can't silently read or write production data during harness comparison
+# testing. Still overridden by an explicit graph_name or FALKORDB_DATABASE.
+DEFAULT_GRAPH_NAME = "default_db"
+
+
 def resolve_target_database(graph_name: Optional[str] = None) -> str:
-    """Resolve the FalkorDB graph name to use, with no implicit default.
+    """Resolve the FalkorDB graph name to use.
 
     Args:
         graph_name: Explicit override (e.g. from an MCP tool argument). Takes
             precedence over environment configuration when non-empty.
 
     Returns:
-        The resolved graph name.
-
-    Raises:
-        MissingGraphConfigurationError: if neither `graph_name` nor the
-            `FALKORDB_DATABASE` environment variable is set.
+        The resolved graph name: `graph_name` if given, else
+        `FALKORDB_DATABASE` if set, else `DEFAULT_GRAPH_NAME`.
     """
     if graph_name and graph_name.strip():
         return graph_name.strip()
@@ -102,12 +158,7 @@ def resolve_target_database(graph_name: Optional[str] = None) -> str:
     if env_value and env_value.strip():
         return env_value.strip()
 
-    raise MissingGraphConfigurationError(
-        "FALKORDB_DATABASE is not set and no graph_name was provided. "
-        "Set FALKORDB_DATABASE in the project-root .env file (e.g. "
-        "FALKORDB_DATABASE=memory-fabric) to select the target FalkorDB graph. "
-        "There is no default graph name."
-    )
+    return DEFAULT_GRAPH_NAME
 
 
 def _require_gemini_key() -> str:
@@ -379,6 +430,8 @@ async def remember(
     episode_name = name or f"memory_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
     logger.info(f"Ingesting memory episode: '{episode_name}' (model: {chosen_model})")
+    call_start = time.monotonic()
+    embed_before, comp_before = _call_counts()
 
     for attempt in range(max_retries):
         try:
@@ -402,12 +455,89 @@ async def remember(
             else:
                 raise
 
+    embed_after, comp_after = _call_counts()
+    logger.info(
+        f"Ingested '{episode_name}': {embed_after - embed_before} embedding + "
+        f"{comp_after - comp_before} completion call(s) in {time.monotonic() - call_start:.1f}s"
+    )
+
     return {
         "status": "success",
         "name": episode_name,
         "reference_time": ref_time.isoformat(),
         "source_description": source_description,
         "message": f"Successfully remembered episode '{episode_name}' in episodic memory.",
+    }
+
+
+# Strong references for remember_queued()'s background tasks. asyncio only
+# holds a *weak* reference to a task once nothing else does, so a bare
+# `asyncio.create_task(...)` with no reference kept can be garbage-collected
+# mid-flight -- the documented footgun the stdlib itself warns about. Each
+# task removes itself on completion via add_done_callback.
+_BACKGROUND_REMEMBER_TASKS: set[asyncio.Task] = set()
+
+
+async def remember_queued(
+    content: str,
+    name: Optional[str] = None,
+    source_description: str = "Context Memory Fabric MCP",
+    reference_time: Optional[datetime] = None,
+    max_retries: int = 3,
+) -> dict[str, Any]:
+    """Queue an episode for background ingestion via remember() and return immediately.
+
+    Exists because remember()'s full round trip -- LLM entity/edge extraction
+    plus embeddings, ~15-20 sequential calls on the local Spark model -- can
+    take well over a minute, longer than the timeout of whatever fronts a
+    remote MCP client (e.g. OpenAI's Secure MCP Tunnel for ChatGPT -- see
+    docs/CLIENTS.md). That gateway was cutting the connection before
+    add_episode()'s final FalkorDB write ever ran, silently dropping the
+    memory with no exception anywhere and no journal record, since
+    server.capture.middleware only journals a tool call after it returns
+    (confirmed 2026-09-15: two ChatGPT `remember` calls fully processed
+    through the LLM in the server log but landed in zero FalkorDB graphs).
+
+    The MCP `remember` tool calls this instead of remember() directly so the
+    client gets an immediate ack decoupled from the slow extraction. Callers
+    that want a synchronous, fully-confirmed write (e.g.
+    promote_auto_accepted_memories, a local admin job with no tunnel in its
+    path) should keep calling remember() directly.
+
+    Returns immediately with status "queued", not "success" -- the caller
+    cannot assume the episode is durable yet. Use recall_mem afterward to
+    confirm a specific episode has actually landed.
+    """
+    ref_time = reference_time or datetime.now(timezone.utc)
+    episode_name = name or f"memory_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+    async def _run() -> None:
+        try:
+            await remember(
+                content=content,
+                name=episode_name,
+                source_description=source_description,
+                reference_time=ref_time,
+                max_retries=max_retries,
+            )
+            logger.info(f"Background remember committed: '{episode_name}'")
+        except Exception:
+            logger.exception(f"Background remember FAILED to commit: '{episode_name}'")
+
+    task = asyncio.create_task(_run())
+    _BACKGROUND_REMEMBER_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_REMEMBER_TASKS.discard)
+
+    return {
+        "status": "queued",
+        "name": episode_name,
+        "reference_time": ref_time.isoformat(),
+        "source_description": source_description,
+        "message": (
+            f"Episode '{episode_name}' queued for background ingestion -- not yet confirmed. "
+            "On the local-model path this can take a minute or more; use recall_mem to confirm "
+            "it has landed before assuming it failed or retrying."
+        ),
     }
 
 
@@ -647,7 +777,10 @@ async def recall_mem(
             chain lacks headroom right now (search() also calls the LLM for
             reranking). No Gemini call is made in this case.
     """
-    graphiti, _chosen_model = get_graphiti_for_operation()
+    graphiti, chosen_model = get_graphiti_for_operation()
+    logger.info(f"Recalling episodic memory for query: '{query}' (model: {chosen_model})")
+    call_start = time.monotonic()
+    embed_before, comp_before = _call_counts()
 
     results = []
     for attempt in range(max_retries):
@@ -664,6 +797,13 @@ async def recall_mem(
                 await asyncio.sleep(backoff)
             else:
                 raise
+
+    embed_after, comp_after = _call_counts()
+    logger.info(
+        f"Recalled '{query}': {embed_after - embed_before} embedding + "
+        f"{comp_after - comp_before} completion call(s) in {time.monotonic() - call_start:.1f}s "
+        f"({len(results)} raw result(s))"
+    )
 
     edge_facts: list[dict[str, Any]] = []
     for edge in results[: max(max_results, 10)]:

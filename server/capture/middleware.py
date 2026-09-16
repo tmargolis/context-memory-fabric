@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
+import time
 from typing import Any, Optional
 
 from server.capture import filters, identity
@@ -183,7 +184,23 @@ class CaptureMiddleware:
             self._health.record_error()
 
     async def __call__(self, ctx: Any, call_next: Any) -> Any:
+        # Logged here (not in capture) because this fires synchronously and
+        # unconditionally on every tool call, independent of the journal's
+        # own filtering/health-queue path -- see build_tool_call_event's
+        # `should_capture` gate below, which can skip journaling a call this
+        # log line still shows. logging.basicConfig's format (server.mcp's
+        # main()) supplies the timestamp; nothing extra needed here.
+        log_tool_name = None
+        if ctx.method == "tools/call":
+            log_tool_name = (ctx.params or {}).get("name")
+        start = time.monotonic() if log_tool_name else None
+        if log_tool_name:
+            logger.info("TOOL CALL START: %s", log_tool_name)
+
         result = await call_next(ctx)
+
+        if log_tool_name:
+            logger.info("TOOL CALL DONE:  %s (%.1fs)", log_tool_name, time.monotonic() - start)
 
         if ctx.request_id is None or ctx.method != "tools/call":
             return result
