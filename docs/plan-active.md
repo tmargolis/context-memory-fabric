@@ -12,7 +12,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 **Why now:** The graph now holds 465 real episodes worth retrieving (the [Backlog](#backlog)'s review pass just finished) and MS6b's governance tools are done — there's finally something substantive to verify retrieval/correction *against* from a second context. This subsumes [MS4a](#ms4a--mcp-boundary-capture--live-verification)'s outstanding five-step live cross-harness test as Phase 1+2's combined acceptance test; once that passes, MS4a's exit gate is answered too, not just this milestone's.
 
-**Corrected 2026-09-16 (in build):** Phases 3 and 4 below each assumed a static bearer token would be enough and said in as many words *don't build OAuth unless it's actually needed*. It was needed. Neither ChatGPT's nor Gemini's connector UI has a field for a static header — both drive Dynamic Client Registration + authorization-code/PKCE, and Claude Desktop's own connector flow is OAuth-only too. So MS6c grew a real (single-user) authorization server it was explicitly scoped not to build: `server/core/oauth_provider.py`, `oauth_store.py`, `http_auth.py`, merged to `main` in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). The static-token path survives for scripted/direct access; the two are mutually exclusive at the transport level. **This is the milestone's most load-bearing finding so far** — the "bearer token is almost certainly the right call for personal single-user use" line was wrong about every client that matters.
+**Corrected 2026-09-16 (in build):** Phases 3 and 4 below each assumed a static bearer token would be enough and said in as many words *don't build OAuth unless it's actually needed*. It was needed. Neither ChatGPT's nor Gemini's connector UI has a field for a static header — both drive Dynamic Client Registration + authorization-code/PKCE, and Claude Desktop's own connector flow is OAuth-only too. So MS6c grew a real (single-user) authorization server it was explicitly scoped not to build: `server/core/oauth_provider.py`, `oauth_store.py`, `http_auth.py`, merged to `main` in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). The static-token path survives for scripted/direct access; the two are mutually exclusive at the transport level. **This is the milestone's most load-bearing finding so far.** Worth recording precisely rather than as a flat "we were wrong": the Phase 3/4 *task lists* said a bearer token was almost certainly right and to not build OAuth, while this milestone's own **Risk** line called the opposite — *"Gemini Spark's DCR/OAuth requirement is an unknown until tested — may need real OAuth implementation work, not just a bearer token."* The risk register was right and the task list was wrong, which is an argument for scoping off the risk line when the two disagree.
 
 **What this is not:** new capability. `docs/CLIENTS.md` already documents stdio config for Claude Desktop/Cursor/VS Code and a generic remote-HTTP path (`--transport streamable-http`/`sse`) for remote clients — the server already supports all three transports (`server/mcp.py`'s `--transport {stdio,sse,streamable-http}`). This milestone is about *actually running* those configs against each real client and fixing whatever CLIENTS.md gets wrong.
 
@@ -27,9 +27,9 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 - [ ] Check whether the Code tab shares Desktop's global `mcpServers` config automatically, or needs its own `.mcp.json`/project-level config the way the standalone Claude Code CLI does — this is a real open question, not an assumption either way, since Desktop's Code tab may not behave identically to the CLI it's built on.
 - [ ] Same tool-discovery + functional pass as Phase 1.
-- [ ] **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
+- [ ] **NOT RUN as specified (checked 2026-09-16).** The journal has no `remember` from either `claude_desktop` or `claude_code` — the only harness that ever called `remember` is ChatGPT — and no `edit_memory`/`correct-memory` call from any harness at all. So the write-then-correct-across-harnesses chain has not happened, in either direction. This is MS6c acceptance test 2 **and** MS4a's outstanding exit gate, so it gates both. Cheapest fix: run it ChatGPT→Claude Code, since ChatGPT already writes. **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
 - [x] **Capture-identity check — they resolve distinctly (verified 2026-09-16).** The journal holds both `claude_desktop` (7 events) and `claude_code` (4) as separate harness values, so the feared collapse to one `claude-desktop` identity did not happen. Confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
-- [ ] Add a dedicated **Claude Desktop Code mode** note to `docs/CLIENTS.md` §1 (currently silent on whether Cowork and Code need separate configuration).
+- [ ] **Still absent (checked 2026-09-16)** — `docs/CLIENTS.md` contains no "Code mode"/"Code tab" text anywhere. Add a dedicated **Claude Desktop Code mode** note to §1 (currently silent on whether Cowork and Code need separate configuration).
 
 ### Phase 3 — Gemini Spark (web + mobile)
 
@@ -39,13 +39,14 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 - [ ] **Note the real constraints:** personal Google account only (no work/school account), 18+, US region, and — per Google's own guidance — custom third-party MCP servers are "outside Google's control," so this is Todd's own server he already trusts, not a third-party risk.
 - [ ] Usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registers as) inside a Spark task, not available in plain Gemini chat outside Spark — confirm this doesn't silently limit which of CMF's tools actually get invoked in practice.
 - [ ] Same functional + capture-identity pass.
-- [ ] Add a **Gemini Spark** section to `docs/CLIENTS.md` (today's §4 is generic "remote harnesses" language; this replaces the Gemini-CLI-shaped assumption that was here before the correction).
+- [ ] **Still absent (checked 2026-09-16)** — §4 is still the generic "Multi-Agent & Remote Harnesses (ChatGPT, Gemini Spark, etc.)" heading, not a Spark-specific walkthrough. Add a **Gemini Spark** section to `docs/CLIENTS.md` (today's §4 is generic "remote harnesses" language; this replaces the Gemini-CLI-shaped assumption that was here before the correction).
 
 ### Phase 4 — ChatGPT
 
 - [x] Reuse Phase 3's tunnel — same `streamable-http` endpoint, no separate infra needed. Held up: one endpoint served both.
 
-- [ ] **Still open across Phases 1-4:** the per-client *functional* pass. Registration and token issue are evidenced (5 live access/refresh pairs); what is **not** evidenced anywhere is that every tool was actually listed and called from each client with correctly-rendered output, which is what acceptance tests 1 and 4 require. Todd to confirm per client, or re-run.
+- [x] **Functional passes — evidenced in the journal (checked 2026-09-16).** Live `mcp_tool_call` events per client: **ChatGPT 25** (`get_context`, `search_wiki`, `recall_mem`, `remember`, `capture_health`, `propose_wiki_update` — the broadest pass of any client, and the one that produced `prop_20260916_125736_a33f295a`), **claude_desktop 7** (`get_context`, `recall_mem`), **claude_code 4** (`get_context`, `recall_mem`, `search_wiki`), **gemini 2** (`get_context`, `search_wiki`).
+- [ ] **Gemini's pass is two read calls** — thinnest of the four, and the only client with no `recall_mem`. Either widen it or record deliberately that Spark's `@`-mention scoping makes a full pass impractical.
 - [x] **Connected (2026-09-14)** — one `ChatGPT` DCR registration in `oauth_clients` (redirect `chatgpt.com/connector/oauth/...`). Route: Settings → Apps & Connectors → Developer Mode → Create connector → server URL ending in `/mcp`, Authentication left on **OAuth** (DCR), so the Advanced OAuth client-id/secret fields stay untouched.
 - [x] **Decided, against this task's own recommendation (2026-09-14).** ChatGPT's connector UI has no static-header field at all, so OAuth was not optional. Superseded by the 2026-09-16 correction above.
 - [ ] Same tool-discovery + functional + capture-identity pass.
@@ -68,7 +69,151 @@ Does the MCP server actually work, end-to-end, inside Claude Desktop (both modes
 
 ---
 
+## MS7b — Wiki-derived entity layer + enriched episode bodies (experiment, 2026-09-13)
+
+**Status:** Experiment on branch `ms7b-wiki-entities`. Builds into a new graph (`mem-fabric-local-wiki`); the current graph is preserved untouched as `mem-fabric-local-ep`. Adopt-or-discard is decided at the exit gate, not before.
+
+**Restored to `main`'s plan 2026-09-16.** This section was written on the `ms7b-wiki-entities` branch and went with it when MS6c's work was split onto `main`, so for a few days the milestone existed in code and in no plan anyone reading `main` would see. The branch stays parked — **the adopt-or-discard decision is still open** (Phase 5 found `mem-fabric-local-wiki` does not beat `mem-fabric-local-ep` on retrieval, and Todd has not ruled). `FALKORDB_DATABASE` points at `mem-fabric-local-wiki` as the *interim* default in the meantime, which is safe because it is a strict superset of `-ep`, not because the decision went that way.
+
+**2026-09-13 (Todd):** hold the 415 non-wiki singletons in a candidate area (not delete); do the Phase 1 rename; proceed with the full plan. In progress — see per-phase status below.
+
+**Goal:** Stop episodes defining the graph's vocabulary. Derive entity nodes from the LLM Wiki's heading hierarchy, keep the hierarchy itself as structure, and use wikilinks as edges — then attach episodes onto that backbone. Separately, and first, stop discarding two-thirds of each episode's extracted reasoning at the promotion boundary.
+
+**Why now:** Todd observed that many graph entities are irrelevant. Measured on `mem-fabric-local` (465 episodes / 701 entities / 523 `RELATES_TO`): **585 of 701 entities (83%) are mentioned exactly once**, and sampling them returns `table`, `claim`, `set -e`, `window margin`, `search icon`, `defined paths` — episode-local nouns that contribute nothing to traversal.
+
+### What the measurements changed about the approach
+
+Four findings, in the order they were made. Each one redirected the design, so they are recorded rather than just their conclusions.
+
+1. **Wiki titles/links are not an entity source.** Note titles + `[[wikilink]]` targets (785 distinct terms) match **11 of 701** graph entities — 2%. The wiki's link graph is *topic*-level (`Interlock`, `EV-Charging`, `Observables 2026`), not *thing*-level. Seeding from titles alone would discard `Photoshop`, `macOS`, `GitHub`, `Mac Pro`, `Obsidian`, `Cursor`, `Anthropic`.
+
+2. **Headings are the node source; links are edges** (Todd's correction). `WIKI/` + `REPORTS/` + `TO-RESEARCH/` carry 2,355 headings (H1 195 / H2 1,300 / H3 724 / H4 105 / H5 31) → **1,736 sections after boilerplate filtering** (`Sources` ×121, `Open Questions` ×56, `Summary / TL;DR` ×34) → 1,469 distinct labels. Edges: **2,049 structural parent→child**, plus **1,728 wikilink references** of which 93% resolve to a real note and **99.8% are anchored to a specific section**. That is ~3,700 edges over ~1,700 nodes, against today's 523 over 701.
+
+3. **Full headings make bad node names; decompose them** (Todd's correction). A heading like `Why Gemma 4 12B is especially suitable artistically` cannot name-match an episode, which would force episode attachment onto embedding KNN and abandon Graphiti's native resolution. Decomposed (`Gemma 4 12B` (model) + `Art` (domain)) it matches directly. Verified on real headings: `Apple Vision Pro Status (May 2026)` → `Apple Vision Pro`; `3A. Install Docker Desktop` → `Docker Desktop`; `Protocol Layer: MCP + A2A` → `MCP`, `A2A`; `What to raise with Charles` → `Charles`. Numbering, dates and framing words strip cleanly.
+
+   **Decompose from heading + section lede, not the heading alone.** Coverage of the 701 existing entities:
+
+   | Source text | all | ≥2 mentions | ≥3 mentions |
+   |---|---|---|---|
+   | heading only | 16% | 36% | 57% |
+   | **heading + first 25 words** | **28%** | **58%** | **80%** |
+   | full section body | 34% | 62% | 86% |
+
+   Section bodies are median 74 words (81% between 21–400), so they are also a natural chunking of the corpus — which incidentally serves the Backlog's `search_wiki` semantic-retrieval item.
+
+4. **Episode capture is lossy at the promotion boundary, not at extraction.** `ReasoningEpisodePolicyV1` extracts `statement`, `driving_question`, `rationale`, `alternatives`, `status`, `thread_key`, and all of it is persisted (the latter fields packed into `derived_memories.reason`). But both promotion paths call `content=row["statement"]` ([promotion.py:413](../server/consolidation/promotion.py#L413), [promotion.py:583](../server/consolidation/promotion.py#L583)). Across all 465 promoted episodes: `statement` averages **188 chars**, the never-sent `reason` averages **406** — 98% carry a driving question, 98% a rationale. **~68% of extracted reasoning never reaches the graph.**
+
+   Concretely: an episode whose `statement` ends "...an artifact of the SMB/NAS filesystem" drops a `reason` naming **QNAP** — and `QNAP TS-264` is in the `Storage-NAS` wiki note. The cross-channel link this whole milestone depends on was being severed by one field selection.
+
+### Decisions taken (Todd, 2026-09-13)
+
+- **Enriched episode body = `statement` + driving question + rationale. Alternatives excluded** — "options considered and rejected" reads as fact once it is in a graph.
+- **Extraction model = `openai/gpt-oss-20b`** for now. See the A/B below.
+- **No episode-mention threshold for wiki-supported entities.** Todd's objection: a mention threshold applied to terse summaries measures extraction failure, not relevance. Confirmed — 116/465 episodes (25%) extracted **zero** entities and 43% extracted ≤1. Crossing wiki support against recurrence:
+
+  | | singleton (1 ep) | recurring (≥2) |
+  |---|---|---|
+  | in wiki | **170** | 73 |
+  | not in wiki | 415 | 43 |
+
+  A symmetric "wiki AND ≥2" rule keeps 73 of 701. The asymmetric "wiki OR ≥2" keeps 286 — the 213-entity difference is almost entirely wiki-backed singletons (`Kotlin`, `Illinois Electric Vehicle Charging Act`, `pyproject.toml`, `UCSD`, `IRS`, `Google Workspace`, `NVMe drive`, `Image Stacking`), singleton only because the episode channel dropped them.
+
+### Model A/B (30 episodes, enriched template, 2026-09-13)
+
+| | `openai/gpt-oss-20b` | `qwen3.5-122b-a10b` |
+|---|---|---|
+| Parsed | 30/30, 0 failures | ~20/30 attempted, **6 truncated** at 3,000 tok |
+| Entities/episode | **4.97** | no data |
+| **Zero-entity episodes** | **0 (0%)** | no data |
+| In wiki prose | 50/149 (34%) | no data |
+| Speed | **4.2s/ep → ~33 min for 465** | 131s/ep → **~17 h for 465** |
+
+The 25% zero-entity rate disappears on the 20b. The 122b run was **stopped before completion at Todd's instruction**, so there is **no quality comparison between the two models** — only the throughput and truncation profile, which was already decisive (it reasons in proportion to input length, so enriched bodies make it worse). Revisit with a 6,000-token cap on ~10 episodes if extraction quality is ever suspected.
+
+**Known limitation of the 20b result:** the "0% >4-word fragments" metric overstates quality. The junk changed shape rather than disappearing — it now emits generic single nouns (`wall`, `rumors`, `planet`, `tabs`, `vendor`, `Activities`, `staff group`) alongside good entities (`NVIDIA Spark`, `OCLP installer`, `Ars Electronica`, `Slack`). That is exactly the shape the wiki registry and stoplist are meant to catch, so it is a known input to Phase 4, not an unmeasured risk.
+
+### Architecture
+
+Three layers in `mem-fabric-local-wiki`:
+
+- **`:Section`** — 1,736 nodes from the heading hierarchy, joined by 2,049 `CONTAINS` edges. Carries `wiki_path`, heading level, and the lede.
+- **`:Entity`** — decomposed from heading + lede. This is the surface episodes attach to, by name, via Graphiti's native resolution.
+- **`:Episodic`** — the 465 promoted episodes, replayed from the journal with enriched bodies. Unchanged 1:1 with promoted reasoning episodes, so `recall_mem`'s vector arm, `_resolve_episode_index`, `tag_projects.py`, `entity_audit.py` and ledger-replay DR all keep working.
+
+Edges: `Section-[:CONTAINS]->Section`, `Section-[:MENTIONS]->Entity`, `Section-[:REFERENCES]->Note`, and the existing `Episodic-[:MENTIONS]->Entity` / `RELATES_TO`. Retrieval path becomes `episode → entity → section → wiki note`.
+
+**Wiki notes are NOT ingested as episodes.** Entities are seeded directly (`EntityNode.save()` / `add_triplet`), so the episodic layer stays pure.
+
+**On provenance:** the wiki is itself AI-generated (Todd, 2026-09-13), so this is LLM output extracting from LLM prose. The quality argument is not provenance but **redundancy** — an entity earns retention by appearing in a curated section *or* recurring across episodes, two independently-generated channels. Neither is trusted alone.
+
+### Phases
+
+**Phase 0 — enriched episode bodies — done**
+- [x] Enriched content template — `enriched_episode_content()` in [promotion.py](../server/consolidation/promotion.py), wired into both call sites (`promote_auto_accepted`, `promote_reviewed`). Statement + driving question + rationale; alternatives excluded, parsed from `derived_memories.reason`'s `Q:`/`why:` fields; falls back to the bare statement on any unfamiliar `reason` shape (e.g. `promote_auto_accepted`'s heuristic-policy rows) rather than raising.
+- [x] Reasoning policy not re-run — confirmed, this only changes what `promote_reviewed`/`rebuild_graph_from_ledger.py` send to `remember()`.
+- [x] Model set to `openai/gpt-oss-20b` for the Phase 3 replay — via `CMF_LOCAL_LLM_MODEL` at invocation time, not a global `.env` change (the global default stays `qwen3.5-122b` for live production capture; see Phase 1 note below on why that distinction turned out to matter).
+- [x] Unit tests — [tests/test_ms7b_enriched_content.py](../tests/test_ms7b_enriched_content.py), 9 cases (all fields, alternatives-never-included, missing/empty/malformed `reason`, question-only, and an end-to-end `promote_reviewed`/`promote_auto_accepted` check). All pass; no regressions in the existing 23 promotion tests.
+
+**Phase 1 — graph rename — done**
+- [x] `GRAPH.COPY mem-fabric-local mem-fabric-local-ep`; verified 465/701/31/523 match exactly; confirmed `BGSAVE` landed on the mounted `/data` volume before deleting the source. `mem-fabric-local` deleted.
+- [x] `mem-fabric-local-restore-20260912` (0 nodes) left as-is — not explicitly authorized to remove, and harmless.
+- **Found during this step, not anticipated in the plan:** live `server.mcp` processes (Claude Desktop's Cowork/Code connections) were still running against `.env`'s old `FALKORDB_DATABASE=mem-fabric-local`. Deleting that graph name meant their next call would have silently recreated an empty shell there (same "index-only ghost" mechanism ADR 0003 documented for `default_db`, just triggered by this delete instead of Graphiti's internal default) — and any real `remember()` from a live session before the fix would have started writing into that empty graph instead of the real one. Fixed by updating `.env`'s `FALKORDB_DATABASE` to `mem-fabric-local-ep` immediately. **Those already-running processes won't see this until restarted** — same restart requirement ADR 0003 already documents for this class of change.
+
+**Phase 2 — section + entity registry builder — done**
+- [x] [scripts/build_wiki_sections.py](../scripts/build_wiki_sections.py) — deterministic, zero LLM calls. Real run over `WIKI/`+`REPORTS/`+`TO-RESEARCH/`: **2,355 sections** (matches the earlier measurement exactly), **1,939 non-boilerplate**, **434 notes** (201 scanned + 233 stub targets outside scope), **1,725 wikilinks, 93% resolved**. Refinement over the exploratory measurement this plan was based on: boilerplate sections (`Sources`, `Open Questions`, ...) are kept as real `:Section` structure nodes and keep their own wikilinks (a "Sources" section is often a bibliography) — only flagged `is_boilerplate` so Phase 2b skips decomposing them. The earlier 1,736/1,728 figures had come from two differently-filtered passes over the same data; this is one consistent pass.
+- [x] [scripts/build_wiki_entities.py](../scripts/build_wiki_entities.py) — batched (25 headings/call) heading+lede decomposition via `gpt-oss-20b`, text-mode + schema-in-prompt (same LM Studio reasoning-model quirk documented in `lmstudio_client.py`). Batching measured live at **~0.6–0.7s/section** (vs. ~4.2s/episode unbatched in the earlier A/B). One real bug caught by a full run and fixed: the model occasionally returns a bare string instead of `{"name","type"}`; now tolerated rather than crashing.
+- **The Spark SSH tunnel dropped mid-run** (`ConnectionResetError`, ~525/1,939 sections in) — the old code only wrote output once at the end, so this lost all prior work. Fixed before doing anything else: `build()` now checkpoints to `--out` after every batch and `--resume` continues from it; `_call_model` retries a transient network error with backoff first. This was the first of three tunnel drops in this session (see below) — no longer a one-off risk to design around.
+- **`--provider gemini` fallback added** (Todd, 2026-09-13, while the Spark was down): this step is pure text generation, no embeddings, so it isn't provider-locked the way seeding/replay is — reusable regardless of which model embeds the results later. Builds its own `GeminiRateLimiter` (real chain + budgets) rather than `get_default_rate_limiter()`, which is provider-aware and returns an unmetered stand-in whenever `CMF_LLM_PROVIDER=local` — correct for production, useless here. Off by default; spends Todd's real quota only when passed explicitly. **Used for real once** to unblock this step: full 1,939-section corpus in ~6 minutes, **1,345 distinct entities**, 5 stoplist hits, 131 of 500 daily calls spent (split across the two-chain models) — comfortably inside budget. Output: `imports/state/wiki_entities.json`.
+
+**Phase 3 — seed + replay — done**
+- [x] [scripts/seed_wiki_graph.py](../scripts/seed_wiki_graph.py) — full seed into `mem-fabric-local-wiki`: 434 Note / 2,355 Section / 1,345 Entity nodes, verified directly in FalkorDB.
+- [x] **Root-cause diagnosis, not guesswork.** The first calibration attempt (10 episodes, `gpt-oss-20b`) hit a tunnel drop mid-run — genuinely inconclusive at the time. Rather than re-running blind, used `graphiti_core.utils.maintenance.node_operations.extract_nodes()` directly (read-only, no graph writes) to inspect the model's raw output for all 7 zero-entity episodes: it was cleanly, quickly returning `{"extracted_entities": []}` — not truncating, not erroring. Found the likely cause inside graphiti's own baked-in prompt: *"When in doubt, do not extract the entity"* — directly conflicting with this codebase's `EXTRACTION_INSTRUCTIONS` nudge, which was tuned against `qwen3.5-122b`/Gemini and never validated against `gpt-oss-20b`.
+- [x] **Memory diagnosis, also not guesswork.** Three real tunnel drops traced to `sshd` never logging a close (client-side keepalive giving up, not a server crash — confirmed via `journalctl`/`dmesg`/`uptime` on the Spark itself, 25 days uptime, no reboot) plus a 15-min load average spike with three models already pinned resident (~95.6GB, swap 14/15 GB full per Alex's own status). Root cause: loading `gpt-oss-20b` cold, on top of that, had nowhere to go. Fixed by unloading `unsloth/qwen3.5-122b-a10b` (freeing 73.5GB) and warming `gpt-oss-20b` deliberately before any real run.
+- [x] **Model comparison, measured in-graph, not assumed.** A calibration re-run under `gpt-oss-20b` (10 episodes) vs `qwen3.5-122b` (first 24 of the full run) on the *same real pipeline*: gpt-oss-20b — 0.3 entities/episode, 70% zero-entity, **0** `RELATES_TO` fact edges. qwen3.5-122b — 2.7 entities/episode, ~21% zero-entity, 43+ real fact edges. Not subtle; switched to 122b for the full replay despite the ~15-30x speed cost, since a fast replay with zero fact edges would have defeated the point of the migration.
+- [x] **Full 465-episode replay**, `qwen3.5-122b`, batched (25/batch, timestamped progress — added to `rebuild_graph_from_ledger.py`): **455 newly promoted, 10 already-promoted (skipped, no dup), 0 failed.** 16,618s (4.6h), 35.7s/episode. Final (pre-Phase-4-merge): 2,180 entities, 809 `RELATES_TO` edges, 25.8% zero-entity rate overall (close to the pre-migration ~25% baseline for this model — the enrichment's real benefit shows up in *richness per successful episode*, not in cutting the zero-entity rate for this particular model).
+
+**Phase 4 — sweep + re-tag — done**
+- [x] **Duplicate-entity root cause found and fixed.** Browser inspection surfaced 94+ duplicate-name entity groups. Traced to `seed_wiki_graph.py` seeding entities with `group_id=""` while `add_episode()` defaults to `group_id="_"` — Graphiti's dedup search is scoped *by* `group_id`, so a wiki-seeded node was never a merge candidate regardless of name match (confirmed directly: two byte-identical `"Anthropic"` nodes, `group_id` `""` vs `"_"`). Fixed in `seed_wiki_graph.py` for future reseeds; the existing graph needed a repair, not a redo.
+- [x] [scripts/sweep_wiki_graph.py](../scripts/sweep_wiki_graph.py) extended with a merge pass ahead of retention tagging (same `_norm()` used for IDF vouching, so it catches the separate non-breaking-space case too — `NVIDIA Spark` vs `NVIDIA␠Spark`). Run for real: **123 duplicate groups, 126 redundant entities merged, 788 edges redirected, zero data loss** (verified node/edge counts before/after; "Anthropic" now resolves to exactly 1 node).
+- [x] Retention sweep on what's left (2,054 entities post-merge): **97 confirmed by recurrence (≥2 episodes), 624 confirmed by IDF-vouching, 16 held as candidates** — never deleted. Far below the 415-non-wiki-singleton number the plan was originally written against; the richer `qwen3.5-122b` extraction plus the merge fix meant most entities now clear one bar or the other on their own.
+- [x] `tag_projects.py` re-run: 120 entity-less episodes linked directly to 23 project hubs — matches the measured 120 zero-entity-episode count exactly (independent cross-check).
+- [x] `entity_audit.py` re-run: 68 entities span ≥2 projects. Read through the actual list rather than just counting it — every one at the top (Mac Pro across 4 projects, Photoshop across 4, GitHub across 4) reads as legitimate shared infrastructure per the script's own docstring standard, not sense-collapse. No entity found meaning two different things across its project list.
+
+**Phase 5 — A/B against the old graph — done**
+- [x] Ran the real MS7 instrument: `capture.py` against both graphs (30 queries × `recall_mem`/`search_wiki`/`get_context`), `answer_eval.py` generating real answers in 4 conditions via `claude -p` (240 answers total), graded by hand against `gold_needs` the same way the original MS7 verdicts were — [tests/fixtures/ms7_eval/verdicts_ms7b_phase5.json](../tests/fixtures/ms7_eval/verdicts_ms7b_phase5.json) has the full per-query notes.
+- [x] **Result: `mem-fabric-local-wiki` did not beat `mem-fabric-local-ep` on this instrument.**
+
+  | arm | `-ep` | `-wiki` |
+  |---|---|---|
+  | memory (recall_mem alone) | **0.70** | 0.43 |
+  | wiki (search_wiki alone) | 0.73 | 0.73 *(graph-independent by construction — reads LLM_Wiki files directly, never touches FalkorDB; identical score is the expected sanity check, not a coincidence)* |
+  | both (get_context fusion) | **1.40** | 1.33 |
+
+  The memory arm is the real story: `-wiki` is notably *weaker* despite objectively richer graph structure (2.7 entities/episode vs `-ep`'s pre-enrichment baseline, 809 vs 523 `RELATES_TO` edges). More graph structure did not translate into better ranked retrieval — `recall_mem`'s RRF fusion (`_rrf_merge`, the per-episode cap, the vector-arm top-6 cutoff) was tuned against `-ep`'s shape, and a denser, differently-resolved entity graph changes which facts get surfaced without those tuning constants having been revisited. The `both` arm is close but `-wiki` still trails, driven by concrete misses: **C9** (build-sequencing + differentiation) — `-ep`'s fusion produces a full match by combining two facts neither single arm surfaced alone (exactly the behavior the C-group exists to test); `-wiki`'s fusion doesn't replicate it, scoring 0. **C1** (Interlock registry) and **A10** (filing status) show the same pattern. Genuine `-wiki` wins exist too — **C2** (partially recovers the friend's-Spark fact `-ep` misses entirely) and **C3** (surfaces specific camera-gear detail `-ep`'s fusion leaves generic) — so this isn't one-sided, but the aggregate doesn't clear the bar.
+- **Grading caveat, stated plainly:** single-pass, by me, not independently cross-checked the way the original MS7 draft was reviewed by Todd before being treated as final. A few borderline calls (partial-credit judgment on incomplete-but-not-wrong answers) could each move the mean by ~0.03; the gap between the two `both` means (0.07) is within range of that noise. The **memory-arm gap (0.27) is larger and reads as a real effect**, not grading noise.
+
+### Acceptance tests
+
+1. ✅ Enriched bodies measurably raise entity yield on the real corpus: 2.55 entities/episode across all 465 (2.7 for the `qwen3.5-122b` cohort specifically) — the A/B's 4.97 prediction was on 30 episodes via a simpler prompt than graphiti's real extraction path; the real-pipeline number is lower but the direction holds. Zero-entity rate (25.8%) did **not** improve over the pre-migration baseline for this model — recorded honestly in Phase 3, not glossed over.
+2. ✅ `mem-fabric-local-ep` untouched since Phase 1 — never re-opened by any Phase 2–5 script (all of which target `mem-fabric-local-wiki` explicitly).
+3. ✅ Phase 2 builders re-run clean; `build_wiki_sections.py` is zero-LLM and deterministic, `build_wiki_entities.py` checkpoints/resumes.
+4. ✅ Duplicate-entity rate measured directly (8.6%, 188 entities) and fixed via the Phase 4 merge — not just measured, corrected.
+5. ❌ **MS7 eval on `-wiki` did not reach `-ep`** — the one acceptance test that didn't clear, and the one the exit gate below turns on.
+
+### Exit gate
+
+*"Does a wiki-structured entity layer plus enriched episode bodies retrieve better than the episode-derived graph on the same graded queries — and is the entity set one Todd recognises as relevant? If the answer is only 'enriched bodies helped,' that is a real result: ship Phase 0 to the existing graph and discard the rest."*
+
+**That is where this landed.** The entity set is real and recognizable (Phase 4's audit confirmed no sense-collapse), but retrieval quality on the graded instrument did not improve — if anything, the memory arm alone measurably regressed. Per the exit gate's own pre-committed criterion, the honest recommendation is: **adopt Phase 0 (enriched episode bodies) on `mem-fabric-local-ep` directly** — that part is model-agnostic, already validated end-to-end in Phase 3's real replay, and costs nothing to keep — **and treat the wiki-structured entity/section layer as a documented, working, but not-yet-adopted experiment.** Whether to pursue tuning `recall_mem`'s fusion constants against the new graph shape (a real, separate follow-on, not a quick fix) or to set `mem-fabric-local-wiki` aside as-is is Todd's call, not a default this doc should assume.
+
+**Effort:** 2–3 sessions estimated; actual was closer to 4, almost entirely in Phase 3's diagnosis work (two real infrastructure failures — a flaky Spark tunnel, a memory-pressure model-eviction issue — and one real architecture bug — the `group_id` mismatch) rather than in the phases themselves.
+**Risk:** Realized, not just estimated. The dedup-search-timeout risk flagged going in never manifested (0 failures across the full 465-episode replay); the risks that did bite weren't on the original list, which is itself a useful note for scoping the next experiment like this one.
+
+---
+
 ## MS6d — Durable-knowledge proposal review (2026-09-16)
+
+**Status:** In progress (started 2026-09-16), on `main` per Todd.
 
 **Goal:** Make `propose_wiki_update` a loop that closes. Today a proposal can be created and then nothing — there is no way to list, read, approve, reject, or apply one, so every proposal ever made is inert.
 
