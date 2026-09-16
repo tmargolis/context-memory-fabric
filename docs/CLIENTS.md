@@ -4,6 +4,92 @@ This guide describes how to connect **Context Memory Fabric** to AI clients, des
 
 ---
 
+## 0. Running the Server Standalone (Network Transport)
+
+Instead of letting each client spawn its own `stdio` subprocess (§1–3), you can run one shared server process and point every client at it over HTTP. Use this when comparing multiple harnesses (Claude Desktop, Gemini, ChatGPT, etc.) against the exact same server and graph — a separate `stdio` subprocess per client means each one resolves its own environment independently, so a stray `.env`/config difference between them can silently point one client at a different graph than the others.
+
+1. Start the server with `streamable-http` (the current MCP transport; `sse` below is kept for older clients):
+
+   ```bash
+   uv run --directory /path/to/context-memory-fabric python -m server.mcp \
+     --transport streamable-http --host 127.0.0.1 --port 8000 \
+     > cmf-mcp.log 2>&1 &
+   ```
+
+   The server only logs to stderr (`logging.basicConfig(..., stream=sys.stderr)` in `server/mcp.py`, no file handler), which is why the redirect is needed to capture anything.
+
+2. Tail the logs:
+
+   ```bash
+   tail -f /path/to/context-memory-fabric/cmf-mcp.log
+   ```
+
+3. Override an `.env` value for a single run by prefixing the command — most commonly `FALKORDB_DATABASE`, to point this run at a specific graph without editing `.env`:
+
+   ```bash
+   FALKORDB_DATABASE=mem-fabric-local-ep uv run --directory /path/to/context-memory-fabric python -m server.mcp \
+     --transport streamable-http --host 127.0.0.1 --port 8000 \
+     > cmf-mcp.log 2>&1 &
+   ```
+
+   If `FALKORDB_DATABASE` isn't set anywhere (`.env` or inline), `resolve_target_database()` (`server/providers/memory_graphiti.py`) falls back to `default_db` — a deliberate non-production sandbox, not one of the real graphs (e.g. `mem-fabric-local-ep`, `mem-fabric-local-wiki`), so a client with no explicit config can't silently read or write production data.
+
+4. Point each client at `http://localhost:8000/mcp` (or a tunneled/Tailscale URL — see §4) instead of giving it a `command`/`args` subprocess to spawn.
+
+5. Stop it: `pgrep -fl "server.mcp"` (filter out unrelated processes that merely mention the project path in an argument, e.g. shell/editor background tasks) then `kill <pid>`.
+
+### Auth: OAuth 2.1 (recommended) or a static bearer token
+
+`stdio` (§1–3's default configs) is trusted by process ownership alone — only something your OS already let spawn the subprocess can talk to it. `streamable-http`/`sse` have no such boundary: anyone who can reach the port can call every tool, full read/write, unless one of the two mechanisms below is configured. They're **mutually exclusive** — if both are set, OAuth wins and the static token is ignored (with a startup warning).
+
+#### OAuth 2.1 (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) — use this for GUI clients
+
+Claude Desktop's, ChatGPT's, and Gemini's own "add a custom connector" flows are built around OAuth (Dynamic Client Registration + authorization-code + PKCE) — none of their normal UIs have a field for pasting a static header, and OpenAI's Secure MCP Tunnel hard-requires valid OAuth metadata discovery even when a static header is also supplied. This server implements a minimal, single-user OAuth 2.1 authorization server (`server/core/oauth_provider.py`) specifically so all three can connect the way they're actually designed to.
+
+Set **both** vars together, or leave both unset — the server refuses to start with only one:
+
+```bash
+CMF_MCP_ISSUER_URL=https://todds-macbook-air.tail54bb78.ts.net \
+CMF_MCP_OAUTH_PASSWORD=$(openssl rand -hex 16) \
+  uv run --directory /path/to/context-memory-fabric python -m server.mcp \
+  --transport streamable-http --host 127.0.0.1 --port 8000 \
+  > cmf-mcp.log 2>&1 &
+```
+
+- **`CMF_MCP_ISSUER_URL` must exactly match wherever the server is publicly reachable** (your Tailscale Funnel hostname, a tunnel URL, etc. — no trailing slash). Every client validates this against the server's own metadata; a mismatch breaks the flow, not just a formality. If you change how the server is exposed, this has to change too.
+- **`CMF_MCP_OAUTH_PASSWORD` is the actual security boundary.** Both `/register` and `/authorize` are unauthenticated by spec (any client, including someone else's, can reach as far as the consent page) — this password is what a human has to know to actually approve a new client and get it a working access token. Save it somewhere durable; you'll type it once per client.
+
+**What happens when a client connects**, for all three:
+1. You paste the server URL (`https://<issuer-host>/mcp`) into the client's connector setup.
+2. The client auto-discovers the server's OAuth metadata and self-registers via Dynamic Client Registration — no manual Client ID/Secret entry needed.
+3. It opens a browser to `<issuer-url>/oauth/consent?request_id=...` — this server's own minimal consent page, showing the client's name and asking for `CMF_MCP_OAUTH_PASSWORD`.
+4. Enter the password, click **Approve**. The page redirects back to the client with an authorization code; the client exchanges it for an access token (30-day expiry, refresh token good for 180 days) behind the scenes.
+5. Tool calls proceed as normal, authenticated by that access token.
+
+Per-client notes:
+- **Claude Desktop:** Settings → Connectors → Add custom connector → paste the server URL. This is the path its UI is actually built for (unlike a static header, which its custom-connector flow has no field for at all).
+- **ChatGPT:** Settings → Apps (or Plugins, naming varies by account) → Developer mode → Connectors → Create → **Server URL** tab → paste the URL, leave Authentication on **OAuth** (Dynamic Client Registration, the default) rather than "Mixed" or "None" — DCR means you don't need to touch the "Advanced OAuth settings" panel's Client ID/Secret/endpoint fields at all.
+- **Gemini (Spark web/mobile):** Connected Apps / "Custom apps for Spark" → paste the server URL → follow its consent flow the same way.
+- **ChatGPT via Secure MCP Tunnel:** also works now — `tunnel-client doctor`'s `oauth_metadata` check was failing before because this server had no valid Protected Resource/Authorization Server metadata to discover; it does now. Point `tunnel-client` at the server and select Authentication **OAuth** (not "None") in ChatGPT's tunnel connector dialog.
+
+Access tokens and refresh tokens persist in `imports/journal/journal.db` (same sqlite file the journal/consolidation state already uses) — they survive a server restart, so clients don't need to re-approve every time you restart the server. Authorization codes and pending consent requests are intentionally in-memory only and don't survive a restart (they're short-lived by design; if a flow is mid-way through when you restart, the client just retries).
+
+#### Static bearer token (`CMF_MCP_AUTH_TOKEN`) — direct/manual/scripted access only
+
+For a raw HTTP client, a script, or `curl` — not for any of the GUI clients above, whose connector UIs don't have a field for it:
+
+```bash
+CMF_MCP_AUTH_TOKEN=$(openssl rand -hex 32) uv run --directory /path/to/context-memory-fabric python -m server.mcp \
+  --transport streamable-http --host 127.0.0.1 --port 8000 \
+  > cmf-mcp.log 2>&1 &
+```
+
+Send it as a standard bearer header: `Authorization: Bearer <token>`.
+
+If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs a warning on startup and runs unauthenticated — fine for a `127.0.0.1`-only run during local development, not for anything exposed further (see the Tailscale warning in §4).
+
+---
+
 ## 1. Claude Desktop
 
 ### Recommended: Local Desktop Configuration (`stdio`)
@@ -32,7 +118,7 @@ Claude Desktop can launch and manage Context Memory Fabric automatically in the 
       "env": {
         "LLM_WIKI_PATH": "/path/to/your/LLM_Wiki",
         "GEMINI_API_KEY": "your-gemini-api-key",
-        "FALKORDB_DATABASE": "memory-fabric"
+        "FALKORDB_DATABASE": "mem-fabric-local-ep"
       }
     }
   }
@@ -42,20 +128,22 @@ Claude Desktop can launch and manage Context Memory Fabric automatically in the 
 > [!TIP]
 > You can also pass `--wiki-path /path/to/your/LLM_Wiki` directly inside the `"args"` array instead of using the `"env"` block.
 
+> [!NOTE]
+> `FALKORDB_DATABASE` is optional. If omitted, the server falls back to `default_db`, a non-production sandbox — see §0 for why.
+
 3. Restart Claude Desktop (`Cmd + Q` and reopen). All Context Memory Fabric tools will appear in the connectors/tool list — see [Available MCP Tools Summary](#available-mcp-tools-summary) below for the full, current list (count varies with whether `LLM_WIKI_PATH` is configured).
 
 ---
 
-### Alternative: Network SSE Connector
+### Alternative: Network Connector (streamable-http or SSE)
 
-If you prefer connecting to a running server instance over HTTP/SSE:
+If you'd rather connect to an already-running server instance (see §0) instead of having Claude Desktop spawn its own subprocess — e.g. so it shares one server/graph with other clients during a harness comparison:
 
-1. Start the server in SSE mode:
-   ```bash
-   uv run python -m server.mcp --transport sse --host 127.0.0.1 --port 8000
-   ```
+1. Start the server per §0, with `--transport streamable-http` (preferred) or `--transport sse` (legacy).
 2. In Claude Desktop, go to **Settings > Connectors > Add custom connector**.
-3. Set the remote MCP server URL to `http://localhost:8000/sse` (or an HTTPS tunnel URL if using remote mode).
+3. Set the remote MCP server URL to `http://localhost:8000/mcp` (streamable-http) or `http://localhost:8000/sse` (SSE) — or a tunneled/Tailscale HTTPS URL if the server isn't running on the same machine (see §4).
+
+Since Claude Desktop's connector flow is OAuth-only with no field for a static header, use §0's OAuth setup (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) if you want this connection authenticated — it'll self-register via DCR and walk you through the consent page automatically.
 
 ---
 
@@ -95,20 +183,31 @@ Add the MCP server command in your client settings:
 - **Environment Variables:**
   - `LLM_WIKI_PATH`: `/path/to/your/LLM_Wiki`
   - `GEMINI_API_KEY`: `AIzaSy...`
-  - `FALKORDB_DATABASE`: `memory-fabric`
+  - `FALKORDB_DATABASE`: `mem-fabric-local-ep` (optional — omit to use the `default_db` sandbox; see §0)
 
 ---
 
 ## 4. Multi-Agent & Remote Harnesses (ChatGPT, Gemini Spark, etc.)
 
-For remote web clients that require an HTTPS endpoint:
+Cloud-hosted clients (ChatGPT's connector, Gemini's web app, etc.) run outside your network and need an HTTPS URL they can actually reach — `localhost` isn't enough.
 
-1. Run the MCP server with the `streamable-http` or `sse` transport:
-   ```bash
-   uv run python -m server.mcp --transport streamable-http --port 8000
-   ```
-2. Expose the port securely through your chosen reverse proxy, Cloudflare Tunnel, or HTTPS gateway.
-3. Configure the remote MCP connector URL in the client's developer settings.
+1. Start the server per §0 with `--transport streamable-http` (or `sse`).
+2. Expose the port via one of:
+   - **Tailscale Funnel** (see below, if your tailnet is already set up) — quickest if you're already on Tailscale.
+   - A reverse proxy, Cloudflare Tunnel, or other HTTPS gateway.
+3. Configure the remote MCP connector URL in the client's developer settings — `https://<your-tunnel-host>/mcp` (streamable-http) or `.../sse` (SSE).
+
+### Exposing via Tailscale
+
+Two different Tailscale commands do very different things here — don't confuse them:
+
+- **`tailscale serve --bg 8000`** — reachable only by devices already on *your* tailnet (e.g. another one of your own machines, or a local Gemini CLI). **Not reachable by ChatGPT's or Gemini's cloud-hosted connector.** This is the safer default when it's sufficient.
+- **`tailscale funnel --bg 8000`** — reachable by **anyone on the public internet** who has the URL. This is what a cloud-hosted client like ChatGPT actually needs.
+
+> [!WARNING]
+> The MCP HTTP transport (`streamable-http`/`sse`) has no auth of its own — every request that reaches the port can call every tool, including write tools with full access to your personal memory graph: `remember`, `edit_memory`, `reconcile_memories`, `import_chatgpt_exports`, `promote_auto_accepted_memories`. Configure OAuth (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`, see §0 — this is what actually makes ChatGPT's and Gemini's connector flows work anyway) or, for scripted/direct access only, `CMF_MCP_AUTH_TOKEN`, **before** running `tailscale funnel`. A Funnel URL is not secret — it can surface in proxy logs, shared links, or synced browser history — and unlike `tailscale serve` it's reachable by literally anyone on the internet, not just your own tailnet devices. Confirm the server logged neither the OAuth-disabled nor the `CMF_MCP_AUTH_TOKEN is not set` warning on startup before flipping Funnel on.
+
+Turn Funnel off when you're done testing: `tailscale funnel --bg off` (or `tailscale funnel reset` to clear all Funnel config).
 
 ---
 

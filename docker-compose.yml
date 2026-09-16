@@ -7,6 +7,22 @@ services:
       - "127.0.0.1:3001:3000"
     volumes:
       - falkordb_data:/data
+    environment:
+      # The image's run.sh starts redis with `--dir "$FALKORDB_DATA_PATH"`,
+      # which defaults to /var/lib/falkordb/data — inside the container's
+      # writable layer, NOT the mounted volume. Left at the default, every
+      # graph lives only in the container and is destroyed by any recreate.
+      # Point it at the mount so the RDB actually lands in falkordb_data.
+      - FALKORDB_DATA_PATH=/data
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # Image default is `TIMEOUT 1000` (ms) — fine for small graphs, but
+      # Graphiti's own internal RELATES_TO fulltext dedup search during
+      # add_episode() started timing out once mem-fabric-local-restore-20260912
+      # passed ~1000 nodes (2026-09-12 rebuild: 10/465 episodes failed this
+      # way, rate climbing with graph size). Raised here so a future
+      # container recreate doesn't silently revert the live
+      # `GRAPH.CONFIG SET TIMEOUT` fix back to 1000.
+      - FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT 30000 RESULTSET_SIZE 10000
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]

@@ -12,10 +12,15 @@ import os
 from pathlib import Path
 import sys
 from typing import Annotated, Optional, cast
+from urllib.parse import urlparse
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 import mcp.types as types
 from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse
 
 from server.capture.health import format_health_report, get_default_health
 from server.capture.middleware import capture_manual_note, get_default_capture_middleware
@@ -24,6 +29,8 @@ from server.consolidation.promotion import PromotionStore, format_promotion_repo
 from server.consolidation.store import ConsolidationStore
 from server.context import get_context as assemble_context
 from server.core.config import load_config
+from server.core.http_auth import AUTH_TOKEN_ENV_VAR, BearerTokenAuthMiddleware, get_configured_auth_token
+from server.core.oauth_provider import CMFOAuthProvider
 from server.importer import import_memories_content
 from server.journal.store import SqliteEventStore
 from server.memory import (
@@ -32,6 +39,7 @@ from server.memory import (
     reconcile_memories as reconcile_episodic_memories,
     remember as remember_memory,
 )
+from server.providers.memory_graphiti import remember_queued
 from server.proposals import create_wiki_proposal, format_proposal_for_mcp
 from server.wiki import search_wiki as query_wiki
 
@@ -66,17 +74,125 @@ SERVER_INSTRUCTIONS = (
     "search_wiki and propose_wiki_update are unavailable, and get_context returns episodic memory only."
 )
 
+# OAuth 2.1 support (MS6c) -- see server.core.oauth_provider's module
+# docstring for why this exists: Claude Desktop's, ChatGPT's, and Gemini's
+# own connector UIs expect Dynamic Client Registration + authorization-code
+# + PKCE, not a static bearer header (server.core.http_auth's
+# BearerTokenAuthMiddleware, which stays available for direct/manual HTTP
+# access -- the two are mutually exclusive on the network transport, see
+# main() below). Enabled only when BOTH env vars are set, never just one:
+# issuer_url must exactly match wherever this server is actually publicly
+# reachable, and the password is the only thing standing between "anyone
+# who finds this server's URL" and a working access token, since both
+# /register and /authorize are unauthenticated by spec.
+_oauth_issuer_url = os.getenv("CMF_MCP_ISSUER_URL")
+_oauth_password = os.getenv("CMF_MCP_OAUTH_PASSWORD")
+if bool(_oauth_issuer_url) != bool(_oauth_password):
+    raise RuntimeError(
+        "CMF_MCP_ISSUER_URL and CMF_MCP_OAUTH_PASSWORD must be set together to enable "
+        "OAuth support, or both left unset to disable it. See docs/CLIENTS.md."
+    )
+
+oauth_provider: Optional[CMFOAuthProvider] = None
+_auth_settings: Optional[AuthSettings] = None
+if _oauth_issuer_url and _oauth_password:
+    _oauth_issuer_url = _oauth_issuer_url.rstrip("/")
+    oauth_provider = CMFOAuthProvider(consent_base_url=_oauth_issuer_url, consent_password=_oauth_password)
+    _auth_settings = AuthSettings(
+        issuer_url=cast(str, _oauth_issuer_url),
+        resource_server_url=cast(str, _oauth_issuer_url),
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+
 # Initialize MCP Server with instructions
 app = MCPServer(
     name="context-memory-fabric",
     version="0.1.0",
     instructions=SERVER_INSTRUCTIONS,
+    auth_server_provider=oauth_provider,
+    auth=_auth_settings,
 )
 
 # MS4a MCP-boundary capture: journal a source event for every tool call this
 # server handles, regardless of which MCP client is connected. See
 # server/capture/middleware.py's module docstring and docs/adapters/mcp-boundary.md.
 app.middleware.append(get_default_capture_middleware())
+
+
+def _consent_page_html(request_id: str, client_name: str, client_id: str, error: Optional[str] = None) -> str:
+    import html as _html
+
+    safe_name = _html.escape(client_name or "(unnamed client)")
+    safe_id = _html.escape(client_id)
+    safe_rid = _html.escape(request_id)
+    error_html = f'<p style="color:#b00020">{_html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Authorize access</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 420px; margin: 4rem auto; padding: 0 1rem; }}
+  input[type=password] {{ width: 100%; padding: .5rem; font-size: 1rem; box-sizing: border-box; margin: .5rem 0 1rem; }}
+  button {{ padding: .5rem 1.25rem; font-size: 1rem; margin-right: .5rem; cursor: pointer; }}
+  .approve {{ background: #16a34a; color: white; border: none; border-radius: 4px; }}
+  .deny {{ background: #eee; border: 1px solid #ccc; border-radius: 4px; }}
+</style></head>
+<body>
+  <h2>Authorize Context Memory Fabric access</h2>
+  <p><strong>{safe_name}</strong> ({safe_id}) is requesting access to your Context Memory Fabric server.</p>
+  {error_html}
+  <form method="post" action="/oauth/consent">
+    <input type="hidden" name="request_id" value="{safe_rid}">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autofocus required>
+    <button class="approve" type="submit" name="action" value="approve">Approve</button>
+    <button class="deny" type="submit" name="action" value="deny">Deny</button>
+  </form>
+</body></html>"""
+
+
+_EXPIRED_REQUEST_HTML = (
+    "<p>This authorization request has expired or is unknown. "
+    "Go back to the client and try connecting again.</p>"
+)
+
+if oauth_provider is not None:
+
+    @app.custom_route("/oauth/consent", methods=["GET", "POST"])
+    async def oauth_consent(request: Request):
+        provider = cast(CMFOAuthProvider, oauth_provider)
+
+        if request.method == "GET":
+            request_id = request.query_params.get("request_id", "")
+            pending = provider.get_pending_request(request_id)
+            if pending is None:
+                return HTMLResponse(_EXPIRED_REQUEST_HTML, status_code=404)
+            return HTMLResponse(
+                _consent_page_html(request_id, pending.client.client_name or "", pending.client.client_id)
+            )
+
+        form = await request.form()
+        request_id = str(form.get("request_id", ""))
+        action = form.get("action")
+
+        pending = provider.get_pending_request(request_id)
+        if pending is None:
+            return HTMLResponse(_EXPIRED_REQUEST_HTML, status_code=404)
+
+        if action == "deny":
+            redirect_url = provider.deny(request_id)
+            return RedirectResponse(url=redirect_url, status_code=302) if redirect_url else HTMLResponse("Denied.")
+
+        password = str(form.get("password", ""))
+        if not provider.check_consent_password(password):
+            return HTMLResponse(
+                _consent_page_html(
+                    request_id, pending.client.client_name or "", pending.client.client_id, error="Incorrect password."
+                ),
+                status_code=401,
+            )
+
+        redirect_url = provider.approve(request_id)
+        return RedirectResponse(url=redirect_url, status_code=302)
 
 
 @app.tool(
@@ -279,15 +395,22 @@ async def remember(
     - Do NOT call this automatically for every casual chat message or temporary conversational turn. Only store substantive, meaningful decisions, preferences, milestones, and state changes.
 
     DISTINCTIONS:
-    - Writes directly into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.
+    - Writes into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.
     - Does NOT modify LLM_Wiki files.
 
     SIDE EFFECTS:
-    - Creates persistent episodic memory nodes and relationship edges in FalkorDB. Non-destructive.
+    - Queues a background write of an episodic memory node and relationship edges in FalkorDB; non-destructive.
+      This tool returns as soon as the episode is queued, NOT once it is confirmed durable -- on the
+      local-model extraction path a single episode can take well over a minute, long enough that a remote
+      client's own connection/tunnel can time out before that finishes if this tool waited for it. If you
+      need to confirm a specific episode actually landed, call recall_mem for it after a short wait.
     """
     desc = source_description or "MCP remember tool"
-    res = await remember_memory(content=content, name=name, source_description=desc)
-    return f"Memory stored successfully.\n- Episode: `{res['name']}`\n- Timestamp: `{res['reference_time']}`\n- Message: {res['message']}"
+    res = await remember_queued(content=content, name=name, source_description=desc)
+    return (
+        f"Memory queued for background ingestion (not yet confirmed).\n"
+        f"- Episode: `{res['name']}`\n- Timestamp: `{res['reference_time']}`\n- Message: {res['message']}"
+    )
 
 
 @app.tool(
@@ -766,14 +889,87 @@ def main():
     if args.wiki_path:
         os.environ["LLM_WIKI_PATH"] = str(Path(args.wiki_path).expanduser().resolve())
 
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    # force=True: the MCP SDK's own MCPServer(...) construction (module-level
+    # `app = MCPServer(...)` above) already calls logging.basicConfig() via
+    # mcp.server.mcpserver.utilities.logging.configure_logging(), which wins
+    # the race since it happens at import time. basicConfig() is a no-op once
+    # the root logger already has handlers, so without force=True this call
+    # silently did nothing and every log line stayed timestamp-less.
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
 
-    if args.transport == "sse":
-        logger.info(f"Starting Context Memory Fabric MCP Server on SSE transport at http://{args.host}:{args.port}/sse ...")
-        app.run(transport="sse", host=args.host, port=args.port)
-    elif args.transport == "streamable-http":
-        logger.info(f"Starting Context Memory Fabric MCP Server on HTTP transport at http://{args.host}:{args.port}/mcp ...")
-        app.run(transport="streamable-http", host=args.host, port=args.port)
+    if args.transport in ("sse", "streamable-http"):
+        import uvicorn
+
+        auth_token = get_configured_auth_token()
+
+        # Mutually exclusive: OAuth's own middleware (wired in by the SDK
+        # via auth_server_provider/auth on the MCPServer constructor,
+        # already baked into sse_app()/streamable_http_app() below) protects
+        # the MCP endpoint while correctly leaving /register, /authorize,
+        # /token, and /.well-known/* unauthenticated per spec. Layering the
+        # static-token middleware on top would 401 those discovery/DCR
+        # requests before OAuth ever got a chance to run.
+        if oauth_provider is not None:
+            if auth_token:
+                logger.warning(
+                    f"OAuth is configured (CMF_MCP_ISSUER_URL set) -- ignoring {AUTH_TOKEN_ENV_VAR}. "
+                    "The two are mutually exclusive; OAuth-issued access tokens are what protect "
+                    "this endpoint now."
+                )
+                auth_token = None
+        elif not auth_token:
+            logger.warning(
+                f"Neither CMF_MCP_ISSUER_URL (OAuth) nor {AUTH_TOKEN_ENV_VAR} is set -- the "
+                f"{args.transport} endpoint at http://{args.host}:{args.port} will accept requests "
+                "from anyone who can reach it, with full read/write access to every tool (remember, "
+                "edit_memory, import_chatgpt_exports, etc.). Set one of them before exposing this "
+                "port beyond localhost -- see docs/CLIENTS.md."
+            )
+
+        # The SDK's own DNS-rebinding-protection default only trusts
+        # Host: 127.0.0.1/localhost -- correct for a bare local server, but
+        # it rejects every request once something (Tailscale Funnel, a
+        # tunnel, a reverse proxy) sits in front with a different public
+        # hostname in the Host header (421 Misdirected Request). When
+        # CMF_MCP_ISSUER_URL is set, that's exactly the hostname clients
+        # will actually present, so it has to be allowed explicitly rather
+        # than relying on the host=127.0.0.1 default.
+        allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+        allowed_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+        if _oauth_issuer_url:
+            issuer_parts = urlparse(_oauth_issuer_url)
+            if issuer_parts.hostname:
+                # Both forms are needed: standard HTTPS (443) sends a bare
+                # Host header with no port at all, which only the exact
+                # (no-suffix) entry matches -- the ":*" wildcard form only
+                # matches a Host that already contains a literal ":port".
+                allowed_hosts.append(issuer_parts.hostname)
+                allowed_hosts.append(f"{issuer_parts.hostname}:*")
+                allowed_origins.append(f"{issuer_parts.scheme}://{issuer_parts.hostname}")
+                allowed_origins.append(f"{issuer_parts.scheme}://{issuer_parts.hostname}:*")
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True, allowed_hosts=allowed_hosts, allowed_origins=allowed_origins
+        )
+
+        if args.transport == "sse":
+            logger.info(f"Starting Context Memory Fabric MCP Server on SSE transport at http://{args.host}:{args.port}/sse ...")
+            starlette_app = app.sse_app(host=args.host, transport_security=transport_security)
+        else:
+            logger.info(f"Starting Context Memory Fabric MCP Server on HTTP transport at http://{args.host}:{args.port}/mcp ...")
+            starlette_app = app.streamable_http_app(host=args.host, transport_security=transport_security)
+
+        if auth_token:
+            starlette_app.add_middleware(BearerTokenAuthMiddleware, token=auth_token)
+
+        if oauth_provider is not None:
+            logger.info(f"OAuth enabled -- issuer {_oauth_issuer_url}, consent page at {_oauth_issuer_url}/oauth/consent")
+
+        uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
     else:
         app.run(transport="stdio")
 
