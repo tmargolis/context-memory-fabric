@@ -4,71 +4,6 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ---
 
-## MS6c — MCP server cross-agent verification (2026-09-11)
-
-**Goal:** Verify the CMF MCP server actually works, end-to-end, as an installed connector inside the real client apps Todd uses. Produce a corrected, followable install/configure guide for each. Order: **Claude Desktop — Cowork mode → Claude Desktop — Code mode → Gemini Spark (web/mobile) → ChatGPT.**
-
-**Corrected 2026-09-11 (Todd):** Todd does not run the standalone Claude Code CLI/TUI — "Claude Code" here means **Claude Desktop's Code tab**, the same app as Cowork, not a separate product. This session is itself running in that tab. And "Gemini" means the consumer **Gemini web/mobile app** (`gemini.google.com/app`, `gemini.google.com/spark/apps`) — not the Gemini CLI, which Todd doesn't use either. Both corrections changed the actual mechanism below, not just the label.
-
-**Why now:** The graph now holds 465 real episodes worth retrieving (the [Backlog](#backlog)'s review pass just finished) and MS6b's governance tools are done — there's finally something substantive to verify retrieval/correction *against* from a second context. This subsumes [MS4a](#ms4a--mcp-boundary-capture--live-verification)'s outstanding five-step live cross-harness test as Phase 1+2's combined acceptance test; once that passes, MS4a's exit gate is answered too, not just this milestone's.
-
-**Corrected 2026-09-16 (in build):** Phases 3 and 4 below each assumed a static bearer token would be enough and said in as many words *don't build OAuth unless it's actually needed*. It was needed. Neither ChatGPT's nor Gemini's connector UI has a field for a static header — both drive Dynamic Client Registration + authorization-code/PKCE, and Claude Desktop's own connector flow is OAuth-only too. So MS6c grew a real (single-user) authorization server it was explicitly scoped not to build: `server/core/oauth_provider.py`, `oauth_store.py`, `http_auth.py`, merged to `main` in [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6) (2026-09-16). The static-token path survives for scripted/direct access; the two are mutually exclusive at the transport level. **This is the milestone's most load-bearing finding so far.** Worth recording precisely rather than as a flat "we were wrong": the Phase 3/4 *task lists* said a bearer token was almost certainly right and to not build OAuth, while this milestone's own **Risk** line called the opposite — *"Gemini Spark's DCR/OAuth requirement is an unknown until tested — may need real OAuth implementation work, not just a bearer token."* The risk register was right and the task list was wrong, which is an argument for scoping off the risk line when the two disagree.
-
-**What this is not:** new capability. `docs/CLIENTS.md` already documents stdio config for Claude Desktop/Cursor/VS Code and a generic remote-HTTP path (`--transport streamable-http`/`sse`) for remote clients — the server already supports all three transports (`server/mcp.py`'s `--transport {stdio,sse,streamable-http}`). This milestone is about *actually running* those configs against each real client and fixing whatever CLIENTS.md gets wrong.
-
-### Phase 1 — Claude Desktop: Cowork mode
-
-- [ ] Install per `docs/CLIENTS.md` §1 (stdio, `claude_desktop_config.json`); restart; confirm tool discovery (12 tools with `LLM_WIKI_PATH` set, 10 without — verify the count actually matches, CLIENTS.md's claim is untested).
-- [ ] Functional pass: call each read-only tool (`get_context`, `search_wiki`, `recall_mem`, `capture_health`) from Cowork; confirm sane, correctly-formatted output (Markdown rendering inside Cowork's UI is a real risk, not just "does the call succeed").
-- [ ] `remember()` a real test decision from Cowork.
-- [ ] Correct CLIENTS.md §1 against what actually happened (restart behavior, `LLM_WIKI_PATH` gating, anything undocumented).
-
-### Phase 2 — Claude Desktop: Code mode
-
-- [ ] Check whether the Code tab shares Desktop's global `mcpServers` config automatically, or needs its own `.mcp.json`/project-level config the way the standalone Claude Code CLI does — this is a real open question, not an assumption either way, since Desktop's Code tab may not behave identically to the CLI it's built on.
-- [ ] Same tool-discovery + functional pass as Phase 1.
-- [ ] **NOT RUN as specified (checked 2026-09-16).** The journal has no `remember` from either `claude_desktop` or `claude_code` — the only harness that ever called `remember` is ChatGPT — and no `edit_memory`/`correct-memory` call from any harness at all. So the write-then-correct-across-harnesses chain has not happened, in either direction. This is MS6c acceptance test 2 **and** MS4a's outstanding exit gate, so it gates both. Cheapest fix: run it ChatGPT→Claude Code, since ChatGPT already writes. **MS4a's 5-step test, run for real, using Cowork and Code as the two harnesses:** the `remember` call from Phase 1 (Cowork) lands in the journal tagged with a harness identity and a synthesized session id (stdio has none natively) → from Code mode, retrieve it (`recall_mem`/`explain`) and confirm content + provenance → `correct-memory` it from Code mode → confirm Cowork's next `get_context`/`recall_mem` call reflects the corrected version while `explain` still shows the original superseded.
-- [x] **Capture-identity check — they resolve distinctly (verified 2026-09-16).** The journal holds both `claude_desktop` (7 events) and `claude_code` (4) as separate harness values, so the feared collapse to one `claude-desktop` identity did not happen. Confirm `server/capture/`'s harness-identity resolution actually distinguishes the Code tab from Cowork — same top-level app, so this is a real risk of both collapsing to one `claude-desktop` identity, not a formality. If they do collapse, that's a finding worth recording, not a bug to silently work around.
-- [x] **Added (2026-09-16)** — §1 now carries a Cowork-vs-Code note: each tab is a separate connection needing its own connector entry, each registers its own OAuth client (6 separate `Claude` DCR registrations confirmed), and the two resolve to distinct harness identities in the journal.
-
-### Phase 3 — Gemini Spark (web + mobile)
-
-- [ ] **Requires a public MCP server URL** — Gemini Spark's Connected Apps only take a hosted MCP endpoint, no local/stdio option (confirmed 2026-09-11 against Google's own support docs: [support.google.com/gemini/answer/17209137](https://support.google.com/gemini/answer/17209137)). Same underlying requirement as Phase 4 (ChatGPT) — **share one tunnel setup across both phases** rather than building it twice: run `server/mcp.py --transport streamable-http --port 8000` and expose it via a persistent tunnel (Cloudflare Tunnel/ngrok), ideally as a `launchd` service mirroring `com.cmf.spark-tunnel.plist` from this session.
-- [x] **Connected (2026-09-14)** — three `Google` DCR registrations in `oauth_clients` (redirect `oauth-redirect-sandbox.googleusercontent.com`). Route: `gemini.google.com` → Settings & help → Connected Apps → "Custom apps for Spark" → Add a custom app → paste the MCP server URL. If the server doesn't support Dynamic Client Registration (CMF's doesn't yet), use "Show more" under Advanced features to enter credentials manually.
-- [x] **Decided: real OAuth, not the bearer fallback (2026-09-14).** Exactly the detail that changed on contact with the real UI, as this task warned — CMF now implements DCR + PKCE rather than leaning on manual credentials. See the 2026-09-16 correction above.
-- [ ] **Note the real constraints:** personal Google account only (no work/school account), 18+, US region, and — per Google's own guidance — custom third-party MCP servers are "outside Google's control," so this is Todd's own server he already trusts, not a third-party risk.
-- [ ] Usage is `@`-mention-scoped (`@context-memory-fabric` or whatever name it registers as) inside a Spark task, not available in plain Gemini chat outside Spark — confirm this doesn't silently limit which of CMF's tools actually get invoked in practice.
-- [ ] Same functional + capture-identity pass.
-- [x] **Added (2026-09-16)** — §4 now has dedicated **ChatGPT** and **Gemini Spark** subsections with concrete, confirmed-working steps (Connected Apps / Custom apps for Spark; Developer Mode / Create connector), replacing the generic "etc." framing.
-
-### Phase 4 — ChatGPT
-
-- [x] Reuse Phase 3's tunnel — same `streamable-http` endpoint, no separate infra needed. Held up: one endpoint served both.
-
-- [x] **Functional passes — evidenced in the journal (checked 2026-09-16).** Live `mcp_tool_call` events per client: **ChatGPT 25** (`get_context`, `search_wiki`, `recall_mem`, `remember`, `capture_health`, `propose_wiki_update` — the broadest pass of any client, and the one that produced `prop_20260916_125736_a33f295a`), **claude_desktop 7** (`get_context`, `recall_mem`), **claude_code 4** (`get_context`, `recall_mem`, `search_wiki`), **gemini 2** (`get_context`, `search_wiki`).
-- [ ] **Gemini's pass is two read calls** — thinnest of the four, and the only client with no `recall_mem`. Either widen it or record deliberately that Spark's `@`-mention scoping makes a full pass impractical.
-- [x] **Connected (2026-09-14)** — one `ChatGPT` DCR registration in `oauth_clients` (redirect `chatgpt.com/connector/oauth/...`). Route: Settings → Apps & Connectors → Developer Mode → Create connector → server URL ending in `/mcp`, Authentication left on **OAuth** (DCR), so the Advanced OAuth client-id/secret fields stay untouched.
-- [x] **Decided, against this task's own recommendation (2026-09-14).** ChatGPT's connector UI has no static-header field at all, so OAuth was not optional. Superseded by the 2026-09-16 correction above.
-- [ ] Same tool-discovery + functional + capture-identity pass.
-- [ ] Update CLIENTS.md §4 with the concrete, current ChatGPT steps — today it's generic where it could be exact.
-
-### Acceptance tests
-
-1. All 4 contexts (Cowork, Code, Gemini Spark, ChatGPT) can list and successfully call every registered CMF tool, with correctly-rendered output. **Partially evidenced** — real tool calls exist for all 4 (journal counts above), but not a systematic pass over every registered tool per client.
-2. **Not yet met.** MS4a's 5-step cross-harness capture+correction test passes end-to-end using Cowork and Code mode as the two harnesses — never run; no `remember` from either, no correction call from any harness.
-3. ✅ Capture-journal harness identity checked for all 4: `claude_desktop` and `claude_code` resolve **distinctly**, confirmed 2026-09-16 (7 and 4 real events respectively, not collapsed).
-4. ✅ `docs/CLIENTS.md` corrected/expanded (2026-09-16): Cowork-vs-Code note in §1, dedicated ChatGPT and Gemini Spark subsections in §4 replacing the generic "etc." framing.
-5. One shared tunnel serves both Gemini Spark and ChatGPT without reconfiguration.
-
-### Exit gate
-
-Does the MCP server actually work, end-to-end, inside Claude Desktop (both modes), Gemini Spark, and ChatGPT — and does `docs/CLIENTS.md` reflect that reality closely enough for a stranger to follow? Which of MS4a's outstanding live-verification steps does this pass answer for free?
-
-**Effort:** 2-3 sessions — live/interactive testing plus doc corrections; the tunnel (shared by Phases 3-4) is the one piece of real new infra work.
-**Risk:** Low-medium. The tunnel is the main new operational surface — same class of concern as the Spark SSH tunnel (needs to stay up reliably, exposes a port that needs real auth, not "trust the network"). Gemini Spark's DCR/OAuth requirement is an unknown until tested — may need real OAuth implementation work, not just a bearer token, unlike ChatGPT.
-
----
-
 ## MS7b — Wiki-derived entity layer + enriched episode bodies (experiment, 2026-09-13)
 
 **Status:** Experiment on branch `ms7b-wiki-entities`. Builds into a new graph (`mem-fabric-local-wiki`); the current graph is preserved untouched as `mem-fabric-local-ep`. Adopt-or-discard is decided at the exit gate, not before.
@@ -208,62 +143,6 @@ Edges: `Section-[:CONTAINS]->Section`, `Section-[:MENTIONS]->Entity`, `Section-[
 
 **Effort:** 2–3 sessions estimated; actual was closer to 4, almost entirely in Phase 3's diagnosis work (two real infrastructure failures — a flaky Spark tunnel, a memory-pressure model-eviction issue — and one real architecture bug — the `group_id` mismatch) rather than in the phases themselves.
 **Risk:** Realized, not just estimated. The dedup-search-timeout risk flagged going in never manifested (0 failures across the full 465-episode replay); the risks that did bite weren't on the original list, which is itself a useful note for scoping the next experiment like this one.
-
----
-
-## MS6d — Durable-knowledge proposal review (2026-09-16)
-
-**Status:** In progress (started 2026-09-16), on `main` per Todd.
-
-**Goal:** Make `propose_wiki_update` a loop that closes. Today a proposal can be created and then nothing — there is no way to list, read, approve, reject, or apply one, so every proposal ever made is inert.
-
-**Why now:** Found 2026-09-16 when Todd created `prop_20260916_125736_a33f295a` and asked how to review it. The answer was: you can't. **76 proposals sit in `wiki-proposals/`, every one `pending_review`**, going back to 2026-09-01. This is the unbuilt half of [Milestone 6's](ROADMAP.md#milestone-6--build-memory-review-and-governance) *"proposing durable-knowledge changes"* deliverable: MS6a/MS6b built the episodic review path (`server/review/`), and nothing ever built the durable-knowledge one. `server/review/cli.py`'s `approve_episode`/`promote_approved` operate on the consolidation store and have no knowledge of `wiki-proposals/`.
-
-**State of the code:** `create_wiki_proposal()` exists and works. `list_proposals()` and `get_proposal()` exist in `server/proposals.py` and are unit-tested (`tests/test_step6b_proposals.py`) but were **never registered as MCP tools**. Approve/reject/apply do not exist in any form — `status` is a field only `create` ever sets, and nothing in `server/` writes into the corpus root at all.
-
-**MCP-only, by decision (Todd, 2026-09-16).** An early draft put the mutating half behind a CLI on the MS6 precedent. Rejected: MS6's CLI exists because bulk-triaging 36,000 words of episodic statements in a terminal is cheaper than a chat round-trip per verdict, and a wiki proposal is one diff against one file — chat is the *better* surface, and CMF is meant to be consumed via MCP. The safety property that motivated the CLI is preserved inside MCP instead, by splitting the decision from the write.
-
-### Tasks
-
-- [x] `list_wiki_proposals(status=...)` — registers `list_proposals()`. Read-only.
-- [x] `get_wiki_proposal(proposal_id)` — registers `get_proposal()`; returns rationale, unified diff, and `current_sha256`.
-- [x] `review_wiki_proposal(proposal_id, verdict, notes=None, reviewer="todd")` — sets `approved`/`rejected`, records reviewer, `reviewed_at`, and `notes`. Refuses re-review of an already-decided proposal rather than overwriting the first verdict. Records a decision; touches nothing canonical.
-- [x] `apply_wiki_proposal(proposal_id, expected_sha256, dry_run=True)` — the only tool that writes to `LLM_WIKI_PATH`. Refuses any proposal not already `approved`. `dry_run=True` default. `destructive_hint=True` — verified via a dedicated contract test that it's the only tool carrying that flag.
-- [x] **Stale-base guard, both directions.** `expected_sha256` must match the proposal's own `proposed_sha256` (proves the caller re-fetched it, not acting on a stale in-context copy); separately, the live target's current hash must match `current_sha256` (the base it was diffed against) for an update, or the target must not exist for a create. Both refuse by name, tested against real drift, not just absence of drift.
-- [x] **Git commit in the corpus on apply.** Real `git add`/`commit`/`rev-parse HEAD` via subprocess in `LLM_WIKI_PATH`, best-effort (a missing/broken git repo doesn't block the apply — the file write is the durable action). Exercised in tests against a real temp git repo, not mocked.
-- [x] `bulk_reject_wiki_proposals(proposal_ids, reason, reviewer="todd")` — rejects a batch, one recorded reason each; an already-decided id in the batch is skipped and reported, not silently dropped or failing the whole call.
-- [x] **Status vocabulary decided.** Terminal states: `pending_review` → `approved`/`rejected` (via `review_wiki_proposal`) → `applied` (via `apply_wiki_proposal`, approved-only). `applied_at` + `applied_commit_sha` recorded on apply. Five new `Optional[...] = None` dataclass fields — confirmed all 76 pre-MS6d files still load (`test_old_proposal_json_without_new_fields_still_loads`, plus a live check against the real 76-file backlog).
-- [ ] **Post-apply staleness — still open, not built.** `search_wiki`'s filesystem-scan cache and MS7b's offline-built wiki-derived graph layer both go stale the moment a proposal is applied; `apply_wiki_proposal` does neither invalidation nor says so in its own output. Decide whether apply should call `force_rescan` itself, or just document the gap.
-- [x] Tests — `tests/test_ms6d_proposal_review.py`, 14 cases (approve/reject, re-review refusal, both sha guards' actual failure paths not just their absence, dry-run-writes-nothing, real apply with a real git commit verified in the repo log, create-vs-update, bulk-reject partial success, backward-compat load). Contract-fixture (`tool_schemas.json`) and 3 hardcoded tool-count assertions across other test files updated for 12→17 tools; full suite 397 passed / 6 skipped / 8 deselected.
-
-### Acceptance tests
-
-1. **Not yet run as a live end-to-end client trip** — the flow is verified through direct function calls under pytest, not through an actual MCP client round-trip (list → read → approve → dry-run → apply → see the git commit). Cheap to do once a client is at hand.
-2. ✅ `apply_wiki_proposal` on a `pending_review` proposal is refused — `test_apply_refused_without_approval`.
-3. ✅ A proposal whose target changed since creation is refused, naming the drift — `test_apply_refused_on_stale_base`.
-4. **Not yet reached a terminal state.** `prop_20260916_125736_a33f295a` is still `pending_review` — the tools exist now, the decision on this specific proposal hasn't been made through them yet.
-5. The other 75 are triaged to a terminal state, or the backlog is deliberately kept with a recorded reason.
-
-### Exit gate
-
-Can durable knowledge be proposed, reviewed, and promoted into the corpus entirely through MCP, without a shell? And does the approve/apply split actually hold — is there any path from a single tool call to a canonical write?
-
-**Effort:** small. Two tools are registration-only; the real work is apply's safety rails, the status migration, and tests.
-
-**Risks:** it is the first code in CMF that writes into `LLM_WIKI_PATH`. Everything to date treats the corpus as read-only, so the blast radius of a bug is Todd's actual wiki — hence the git commit, the dry run, and the sha guard rather than any one of them alone.
-
-
-## MS4a — MCP-boundary capture — live verification
-
-**Built and unit-tested** (see [plan-history.md](plan-history.md#ms4a--mcp-boundary-capture-claude-desktop)). What remains is the roadmap's five-step live cross-harness test, which needs a live Claude Desktop connected to a build carrying the capture middleware:
-
-1. Record a decision in Claude Desktop.
-2. Verify it consolidates into memory with source provenance naming Claude Desktop.
-3. Retrieve it from a second harness (Claude Code, or ChatGPT via HTTP transport).
-4. Correct it from that second harness.
-5. Verify Claude Desktop sees current state while history stays inspectable.
-
-Not a blocker for MS6 / MS7. Do it opportunistically the next time Claude Desktop is on a middleware build.
 
 ---
 
@@ -438,6 +317,18 @@ Raised in review on [PR #6](https://github.com/tmargolis/context-memory-fabric/p
 - [ ] **Tokens are stored in plaintext.** `oauth_access_tokens.token` / `oauth_refresh_tokens.token` are raw values used as PRIMARY KEY, in the same `journal.db` the journal writes. A stray copy or backup is working credentials for 30 and 180 days. Storing SHA-256 and looking up by hash is one line per save/get pair.
 - [ ] **No rate limiting on the consent password**, which is the entire security boundary by design, on an endpoint reachable by anyone who finds the URL. `openssl rand -hex 16` as documented makes brute force infeasible — so the real action is making CLIENTS.md say that recommendation is load-bearing rather than advisory.
 - [ ] **Minor.** `http_auth.py`'s docstring says the SDK's OAuth machinery is "deliberately not" used, which the same PR reversed — a reader hitting that file first concludes OAuth was rejected. `_codes` is pruned only when an entry is read, so approved-but-never-exchanged codes persist for the process lifetime. `secrets.compare_digest` raises `TypeError` on a non-ASCII password rather than cleanly denying.
+
+### Post-apply staleness (found 2026-09-16, fixed same day, MS6d)
+
+`apply_wiki_proposal` is the first tool that writes into `LLM_WIKI_PATH`, but nothing downstream that assumes the corpus is static was getting invalidated when it ran: `search_wiki`'s filesystem-scan cache, and MS7b's offline-built wiki-derived entity/section graph (`mem-fabric-local-wiki`, parked but still the interim `FALKORDB_DATABASE`). Confirmed concretely, not just theoretically — the real apply of `prop_20260916_125736_a33f295a` created `WIKI/projects/Context-Memory-Fabric/Context-Layers-as-the-Next-Frontier.md` (commit `6dfce163`) and it did not surface via `search_wiki` until this fix.
+
+- [x] `search_wiki`'s side fixed: `apply_wiki_proposal` now calls `invalidate_corpus_cache()` (`server/wiki.py`) on every real (non-dry-run) apply — lazy invalidation, drops the cached engine/assets rather than forcing an immediate rescan, since applies are rare and a rescan can be non-trivial cost. Tested (`tests/test_ms6d_proposal_review.py::TestPostApplyStaleness`, 3 cases: pure invalidation, real-apply wiring, dry-run does *not* invalidate). **Live server restarted 2026-09-16** to pick this up — confirmed live via subsequent `search_wiki` calls from Code mode and Cowork.
+- [ ] MS7b's wiki-derived graph is parked, not live — still unaddressed, but no live consumer depends on it today. Revisit only if/when MS7b is adopted.
+
+### Found during MS6c Phase 1 (Cowork functional pass, 2026-09-16)
+
+- [ ] **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what Todd's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
+- [ ] **`search_wiki` hit a transient 502 (Cloudflare, `origin_bad_gateway`) from Cowork, succeeded on retry.** Same OAuth/tunnel path every client (including Claude Desktop) now goes through post-MS6c, so this is the same class of flakiness behind Gemini's "error 1076"s and the first silent-failure `remember()` attempt — worth keeping an eye on if it recurs, not yet frequent enough to chase down.
 
 ### Assembly refinements (deferred out of MS7)
 
