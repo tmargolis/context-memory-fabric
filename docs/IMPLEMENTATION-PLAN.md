@@ -37,7 +37,7 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 10 | [MS6c](plan-history.md#ms6c--mcp-server-cross-agent-verification) | MCP server cross-agent verification — Claude Desktop (Cowork → Code mode) → Gemini Spark → ChatGPT | 🟢 done 2026-09-16 |
 | 10.5 | [MS6d](plan-history.md#ms6d--durable-knowledge-proposal-review) | Durable-knowledge proposal review — list/get/review/apply over MCP | 🟢 done 2026-09-16 |
 | 11 | [MS4a](plan-history.md#ms4a--mcp-boundary-capture-claude-desktop) | MCP-boundary capture — live cross-harness verification | 🟢 done 2026-09-16 |
-| — | [**MS7b**](plan-active.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) | *Experiment* — wiki-derived entity layer (`mem-fabric-local-wiki`) + enriched episode bodies | 🔴 **in progress**, branch `ms7b-wiki-entities` (parked, off `main`). Phases 1–5 done; **adopt-or-discard still undecided** — Phase 5 found `-wiki` does not beat `-ep`. `FALKORDB_DATABASE` points at `-wiki` as interim default only ← here |
+| — | [**MS7b**](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) | *Experiment* — wiki-derived entity layer + enriched episode bodies | 🟢 done 2026-09-17 — enriched bodies adopted ([PR #7](https://github.com/tmargolis/context-memory-fabric/pull/7)), wiki-structured layer closed onto canonical `mem-fabric-local`; extraction-quality follow-ups in [Backlog](plan-active.md#backlog) |
 | 12 | [MS4b](plan-active.md#ms4b--claude-code-adapter) | Claude Code adapter | ⚪ |
 | 13 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | ⚪ |
 | 14 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | ⚪ |
@@ -51,20 +51,20 @@ All completed milestones' detail — what was built, corrections found, exit-gat
 
 ---
 
-## Current state (2026-09-16)
+## Current state (2026-09-17)
 
-**Done through MS4a/MS6c/MS6d.** The pipeline runs end-to-end on Spark-local inference, retrieval is proven to beat single-provider baselines, governance (`explain`/`correct`/`delete`) and durable-knowledge proposal review both work live, and the MCP server is verified working inside all 4 real client apps Todd uses:
+**Done through MS4a/MS6c/MS6d/MS7b.** The pipeline runs end-to-end on Spark-local inference, retrieval is proven to beat single-provider baselines, governance (`explain`/`correct`/`delete`) and durable-knowledge proposal review both work live, and the MCP server is verified working inside all 4 real client apps Todd uses:
 
 ```text
 source exports → journal (19,012 events) → per-event classification (heuristic v1.2)
                                           → reasoning episodes (model v0.3): ~1,310 staged / 659 threads
                                           → MS6a tier-1 + MS6b corpus review: 465 approved total
-                                          → promotion → mem-fabric-local-wiki (qwen3.5-122b + nomic, 768-dim)
+                                          → promotion → mem-fabric-local (qwen3.5-122b + nomic, 768-dim)
                                           → recall_mem() / get_context() / search_wiki() — verified live from
                                             Claude Desktop (Cowork + Code), Gemini Spark, and ChatGPT
 ```
 
-- **Live graph:** `mem-fabric-local-wiki` (MS7b's interim default, a strict superset of the MS6b-era `mem-fabric-local` — see [MS7b](plan-active.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) for its real shape and the still-open adopt-or-discard decision). Rollback graphs retained untouched: `mem-fabric-local-ep`, `mem-fabric-gemini`, `mem-fabric-local-glm`.
+- **Live graph:** `mem-fabric-local` — closed out by [MS7b](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) 2026-09-17: cloned forward from `mem-fabric-local-wiki` (which already held the enriched-content re-derivation of the full ledger) onto this canonical name, then pruned of its wiki-structured `:Section` layer (collapsed to `:Note`-level `MENTIONS`/`REFERENCES` first, so provenance survived). `Project`/`IN_PROJECT` and the un-corroborated wiki-only entities were deliberately left in place pending the two open items in [Backlog](plan-active.md#backlog). Rollback graphs retained untouched: `mem-fabric-local-ep`, `mem-fabric-local-wiki`, `mem-fabric-gemini`, `mem-fabric-local-glm`.
 - **Live server:** `streamable-http` on `:8000` behind OAuth (DCR + PKCE, [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6)) — 17 registered tools, all 4 client families (Claude Desktop Cowork + Code, Gemini Spark, ChatGPT) connected and functionally verified. `docs/CLIENTS.md` reflects this as of 2026-09-16.
 - **Remaining backlog:** 25,961 heuristic `queued_for_review` rows, never individually reviewed (mostly re-judged duplicates per MS3.6's assessment); OAuth hardening (no test coverage yet, plaintext token storage); `edit_memory` doesn't re-run fact extraction on correction; occasional transient 502s on the shared OAuth/tunnel path — all in [plan-active Backlog](plan-active.md#backlog), none blocking.
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
