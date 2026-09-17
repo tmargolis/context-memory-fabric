@@ -411,7 +411,7 @@ async def promote_auto_accepted(
 
         try:
             await remember_fn(
-                content=row["statement"],
+                content=enriched_episode_content(row),
                 name=episode_name,
                 source_description=source_description,
                 reference_time=reference_time,
@@ -468,6 +468,48 @@ def tier1_review_queue(
         exclude_approval_states=["rejected", "superseded_by_reasoning", "superseded_by_correction"],
     )
     return [r for r in rows if not promotion_store.is_promoted(r["memory_id"])]
+
+
+_REASON_QUESTION_RE = re.compile(r"Q: (.*?)(?: \| why:| \| alt:| \| status=| \| thread=|$)", re.DOTALL)
+_REASON_RATIONALE_RE = re.compile(r"why: (.*?)(?: \| alt:| \| status=| \| thread=|$)", re.DOTALL)
+
+
+def enriched_episode_content(row: sqlite3.Row) -> str:
+    """The episode body actually sent to remember(), as of MS7b (2026-09-13).
+
+    Previously every promotion call site sent `row["statement"]` alone.
+    `derived_memories.reason` -- for reasoning-episode rows, `Q: ... | why:
+    ... | alt: ... | status=... | thread=...` (see
+    ConsolidationStore.record_reasoning_episode) -- was written to the
+    journal but never reached the graph. Measured across the 465 episodes
+    promoted before this change: statement averages 188 chars, reason 406;
+    98% of rows carry both a driving question and a rationale. That's
+    roughly two-thirds of the extracted reasoning discarded at this one
+    call site, not at extraction.
+
+    Appends the driving question and rationale when present. Alternatives
+    are deliberately excluded (Todd, 2026-09-13): "options considered and
+    rejected" reads as settled fact once it is sitting in a graph, not as
+    the discarded option it was.
+
+    Rows from a policy that doesn't write this Q:/why: shape (e.g.
+    heuristic_v1's ExtractionResult.reason, used by promote_auto_accepted)
+    simply match neither pattern and fall back to the statement alone --
+    this never raises on an unfamiliar `reason` format.
+    """
+    statement = row["statement"]
+    reason = row["reason"] if "reason" in row.keys() else None
+    if not reason:
+        return statement
+
+    parts = [statement]
+    q = _REASON_QUESTION_RE.search(reason)
+    if q and q.group(1).strip():
+        parts.append(f"Driving question: {q.group(1).strip()}")
+    w = _REASON_RATIONALE_RE.search(reason)
+    if w and w.group(1).strip():
+        parts.append(f"Reasoning: {w.group(1).strip()}")
+    return "\n".join(parts)
 
 
 def _reasoning_source_description(row: sqlite3.Row, harness: str) -> str:
@@ -581,7 +623,7 @@ async def promote_reviewed(
         while True:
             try:
                 await remember_fn(
-                    content=row["statement"],
+                    content=enriched_episode_content(row),
                     name=episode_name,
                     source_description=_reasoning_source_description(row, harness),
                     reference_time=reference_time,
