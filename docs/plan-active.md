@@ -235,6 +235,7 @@ Edges: `Section-[:CONTAINS]->Section`, `Section-[:MENTIONS]->Entity`, `Section-[
 - [ ] Add GitHub repository retrieval as a separate provider.
 - [ ] Allow multiple providers in one query; preserve provider provenance, source version, access scope; never collapse results or assign a fixed authority hierarchy.
 - [ ] Provider-neutral `propose_knowledge_change(...)`; retain `search_wiki` / `propose_wiki_update` as backward-compatible aliases when the wiki provider is configured.
+- [ ] **Future provider candidates** (not scoped for this milestone's own exit gate — GitHub is still the one that proves the contract; these are the next sources once it does): Gmail (threads/messages as source events, likely feeding the journal via MS4c's `cmf-http` pattern rather than as a `KnowledgeResult` provider directly, since email is evidence, not curated knowledge); Slack (channel history/threads — same evidence-vs-knowledge distinction applies, and multi-workspace scoping will need MS9's deferred scopes model). Both are conversational/event sources, not documents, so they likely enter as capture adapters (MS4-family) that feed the journal, with only a durable subset ever promoted into the knowledge layer — worth revisiting this split once GitHub's provider conformance test exists as a concrete comparison point.
 
 ### Exit gate
 
