@@ -22,27 +22,54 @@ because call 41 exhausted the Gemini free tier.
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 import sqlite3
 from typing import Any, Optional
 
 from server.consolidation.promotion import PromotionStore, promote_reviewed
 from server.consolidation.store import ConsolidationStore
-from server.journal.store import SqliteEventStore
+from server.episode_proposals import move_episode_mirror
+from server.journal.store import DEFAULT_JOURNAL_PATH, SqliteEventStore
 from server.review.store import APPROVED, DEFERRED, REJECTED, ReviewStore
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_REVIEWER = "todd"
+
+
+def _episode_proposals_dir_for(review_store: ReviewStore) -> Optional[Path]:
+    """Same db_path-derived isolation ConsolidationStore uses: a review_store
+    pointed at a custom (e.g. test temp) db_path mirrors to a sibling
+    episode-proposals/ dir next to it, never the real project's."""
+    if review_store.db_path == DEFAULT_JOURNAL_PATH:
+        return None
+    return review_store.db_path.parent / "episode-proposals"
+
+
+def _move_mirror_best_effort(review_store: ReviewStore, memory_id: str, new_status: str) -> None:
+    """episode-proposals/ file mirror follow-through -- best-effort, never
+    allowed to fail a real review verdict that already committed."""
+    try:
+        move_episode_mirror(memory_id, new_status, base_dir=_episode_proposals_dir_for(review_store))
+    except OSError:
+        logger.exception("episode-proposals mirror move failed for %s -> %s (non-fatal)", memory_id, new_status)
 
 
 def approve_episode(
     review_store: ReviewStore, memory_id: str, reviewer: str = DEFAULT_REVIEWER, reason: Optional[str] = None
 ) -> str:
-    return review_store.record(memory_id, "approve_episode", APPROVED, reviewer, reason=reason, tier=1)
+    audit_id = review_store.record(memory_id, "approve_episode", APPROVED, reviewer, reason=reason, tier=1)
+    _move_mirror_best_effort(review_store, memory_id, "approved")
+    return audit_id
 
 
 def reject_episode(
     review_store: ReviewStore, memory_id: str, reviewer: str = DEFAULT_REVIEWER, reason: Optional[str] = None
 ) -> str:
-    return review_store.record(memory_id, "reject_episode", REJECTED, reviewer, reason=reason)
+    audit_id = review_store.record(memory_id, "reject_episode", REJECTED, reviewer, reason=reason)
+    _move_mirror_best_effort(review_store, memory_id, "rejected")
+    return audit_id
 
 
 def defer_episode(

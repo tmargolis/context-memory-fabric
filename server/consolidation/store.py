@@ -28,13 +28,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 import sqlite3
 from typing import Any, Optional
 
+from server.episode_proposals import write_episode_mirror
 from server.journal.store import DEFAULT_JOURNAL_PATH
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
 from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS derived_memories (
@@ -79,6 +83,14 @@ CREATE INDEX IF NOT EXISTS idx_consolidation_jobs_status ON consolidation_jobs(s
 
 class ConsolidationStore:
     def __init__(self, db_path: Optional[Path] = None) -> None:
+        # A caller-supplied db_path (every test that isolates itself passes
+        # one) automatically isolates the episode-proposals mirror too, as a
+        # sibling directory next to it -- no test file needs to know this
+        # mirror exists to avoid polluting the real project's
+        # episode-proposals/. None (production default) means "use the real
+        # project-root episode-proposals/" (server.episode_proposals's own
+        # CMF_STATE_DIR/project-root convention).
+        self._episode_proposals_dir = Path(db_path).parent / "episode-proposals" if db_path is not None else None
         db_path = db_path if db_path is not None else DEFAULT_JOURNAL_PATH
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -335,6 +347,27 @@ class ConsolidationStore:
             (memory_id, now, job_id),
         )
         self._conn.commit()
+
+        # Read-only file mirror (Backlog, "Proposal-directory housekeeping,"
+        # 2026-09-18) -- best-effort, never allowed to fail a real staging
+        # write that already committed above.
+        try:
+            write_episode_mirror(
+                memory_id=memory_id,
+                reasoning_kind=episode.reasoning_kind,
+                statement=episode.statement,
+                confidence=episode.confidence,
+                evidence_event_ids=evidence,
+                policy_name=policy_name,
+                policy_version=policy_version,
+                approval_state=approval_state,
+                driving_question=episode.driving_question,
+                rationale=episode.rationale,
+                thread_key=episode.thread_key,
+                base_dir=self._episode_proposals_dir,
+            )
+        except OSError:
+            logger.exception("episode-proposals mirror write failed for %s (non-fatal)", memory_id)
 
     def stats(self) -> dict[str, Any]:
         total = self._conn.execute("SELECT COUNT(*) FROM derived_memories").fetchone()[0]
