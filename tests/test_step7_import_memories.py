@@ -404,6 +404,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "reconcile_memories",
             "capture_note",  # MS4a MCP-boundary capture
             "capture_health",  # MS4a MCP-boundary capture
+            "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
             # MS6d — durable-knowledge proposal review/apply loop
             "list_wiki_proposals",

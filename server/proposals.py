@@ -95,6 +95,35 @@ def get_proposals_dir(custom_dir: Optional[Path] = None) -> Path:
     return p
 
 
+def _status_subdir(status: str) -> Optional[str]:
+    """Which subfolder a proposal's file lives in for a given status.
+
+    None means the flat root (still `pending_review`). `applied` is a
+    sub-state of `approved` (MS6d's own vocabulary: pending_review ->
+    approved/rejected -> applied, approved-only) so it stays under
+    `approved/` rather than getting a third folder -- found 2026-09-18,
+    the flat root had grown to 78 files with no way to tell reviewed from
+    unreviewed at a glance.
+    """
+    if status in ("approved", "applied"):
+        return "approved"
+    if status == "rejected":
+        return "rejected"
+    return None
+
+
+def _locate_proposal_file(proposal_id: str, store_dir: Path) -> Optional[Path]:
+    """Find an existing proposal file by id, checking the flat root then both subfolders."""
+    for candidate in (
+        store_dir / f"{proposal_id}.json",
+        store_dir / "approved" / f"{proposal_id}.json",
+        store_dir / "rejected" / f"{proposal_id}.json",
+    ):
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def validate_target_path(target_path: str, wiki_root: Path) -> Path:
     """Validate that the target path is safe and refers to a supported text file within LLM_Wiki.
 
@@ -208,11 +237,9 @@ def create_wiki_proposal(
         unified_diff=unified_diff_str,
     )
 
-    # Persist to local JSON file
-    store_dir = get_proposals_dir(proposals_dir)
-    file_path = store_dir / f"{prop_id}.json"
-    file_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
-    logger.info(f"Saved wiki proposal '{prop_id}' to {file_path}")
+    # Persist to local JSON file (pending_review -> flat root, via _save_proposal)
+    _save_proposal(proposal, proposals_dir)
+    logger.info(f"Saved wiki proposal '{prop_id}'")
 
     return proposal
 
@@ -249,19 +276,24 @@ def list_proposals(
     proposals_dir: Optional[Path] = None,
     status: Optional[str] = None,
 ) -> list[WikiProposal]:
-    """List stored proposals from the local state directory."""
+    """List stored proposals from the local state directory (flat root +
+    approved/ + rejected/ subfolders -- see _status_subdir)."""
     store_dir = get_proposals_dir(proposals_dir)
     proposals: list[WikiProposal] = []
 
-    for item in sorted(store_dir.glob("*.json")):
-        try:
-            data = json.loads(item.read_text(encoding="utf-8"))
-            prop = WikiProposal.from_dict(data)
-            if status is None or prop.status == status:
-                proposals.append(prop)
-        except Exception as e:
-            logger.warning(f"Failed loading proposal file {item}: {e}")
+    for search_dir in (store_dir, store_dir / "approved", store_dir / "rejected"):
+        if not search_dir.exists():
+            continue
+        for item in search_dir.glob("*.json"):
+            try:
+                data = json.loads(item.read_text(encoding="utf-8"))
+                prop = WikiProposal.from_dict(data)
+                if status is None or prop.status == status:
+                    proposals.append(prop)
+            except Exception as e:
+                logger.warning(f"Failed loading proposal file {item}: {e}")
 
+    proposals.sort(key=lambda p: p.proposal_id)
     return proposals
 
 
@@ -269,10 +301,10 @@ def get_proposal(
     proposal_id: str,
     proposals_dir: Optional[Path] = None,
 ) -> Optional[WikiProposal]:
-    """Retrieve a single proposal by ID."""
+    """Retrieve a single proposal by ID, wherever its status has it filed."""
     store_dir = get_proposals_dir(proposals_dir)
-    target = store_dir / f"{proposal_id}.json"
-    if not target.exists():
+    target = _locate_proposal_file(proposal_id, store_dir)
+    if target is None:
         return None
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
@@ -283,9 +315,20 @@ def get_proposal(
 
 
 def _save_proposal(proposal: WikiProposal, proposals_dir: Optional[Path] = None) -> None:
+    """Write a proposal to the subfolder its current status belongs in
+    (_status_subdir), moving it there if it currently lives somewhere else
+    -- a proposal never exists in two places at once."""
     store_dir = get_proposals_dir(proposals_dir)
-    file_path = store_dir / f"{proposal.proposal_id}.json"
-    file_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
+    subdir = _status_subdir(proposal.status)
+    target_dir = (store_dir / subdir) if subdir else store_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    new_path = target_dir / f"{proposal.proposal_id}.json"
+
+    existing = _locate_proposal_file(proposal.proposal_id, store_dir)
+    if existing is not None and existing != new_path:
+        existing.unlink()
+
+    new_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
 
 
 def review_proposal(
