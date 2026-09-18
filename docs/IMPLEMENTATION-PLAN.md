@@ -52,9 +52,9 @@ All completed milestones' detail — what was built, corrections found, exit-gat
 
 ---
 
-## Current state (2026-09-17)
+## Current state (2026-09-18)
 
-**Done through MS4a/MS6c/MS6d/MS7b.** The pipeline runs end-to-end on Spark-local inference, retrieval is proven to beat single-provider baselines, governance (`explain`/`correct`/`delete`) and durable-knowledge proposal review both work live, and the MCP server is verified working inside all 4 real client apps Todd uses:
+**Done through MS4a/MS6c/MS6d/MS7b.** The pipeline runs end-to-end on Spark-local inference, retrieval is proven to beat single-provider baselines, governance (`explain`/`correct`/`delete`) and durable-knowledge proposal review both work live, and the MCP server is verified working inside all 4 real client apps Todd uses. **MS4a2's `capture_session` tool is built, unit-tested, and live** (18 registered tools) — its own exit gate (a live Cowork dry run) is still outstanding.
 
 ```text
 source exports → journal (19,012 events) → per-event classification (heuristic v1.2)
@@ -66,8 +66,8 @@ source exports → journal (19,012 events) → per-event classification (heurist
 ```
 
 - **Live graph:** `mem-fabric-local` — closed out by [MS7b](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) 2026-09-17: cloned forward from `mem-fabric-local-wiki` (which already held the enriched-content re-derivation of the full ledger) onto this canonical name, then pruned of its wiki-structured `:Section` layer (collapsed to `:Note`-level `MENTIONS`/`REFERENCES` first, so provenance survived). `Project`/`IN_PROJECT` and the un-corroborated wiki-only entities were deliberately left in place pending the two open items in [Backlog](plan-active.md#backlog). Rollback graphs retained untouched: `mem-fabric-local-ep`, `mem-fabric-local-wiki`, `mem-fabric-gemini`, `mem-fabric-local-glm`.
-- **Live server:** `streamable-http` on `:8000` behind OAuth (DCR + PKCE, [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6)) — 17 registered tools, all 4 client families (Claude Desktop Cowork + Code, Gemini Spark, ChatGPT) connected and functionally verified. `docs/CLIENTS.md` reflects this as of 2026-09-16.
-- **Remaining backlog:** 25,961 heuristic `queued_for_review` rows, never individually reviewed (mostly re-judged duplicates per MS3.6's assessment); OAuth hardening (no test coverage yet, plaintext token storage); `edit_memory` doesn't re-run fact extraction on correction; occasional transient 502s on the shared OAuth/tunnel path — all in [plan-active Backlog](plan-active.md#backlog), none blocking.
+- **Live server:** `streamable-http` on `:8000` behind OAuth (DCR + PKCE, [PR #6](https://github.com/tmargolis/context-memory-fabric/pull/6)) — 18 registered tools (added `capture_session`, MS4a2), all 4 client families (Claude Desktop Cowork + Code, Gemini Spark, ChatGPT) connected and functionally verified. `docs/CLIENTS.md` reflects this as of 2026-09-18.
+- **Review backlog, cleaned up 2026-09-18:** heuristic-pattern `queued_for_review` rows cut from 25,961 → 6,582 via `retire-stale-versions` (three reprocessed policy versions of the same events collapsed to the newest). `wiki-proposals/` and the new `episode-proposals/` mirror (1,243 files backfilled — 301 tier1 / 942 tier2) both now sort into `approved/`/`rejected/` subfolders on review instead of one flat directory. **Remaining:** OAuth hardening (no test coverage yet, plaintext token storage); `edit_memory` doesn't re-run fact extraction on correction; occasional transient 502s on the shared OAuth/tunnel path — all in [plan-active Backlog](plan-active.md#backlog), none blocking.
 - **Live status:** `imports/ingest-pipeline-status.md` (gitignored; regenerate with `imports/tools/gen_ingest_report.py`).
 
 Full build detail and corrections-found for every completed milestone — including the 2026-09-16 session that closed out MS6c/MS6d/MS4a (the OAuth build, the Cowork-vs-Code harness-identity finding, the Gemini Spark cross-harness write/correct test) — live in [plan-history.md](plan-history.md).
