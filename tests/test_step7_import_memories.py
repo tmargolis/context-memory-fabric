@@ -402,7 +402,6 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "import_chatgpt_exports",
             "edit_memory",
             "reconcile_memories",
-            "capture_note",  # MS4a MCP-boundary capture
             "capture_health",  # MS4a MCP-boundary capture
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",

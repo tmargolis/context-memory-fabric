@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 from server.capture import filters, identity
 from server.capture.health import CaptureHealth
-from server.capture.middleware import CaptureMiddleware, build_tool_call_event, capture_manual_note
+from server.capture.middleware import CaptureMiddleware, build_tool_call_event
 from server.journal.store import SqliteEventStore
 
 
@@ -273,32 +273,6 @@ class TestCaptureMiddleware(unittest.IsolatedAsyncioTestCase):
         # captured + dropped must account for all 20 attempts either way,
         # and the middleware must not have raised for any of them.
         self.assertEqual(snapshot["captured"] + snapshot["dropped"], 20)
-
-
-class TestCaptureManualNote(unittest.IsolatedAsyncioTestCase):
-    async def test_capture_note_builds_and_enqueues_an_event(self):
-        tmp_dir = tempfile.TemporaryDirectory()
-        try:
-            db_path = Path(tmp_dir.name) / "journal.db"
-            store = SqliteEventStore(db_path=db_path)
-            health = CaptureHealth()
-            middleware = CaptureMiddleware(event_store=store, health=health)
-
-            import server.capture.middleware as mw_module
-
-            original = mw_module._DEFAULT_MIDDLEWARE
-            mw_module._DEFAULT_MIDDLEWARE = middleware
-            try:
-                session = fake_session(client_info=fake_client_info("Claude Desktop"))
-                event = await capture_manual_note("Checkpoint: finished the rate limiter.", "note", session, "req-note-1")
-                self.assertEqual(event.event_type, "capture_note")
-                await asyncio.sleep(0.1)
-                self.assertEqual(store.stats()["total_events"], 1)
-            finally:
-                mw_module._DEFAULT_MIDDLEWARE = original
-                store.close()
-        finally:
-            tmp_dir.cleanup()
 
 
 if __name__ == "__main__":

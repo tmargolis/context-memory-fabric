@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.0"
 EVENT_TYPE_TOOL_CALL = "mcp_tool_call"
-EVENT_TYPE_CAPTURE_NOTE = "capture_note"
 
 _RESULT_SUMMARY_MAX_CHARS = 1000
 
@@ -228,48 +227,3 @@ def get_default_capture_middleware() -> CaptureMiddleware:
     if _DEFAULT_MIDDLEWARE is None:
         _DEFAULT_MIDDLEWARE = CaptureMiddleware()
     return _DEFAULT_MIDDLEWARE
-
-
-async def capture_manual_note(content: str, kind: str, session: Any, request_id: Any) -> SourceEvent:
-    """Build and enqueue a capture_note event (used by the capture_note MCP tool).
-
-    Unlike a tool-call capture, this always captures (no allow/deny check —
-    an explicit user checkpoint is never filtered) and content is not a
-    tool-arguments dict, so it goes through the same redaction but a
-    simpler content shape.
-    """
-    client_info = _client_info_for(session)
-    harness = identity.resolve_harness(client_info)
-    session_id = identity.resolve_session_id(session)
-
-    redacted_content, redacted_count = filters.redact_secrets_and_count({"note": content})
-
-    payload = {"kind": kind, "note": redacted_content["note"]}
-    content_hash = compute_content_hash(payload)
-    event_id = compute_event_id(
-        harness=harness,
-        content_hash=content_hash,
-        conversation_id=session_id,
-        turn_id=str(request_id) if request_id is not None else None,
-    )
-
-    event = SourceEvent(
-        schema_version=SCHEMA_VERSION,
-        event_id=event_id,
-        event_type=EVENT_TYPE_CAPTURE_NOTE,
-        source=SourceProvenance(
-            harness=harness,
-            conversation_id=session_id,
-            session_id=session_id,
-            turn_id=str(request_id) if request_id is not None else None,
-        ),
-        observed_at=datetime.now(timezone.utc),
-        content=payload,
-        content_hash=content_hash,
-        actor_type="user",
-        date_precision=DatePrecision.NONE,
-        metadata={"client_version": identity.client_version(client_info), "redacted_field_count": redacted_count},
-    )
-
-    get_default_capture_middleware().enqueue(event, redacted_count)
-    return event

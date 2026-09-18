@@ -124,11 +124,12 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         names = {t.name for t in tools}
         self.assertIn("search_wiki", names)
         self.assertIn("propose_wiki_update", names)
-        # 9 pre-MS4a tools + capture_note + capture_health (MS4a MCP-boundary
-        # capture) + promote_auto_accepted_memories + 5 MS6d proposal-review
-        # tools (list/get/review/apply/bulk_reject_wiki_proposals) +
-        # capture_session (MS4a2).
-        self.assertEqual(len(names), 18)
+        # 9 pre-MS4a tools + capture_health (MS4a MCP-boundary capture) +
+        # promote_auto_accepted_memories + 5 MS6d proposal-review tools
+        # (list/get/review/apply/bulk_reject_wiki_proposals) + capture_session
+        # (MS4a2; capture_note removed the same day, unused in production
+        # and unreachable by any retrieval path -- see plan-active.md).
+        self.assertEqual(len(names), 17)
 
 
 if __name__ == "__main__":

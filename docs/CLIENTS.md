@@ -241,7 +241,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 **What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. There is no architecture here that captures a Claude Desktop conversation CMF's tools were never invoked during. Mitigations:
 
-- At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call `capture_session` — it stages real episodic memory or a Wiki proposal per item (reviewable via the same path offline reasoning-episode extraction uses), rather than `capture_note`'s bare journal marker. Still interaction-triggered, not continuous — Cowork has no session-end signal this can hook into (Milestone 4a2, 2026-09-18).
+- At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call `capture_session` — it stages real episodic memory or a Wiki proposal per item, reviewable via the same path offline reasoning-episode extraction uses. Still interaction-triggered, not continuous — Cowork has no session-end signal this can hook into (Milestone 4a2, 2026-09-18).
 - `get_context` at session start pulls in durable/recent state proactively.
 - Periodic Claude/ChatGPT/Gemini export ingestion (Milestone 2's importers) backfills the gaps between what capture caught live and what actually happened.
 
@@ -266,7 +266,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 18 Context Memory Fabric tools (13 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured; `capture_session`'s wiki_proposal destination is likewise a no-op without one):
+All connected clients receive access to the full suite of 17 Context Memory Fabric tools (12 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured; `capture_session`'s wiki_proposal destination is likewise a no-op without one):
 
 1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
 2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
@@ -277,12 +277,11 @@ All connected clients receive access to the full suite of 18 Context Memory Fabr
 7. **`propose_wiki_update(target_path, proposed_content, rationale)`** *(Proposal Write)* — Creates a reviewable staging proposal in `wiki-proposals/` without mutating the canonical Wiki.
 8. **`import_memories(content, source, source_description, dry_run)`** *(Admin Ingest)* — Administrative bulk import tool for importing AI memory summaries (ChatGPT, Claude, Gemini) into episodic memory.
 9. **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** *(Admin Ingest)* — Parses native ChatGPT `conversations-*.json` export files by explicit file path and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Requires an explicit non-default `graph_name` when committing.
-10. **`capture_note(content, kind)`** *(Evidence Write)* — Milestone 4a: explicit checkpoint captured to the evidence journal (not episodic memory — see `remember` for that). Fire-and-forget.
-11. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth.
-12. **`promote_auto_accepted_memories(dry_run, limit)`** *(Memory Write)* — Promotes consolidation candidates already classified `auto_accepted` into episodic memory (Graphiti/FalkorDB). Idempotent; only `auto_accepted` candidates are eligible — everything else needs Milestone 6 review tooling.
-13. **`list_wiki_proposals(status)`** *(Read-Only)* — MS6d: lists Wiki proposals, optionally filtered by status (`pending_review`/`approved`/`rejected`/`applied`).
-14. **`get_wiki_proposal(proposal_id)`** *(Read-Only)* — MS6d: full detail for one proposal — rationale, unified diff, and the sha256 hashes needed to review or apply it.
-15. **`review_wiki_proposal(proposal_id, verdict, notes, reviewer)`** *(Decision Record)* — MS6d: records approve/reject on a pending proposal. Never touches `LLM_Wiki` — only records the decision that gates `apply_wiki_proposal`.
-16. **`apply_wiki_proposal(proposal_id, expected_sha256, dry_run)`** *(Corpus Write, Destructive)* — MS6d: the only tool that writes into `LLM_WIKI_PATH`. Refuses anything not already `approved`; refuses on target drift since the proposal was created; `dry_run=True` by default; best-effort git commit in the Wiki repo on a real apply.
-17. **`bulk_reject_wiki_proposals(proposal_ids, reason)`** *(Decision Record)* — MS6d: rejects a batch of pending proposals with one recorded reason each, for triaging the review backlog.
-18. **`capture_session(items, project, source_description)`** *(State + Proposal Write)* — Milestone 4a2: captures several distinct findings from one live conversation in a single call, routing each item to either a reviewable staged episode (same queue offline reasoning-episode extraction uses) or a Wiki proposal, per the item's own `destination`.
+10. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth.
+11. **`promote_auto_accepted_memories(dry_run, limit)`** *(Memory Write)* — Promotes consolidation candidates already classified `auto_accepted` into episodic memory (Graphiti/FalkorDB). Idempotent; only `auto_accepted` candidates are eligible — everything else needs Milestone 6 review tooling.
+12. **`list_wiki_proposals(status)`** *(Read-Only)* — MS6d: lists Wiki proposals, optionally filtered by status (`pending_review`/`approved`/`rejected`/`applied`).
+13. **`get_wiki_proposal(proposal_id)`** *(Read-Only)* — MS6d: full detail for one proposal — rationale, unified diff, and the sha256 hashes needed to review or apply it.
+14. **`review_wiki_proposal(proposal_id, verdict, notes, reviewer)`** *(Decision Record)* — MS6d: records approve/reject on a pending proposal. Never touches `LLM_Wiki` — only records the decision that gates `apply_wiki_proposal`.
+15. **`apply_wiki_proposal(proposal_id, expected_sha256, dry_run)`** *(Corpus Write, Destructive)* — MS6d: the only tool that writes into `LLM_WIKI_PATH`. Refuses anything not already `approved`; refuses on target drift since the proposal was created; `dry_run=True` by default; best-effort git commit in the Wiki repo on a real apply.
+16. **`bulk_reject_wiki_proposals(proposal_ids, reason)`** *(Decision Record)* — MS6d: rejects a batch of pending proposals with one recorded reason each, for triaging the review backlog.
+17. **`capture_session(items, project, source_description)`** *(State + Proposal Write)* — Milestone 4a2: captures several distinct findings from one live conversation in a single call, routing each item to either a reviewable staged episode (same queue offline reasoning-episode extraction uses) or a Wiki proposal, per the item's own `destination`. Replaces `capture_note` (removed 2026-09-18 — its journal-only marker was never surfaced by any retrieval path and had never been used in production).

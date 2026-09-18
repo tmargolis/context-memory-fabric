@@ -92,9 +92,9 @@ def _journal_evidence(
 ) -> SourceEvent:
     """Journal one item's evidence_text as a lightweight, synchronous
     source event -- deliberately NOT the fire-and-forget queue path
-    capture_note/tool-call capture use, because record_reasoning_episode()
-    needs a real, already-persisted event_id to cite before it can stage
-    the episode; there is no later point to reconcile against.
+    tool-call capture uses, because record_reasoning_episode() needs a
+    real, already-persisted event_id to cite before it can stage the
+    episode; there is no later point to reconcile against.
     """
     client_info = _client_info_for(session)
     harness = identity.resolve_harness(client_info)

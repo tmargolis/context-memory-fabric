@@ -75,7 +75,9 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 12 as of the auto_accepted promotion tool (promote_auto_accepted_memories).
         # 17 as of MS6d (added list/get/review/apply/bulk_reject_wiki_proposals).
         # 18 as of MS4a2 (added capture_session).
-        self.assertEqual(len(self.expected), 18)
+        # 17 as of the same-day capture_note removal (unused in production,
+        # unreachable by any retrieval path -- see plan-active.md).
+        self.assertEqual(len(self.expected), 17)
 
 
 if __name__ == "__main__":
