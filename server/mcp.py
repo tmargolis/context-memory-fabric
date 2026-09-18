@@ -23,7 +23,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from server.capture.health import format_health_report, get_default_health
-from server.capture.middleware import capture_manual_note, get_default_capture_middleware
+from server.capture.middleware import get_default_capture_middleware
 from server.capture.session_capture import capture_session as capture_session_items, format_capture_session_result
 from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
 from server.consolidation.promotion import PromotionStore, format_promotion_report, promote_auto_accepted
@@ -80,7 +80,7 @@ SERVER_INSTRUCTIONS = (
     "capture_session with one item per distinct fact worth keeping, routing each to destination='episode' "
     "(something that happened/was decided/was concluded) or destination='wiki_proposal' (durable, reusable "
     "knowledge still true read cold later) — this stages real, reviewable episodic memory and Wiki proposals "
-    "in one call, rather than capture_note's bare journal marker or several separate remember calls."
+    "in one call, rather than several separate remember calls."
 ) + (
     ""
     if _config.knowledge_enabled
@@ -428,53 +428,6 @@ async def remember(
 
 
 @app.tool(
-    title="Capture Explicit Checkpoint Note",
-    annotations=types.ToolAnnotations(
-        read_only_hint=False,
-        destructive_hint=False,
-        idempotent_hint=False,
-        open_world_hint=False,
-    ),
-)
-async def capture_note(
-    content: Annotated[
-        str,
-        Field(
-            description="The checkpoint note to capture as evidence (e.g. a decision reached, a milestone hit, a session summary)."
-        ),
-    ],
-    kind: Annotated[
-        str,
-        Field(
-            description="A short label for the kind of checkpoint (e.g. 'decision', 'milestone', 'session_summary'). Free text."
-        ),
-    ] = "note",
-    ctx: Context = None,  # type: ignore[assignment]
-) -> str:
-    """Explicit evidence checkpoint for MS4a MCP-boundary capture.
-
-    WHEN TO USE:
-    - Call at natural checkpoints during a session — a decision reached, a milestone completed, a session
-      wrapping up — to leave an explicit marker in the evidence trail beyond what automatic tool-call capture
-      already records.
-
-    DISTINCTIONS:
-    - This is evidence capture (server.journal, Milestone 2's append-only journal), NOT a memory write.
-      It does not create episodic memory in Graphiti/FalkorDB — use `remember` for that. The two are
-      complementary: capture_note records that a checkpoint happened; remember records a durable fact.
-
-    SIDE EFFECTS:
-    - Enqueues a source event for background journaling. Fire-and-forget: this tool returns immediately and
-      does not wait for the journal write to complete.
-    """
-    if ctx is None:
-        return "capture_note requires MCP request context and cannot be called outside a live session."
-    request_ctx = ctx.request_context
-    event = await capture_manual_note(content, kind, request_ctx.session, request_ctx.request_id)
-    return f"Checkpoint captured.\n- Kind: `{kind}`\n- Event: `{event.event_id}`"
-
-
-@app.tool(
     title="Capture Session Findings as Episodes or Wiki Proposals",
     annotations=types.ToolAnnotations(
         read_only_hint=False,
@@ -540,11 +493,10 @@ async def capture_session(
     Prefer fewer, well-founded items over many thin ones.
 
     DISTINCTIONS:
-    - Different from `capture_note`, which writes a bare journal marker with no episodic content and no
-      review staging. Different from `remember`, which writes one episode directly to Graphiti with no
-      review step at all — this tool stages episodes into the same reviewable queue offline extraction
-      uses (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only
-      in that this tool lets you submit several proposals (and episodes) together in one call.
+    - Different from `remember`, which writes one episode directly to Graphiti with no review step at
+      all — this tool stages episodes into the same reviewable queue offline extraction uses
+      (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only in
+      that this tool lets you submit several proposals (and episodes) together in one call.
 
     SIDE EFFECTS:
     - Each "episode" item journals a lightweight evidence event, then stages a reasoning episode with

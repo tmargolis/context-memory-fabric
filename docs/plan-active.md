@@ -10,7 +10,9 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 **Why now:** Todd's actual near-term priority, ahead of MS4b. Cowork has no local transcript and no hook API (`docs/ROADMAP.md`'s Milestone 4 section) — confirmed architectural limit, not a gap to design around — so the only levers are server instructions and new tools the live model can call using what it already has in context.
 
-**Terminology note (worth stating once, since the names collide):** `capture_note` (existing MCP tool) writes a bare marker to the *journal* only, not an episodic memory. A `:Note` *graph node* (wiki-derived layer, `seed_wiki_graph.py`) is a different concept — it represents one actual Markdown file under `LLM_WIKI_PATH`, a real durable wiki doc. `capture_session` (below) is a third, new thing.
+**Terminology note (worth stating once, since the names collide):** `capture_note` (an MCP tool that existed until 2026-09-18, see below) wrote a bare marker to the *journal* only, not an episodic memory. A `:Note` *graph node* (wiki-derived layer, `seed_wiki_graph.py`) is a different concept — it represents one actual Markdown file under `LLM_WIKI_PATH`, a real durable wiki doc. `capture_session` (below) is a third thing.
+
+**`capture_note` removed the same day (Todd, 2026-09-18).** Checked what it actually did before deciding: its journal row was never read back by any retrieval path (`search_wiki`/`recall_mem`/`get_context` all read Graphiti or the wiki files, never raw journal events) and the only mechanism that could ever surface it — offline reasoning-episode consolidation, which treats any `actor_type="user"` event as a candidate turn regardless of `event_type` — has no scheduler and has never run against live capture. The real journal confirmed this wasn't a live behavior change: **zero `capture_note` events existed** at removal time. `capture_session`'s confidence floor (0.4-0.6, "inferred from terse turns or mostly from context") covers the vague-checkpoint case `capture_note` might have been reached for, at least landing in a review queue instead of a dead end. Removed: the MCP tool (`server/mcp.py`), `capture_manual_note()` and `EVENT_TYPE_CAPTURE_NOTE` (`server/capture/middleware.py`), its dedicated test, and every doc/test reference (`README.md`, `docs/CLIENTS.md`, four hardcoded tool-count/set assertions, the MCP contract fixture). Tool count: 18 → 17.
 
 ### Design: one `capture_session` tool, routes to either destination
 
@@ -26,16 +28,17 @@ Start with full manual review via the existing `tier1_review_queue()` to gauge q
 
 ### Honesty constraint
 
-Stays **interaction-triggered, not automatic** in the cron/hook sense — no session-end signal exists for Cowork. Per `docs/ROADMAP.md`'s own principle, docs must not imply continuous capture this mechanism can't deliver: this is a better-structured checkpoint than today's bare `capture_note` marker, not a background daemon.
+Stays **interaction-triggered, not automatic** in the cron/hook sense — no session-end signal exists for Cowork. Per `docs/ROADMAP.md`'s own principle, docs must not imply continuous capture this mechanism can't deliver: this is a real review-queue write, not a background daemon.
 
 ### Tasks
 
 - [x] `capture_session` tool registered in `server/mcp.py`, docstring carries the adapted rubric + routing rule.
 - [x] `server/capture/session_capture.py` — per-item journal-then-stage logic. Routes to `record_reasoning_episode()` (episode) or `create_wiki_proposal()` (wiki_proposal); one bad item reported per-item, never fatal to the rest of a batch (a broad `except Exception` around each item, on top of per-field validation).
-- [x] Update `SERVER_INSTRUCTIONS` (`server/mcp.py:66-86`) to point "session wrapping up" at `capture_session`, not `capture_note`.
-- [x] Tests: `tests/test_capture_session.py`, 13 cases — staging, evidence-event creation (verified the cited event actually lands in `events`), secret redaction in `evidence_text` (a synthetic API-key-shaped string confirmed stripped), threshold behavior (unset → always `queued_for_review`; set → `auto_accepted` above it, `queued_for_review` below), wiki-proposal routing, mixed episode+wiki batches, per-item error isolation. Full suite green (426 passed) after 4 hardcoded tool-count/set assertions updated across existing test files.
-- [x] Docs: `docs/CLIENTS.md` corrected — tool count 17→18, `capture_session` added to the tool list and the MCP-boundary-capture mitigations, and the per-client table's stale "Cowork and Code tab resolve distinctly" claim replaced with the real MS6c finding (they can collapse to the same harness bucket).
-- [ ] (Todd, outside this repo) Update his own custom Claude instructions to reference `capture_session` by name once live.
+- [x] Update `SERVER_INSTRUCTIONS` (`server/mcp.py:66-86`) to point "session wrapping up" at `capture_session`.
+- [x] Tests: `tests/test_capture_session.py`, 13 cases — staging, evidence-event creation (verified the cited event actually lands in `events`), secret redaction in `evidence_text` (a synthetic API-key-shaped string confirmed stripped), threshold behavior (unset → always `queued_for_review`; set → `auto_accepted` above it, `queued_for_review` below), wiki-proposal routing, mixed episode+wiki batches, per-item error isolation.
+- [x] Docs: `docs/CLIENTS.md` corrected — `capture_session` added to the tool list and the MCP-boundary-capture mitigations, and the per-client table's stale "Cowork and Code tab resolve distinctly" claim replaced with the real MS6c finding (they can collapse to the same harness bucket).
+- [x] `capture_note` removed same-day per the finding above — see the terminology note. Full suite green (435 passed) after every doc/test reference updated.
+- [x] (Todd, outside this repo) Custom Claude instructions redrafted to reference `capture_session` (and drop the `capture_note` line that was briefly drafted, once the removal decision was made) — his to paste in.
 
 ### Exit gate — not yet run
 

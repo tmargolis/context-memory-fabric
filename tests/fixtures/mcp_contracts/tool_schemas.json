@@ -128,51 +128,6 @@
     },
     "title": "Capture Health Status"
   },
-  "capture_note": {
-    "annotations": {
-      "destructive_hint": false,
-      "idempotent_hint": false,
-      "open_world_hint": false,
-      "read_only_hint": false,
-      "title": null
-    },
-    "description": "Explicit evidence checkpoint for MS4a MCP-boundary capture.\n\n    WHEN TO USE:\n    - Call at natural checkpoints during a session \u2014 a decision reached, a milestone completed, a session\n      wrapping up \u2014 to leave an explicit marker in the evidence trail beyond what automatic tool-call capture\n      already records.\n\n    DISTINCTIONS:\n    - This is evidence capture (server.journal, Milestone 2's append-only journal), NOT a memory write.\n      It does not create episodic memory in Graphiti/FalkorDB \u2014 use `remember` for that. The two are\n      complementary: capture_note records that a checkpoint happened; remember records a durable fact.\n\n    SIDE EFFECTS:\n    - Enqueues a source event for background journaling. Fire-and-forget: this tool returns immediately and\n      does not wait for the journal write to complete.\n    ",
-    "input_schema": {
-      "properties": {
-        "content": {
-          "description": "The checkpoint note to capture as evidence (e.g. a decision reached, a milestone hit, a session summary).",
-          "title": "Content",
-          "type": "string"
-        },
-        "kind": {
-          "default": "note",
-          "description": "A short label for the kind of checkpoint (e.g. 'decision', 'milestone', 'session_summary'). Free text.",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "required": [
-        "content"
-      ],
-      "title": "capture_noteArguments",
-      "type": "object"
-    },
-    "name": "capture_note",
-    "output_schema": {
-      "properties": {
-        "result": {
-          "title": "Result",
-          "type": "string"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "title": "capture_noteOutput",
-      "type": "object"
-    },
-    "title": "Capture Explicit Checkpoint Note"
-  },
   "capture_session": {
     "annotations": {
       "destructive_hint": false,
@@ -181,7 +136,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    Wiki proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"wiki_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `capture_note`, which writes a bare journal marker with no episodic content and no\n      review staging. Different from `remember`, which writes one episode directly to Graphiti with no\n      review step at all \u2014 this tool stages episodes into the same reviewable queue offline extraction\n      uses (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only\n      in that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"wiki_proposal\" item creates a pending proposal file\n      under wiki-proposals/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
+    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    Wiki proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"wiki_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one episode directly to Graphiti with no review step at\n      all \u2014 this tool stages episodes into the same reviewable queue offline extraction uses\n      (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only in\n      that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"wiki_proposal\" item creates a pending proposal file\n      under wiki-proposals/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
     "input_schema": {
       "properties": {
         "items": {

@@ -205,6 +205,8 @@ The roadmap's five-step live test, run for real via [MS6c](#ms6c--mcp-server-cro
 
 One retry was needed: the first `remember()` attempt from Gemini Spark returned a plausible "Saved..." confirmation in chat with **no actual tool call reaching the server** (nothing in the journal, nothing in FalkorDB) — the same connectivity flakiness behind the "error 1076"s Todd hit creating new Spark sessions. The second attempt, from a session that was actually connected, is confirmed real via the server log, not just the chat transcript. **Takeaway kept for future reference:** a client-side "success" message from Gemini Spark is not sufficient evidence a write landed — verify server-side (journal or FalkorDB) before trusting it.
 
+**Correction (MS4a2, 2026-09-18): `capture_note` removed.** Its journal row was never read back by any retrieval path — `search_wiki`/`recall_mem`/`get_context` all read Graphiti or the wiki files, never raw journal events — and the offline consolidation pipeline that could theoretically surface it has no scheduler and never ran against live capture. Zero `capture_note` events existed in the journal at removal time; it had never been used in production. Superseded by `capture_session` (see [plan-active.md](plan-active.md#ms4a2--cowork-live-session-episodeentitywiki-capture-current-priority-2026-09-18)), which stages a real, reviewable episode or Wiki proposal instead of an unread journal marker.
+
 ---
 
 ## MS3.6 — Promotion: staged memories into the retrievable graph

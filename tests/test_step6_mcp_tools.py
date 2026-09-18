@@ -54,7 +54,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         expected_tools = {
             "remember", "recall_mem", "search_wiki", "get_context", "propose_wiki_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
-            "capture_note", "capture_health",  # MS4a MCP-boundary capture
+            "capture_health",  # MS4a MCP-boundary capture
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
             # MS6d — durable-knowledge proposal review/apply loop
