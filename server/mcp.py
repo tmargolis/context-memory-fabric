@@ -24,6 +24,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 
 from server.capture.health import format_health_report, get_default_health
 from server.capture.middleware import capture_manual_note, get_default_capture_middleware
+from server.capture.session_capture import capture_session as capture_session_items, format_capture_session_result
 from server.chatgpt_export_parser import import_chatgpt_exports as run_import_chatgpt_exports
 from server.consolidation.promotion import PromotionStore, format_promotion_report, promote_auto_accepted
 from server.consolidation.store import ConsolidationStore
@@ -75,9 +76,11 @@ SERVER_INSTRUCTIONS = (
     "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files. "
     "Every tool call you make is automatically journaled as evidence in the background (MS4a MCP-boundary "
     "capture) — this does not replace remember, which is still the tool for explicit, substantive episodic "
-    "writes. Call capture_note at natural checkpoints (a decision reached, a milestone hit, a session wrapping "
-    "up) to leave an explicit marker in that evidence trail beyond what tool-call capture alone records — this "
-    "is evidence capture, not a memory write, and is complementary to remember rather than a substitute for it."
+    "writes. At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call "
+    "capture_session with one item per distinct fact worth keeping, routing each to destination='episode' "
+    "(something that happened/was decided/was concluded) or destination='wiki_proposal' (durable, reusable "
+    "knowledge still true read cold later) — this stages real, reviewable episodic memory and Wiki proposals "
+    "in one call, rather than capture_note's bare journal marker or several separate remember calls."
 ) + (
     ""
     if _config.knowledge_enabled
@@ -469,6 +472,100 @@ async def capture_note(
     request_ctx = ctx.request_context
     event = await capture_manual_note(content, kind, request_ctx.session, request_ctx.request_id)
     return f"Checkpoint captured.\n- Kind: `{kind}`\n- Event: `{event.event_id}`"
+
+
+@app.tool(
+    title="Capture Session Findings as Episodes or Wiki Proposals",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def capture_session(
+    items: Annotated[
+        list[dict],
+        Field(
+            description=(
+                "One entry per distinct fact worth keeping from this conversation. Each item is an object "
+                "with a required 'destination' field ('episode' or 'wiki_proposal') plus fields for that "
+                "destination:\n"
+                "  destination='episode' — statement (str, required): a concise synthesis in your own words "
+                "(1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / "
+                "hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; "
+                "confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own "
+                "words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or "
+                "context; driving_question (str, optional); rationale (str, optional); thread_key (str, "
+                "optional): short lowercase hyphenated topic slug, stable across chats about the same "
+                "undertaking.\n"
+                "  destination='wiki_proposal' — target_path (str, required): relative path within LLM_Wiki; "
+                "proposed_content (str, required): complete desired file content, not a diff; wiki_rationale "
+                "(str, required): why this belongs in durable Wiki.\n"
+                "  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt "
+                "supporting this item — for 'episode' this becomes the item's only trace in the evidence "
+                "journal; for 'wiki_proposal' it is carried as background context."
+            )
+        ),
+    ],
+    project: Annotated[
+        Optional[str],
+        Field(description="Optional project/topic label to tag this batch with."),
+    ] = None,
+    source_description: Annotated[
+        Optional[str],
+        Field(description="Optional description of this session (e.g. what was worked on)."),
+    ] = None,
+    ctx: Context = None,  # type: ignore[assignment]
+) -> str:
+    """Capture multiple distinct findings from a live Cowork conversation in one call, each routed to
+    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable
+    Wiki proposal.
+
+    WHEN TO USE:
+    - Call at natural checkpoints — a decision reached, a milestone hit, a session wrapping up — the same
+      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when
+      a conversation produced several distinct things worth keeping at once.
+
+    ROUTING RULE (apply this per item):
+    - destination="episode": something that HAPPENED, was DECIDED, or was CONCLUDED during this
+      conversation — a fact about a point in time.
+    - destination="wiki_proposal": durable, reusable, reference-shaped knowledge that would still be true
+      and useful read cold, later, out of this conversation's context.
+
+    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be
+    reasoning — weighing options, forming or testing an idea, diagnosing a problem, concluding something,
+    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a
+    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.
+    Prefer fewer, well-founded items over many thin ones.
+
+    DISTINCTIONS:
+    - Different from `capture_note`, which writes a bare journal marker with no episodic content and no
+      review staging. Different from `remember`, which writes one episode directly to Graphiti with no
+      review step at all — this tool stages episodes into the same reviewable queue offline extraction
+      uses (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only
+      in that this tool lets you submit several proposals (and episodes) together in one call.
+
+    SIDE EFFECTS:
+    - Each "episode" item journals a lightweight evidence event, then stages a reasoning episode with
+      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human
+      review, matching this project's default). Each "wiki_proposal" item creates a pending proposal file
+      under wiki-proposals/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported
+      individually; it does not prevent the other items in the same call from being captured.
+    """
+    if ctx is None:
+        return "capture_session requires MCP request context and cannot be called outside a live session."
+    if not items:
+        return "capture_session called with no items — nothing to capture."
+    request_ctx = ctx.request_context
+    results = capture_session_items(
+        items=items,
+        project=project,
+        source_description=source_description,
+        session=request_ctx.session,
+        request_id=request_ctx.request_id,
+    )
+    return format_capture_session_result(results)
 
 
 @app.tool(

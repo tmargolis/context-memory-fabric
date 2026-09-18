@@ -173,6 +173,75 @@
     },
     "title": "Capture Explicit Checkpoint Note"
   },
+  "capture_session": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    Wiki proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"wiki_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `capture_note`, which writes a bare journal marker with no episodic content and no\n      review staging. Different from `remember`, which writes one episode directly to Graphiti with no\n      review step at all \u2014 this tool stages episodes into the same reviewable queue offline extraction\n      uses (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only\n      in that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"wiki_proposal\" item creates a pending proposal file\n      under wiki-proposals/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
+    "input_schema": {
+      "properties": {
+        "items": {
+          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'wiki_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='wiki_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): complete desired file content, not a diff; wiki_rationale (str, required): why this belongs in durable Wiki.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'wiki_proposal' it is carried as background context.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional project/topic label to tag this batch with.",
+          "title": "Project"
+        },
+        "source_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional description of this session (e.g. what was worked on).",
+          "title": "Source Description"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "capture_sessionArguments",
+      "type": "object"
+    },
+    "name": "capture_session",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "capture_sessionOutput",
+      "type": "object"
+    },
+    "title": "Capture Session Findings as Episodes or Wiki Proposals"
+  },
   "edit_memory": {
     "annotations": {
       "destructive_hint": false,
