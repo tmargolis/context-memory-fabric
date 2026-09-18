@@ -333,5 +333,79 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("cache was invalidated", message)
 
 
+class TestProposalSubfolders(unittest.TestCase):
+    """2026-09-18: wiki-proposals/ moves a proposal into approved/ or
+    rejected/ on a terminal verdict, instead of leaving every status flat
+    in the root — found once the root grew to 78 undifferentiated files."""
+
+    def setUp(self):
+        self.temp_wiki = tempfile.TemporaryDirectory()
+        self.wiki_root = Path(self.temp_wiki.name)
+        self.temp_proposals = tempfile.TemporaryDirectory()
+        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
+
+        wiki_dir = self.wiki_root / "WIKI"
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        self.project_md = wiki_dir / "project.md"
+        self.project_md.write_text("# Project Atlas\nUses PostgreSQL.", encoding="utf-8")
+
+        _git("init", "-q", cwd=self.wiki_root)
+        _git("config", "user.email", "test@example.com", cwd=self.wiki_root)
+        _git("config", "user.name", "Test", cwd=self.wiki_root)
+        _git("add", "-A", cwd=self.wiki_root)
+        _git("commit", "-q", "-m", "initial", cwd=self.wiki_root)
+
+    def tearDown(self):
+        self.temp_wiki.cleanup()
+        self.temp_proposals.cleanup()
+
+    def _make_proposal(self):
+        return create_wiki_proposal(
+            target_path="WIKI/project.md",
+            proposed_content="# Project Atlas\nUses PostgreSQL and Redis.",
+            rationale="Adding Redis.",
+            wiki_root=self.wiki_root,
+            proposals_dir=self.proposals_dir,
+        )
+
+    def test_new_proposal_lives_in_flat_root(self):
+        prop = self._make_proposal()
+        self.assertTrue((self.proposals_dir / f"{prop.proposal_id}.json").exists())
+        self.assertFalse((self.proposals_dir / "approved" / f"{prop.proposal_id}.json").exists())
+        self.assertFalse((self.proposals_dir / "rejected" / f"{prop.proposal_id}.json").exists())
+
+    def test_approve_moves_to_approved_subfolder(self):
+        prop = self._make_proposal()
+        review_proposal(prop.proposal_id, "approved", proposals_dir=self.proposals_dir)
+
+        self.assertFalse((self.proposals_dir / f"{prop.proposal_id}.json").exists())
+        self.assertTrue((self.proposals_dir / "approved" / f"{prop.proposal_id}.json").exists())
+        # get_proposal/list_proposals still find it despite the move
+        self.assertEqual(get_proposal(prop.proposal_id, proposals_dir=self.proposals_dir).status, "approved")
+        ids = {p.proposal_id for p in list_proposals(proposals_dir=self.proposals_dir)}
+        self.assertIn(prop.proposal_id, ids)
+
+    def test_reject_moves_to_rejected_subfolder(self):
+        prop = self._make_proposal()
+        review_proposal(prop.proposal_id, "rejected", proposals_dir=self.proposals_dir)
+
+        self.assertFalse((self.proposals_dir / f"{prop.proposal_id}.json").exists())
+        self.assertTrue((self.proposals_dir / "rejected" / f"{prop.proposal_id}.json").exists())
+        self.assertEqual(get_proposal(prop.proposal_id, proposals_dir=self.proposals_dir).status, "rejected")
+
+    def test_apply_stays_in_approved_subfolder(self):
+        prop = self._make_proposal()
+        review_proposal(prop.proposal_id, "approved", proposals_dir=self.proposals_dir)
+        apply_proposal(
+            prop.proposal_id, expected_sha256=prop.proposed_sha256, dry_run=False,
+            wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
+        )
+
+        # applied is a sub-state of approved -- no third folder
+        self.assertTrue((self.proposals_dir / "approved" / f"{prop.proposal_id}.json").exists())
+        self.assertFalse((self.proposals_dir / "rejected" / f"{prop.proposal_id}.json").exists())
+        self.assertEqual(get_proposal(prop.proposal_id, proposals_dir=self.proposals_dir).status, "applied")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,35 +4,89 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ---
 
-## MS4b — Claude Code adapter
+## MS4a2 — Cowork live-session episode/entity/wiki capture (current priority, 2026-09-18)
 
-**Goal:** Highest-fidelity capture available in the stack — Claude Code writes full local transcripts and supports lifecycle hooks.
+**Goal:** Auto-generate real episodes (and durable wiki content) from live Claude Desktop/Cowork conversations, without a manual export/import round trip.
 
-**Why now:** After the retrieval loop is proven. Second capture priority once capture resumes.
+**Why now:** Todd's actual near-term priority, ahead of MS4b. Cowork has no local transcript and no hook API (`docs/ROADMAP.md`'s Milestone 4 section) — confirmed architectural limit, not a gap to design around — so the only levers are server instructions and new tools the live model can call using what it already has in context.
 
-### Available surfaces (verified)
+**Terminology note (worth stating once, since the names collide):** `capture_note` (existing MCP tool) writes a bare marker to the *journal* only, not an episodic memory. A `:Note` *graph node* (wiki-derived layer, `seed_wiki_graph.py`) is a different concept — it represents one actual Markdown file under `LLM_WIKI_PATH`, a real durable wiki doc. `capture_session` (below) is a third, new thing.
 
-- **Transcripts:** `~/.claude/projects/<path-slug>/<session-uuid>.jsonl` — full turn-by-turn including tool calls. ~15 projects present.
-- **Hooks:** `~/.claude/settings.json` `hooks` block (already in use for `Notification`). `SessionStart`, `Stop`, `PostToolUse` available.
-- **History:** `~/.claude/history.jsonl`.
+### Design: one `capture_session` tool, routes to either destination
+
+One tool call at a checkpoint; the model tags each item `destination: "episode" | "wiki_proposal"` rather than needing two separate tool calls:
+
+- `destination="episode"` — reuses `ReasoningEpisodePolicyV1`'s existing extraction rubric (`server/policies/reasoning_episode_v1.py`'s `_SYSTEM` prompt, lines 54-105: 8-way `reasoning_kind` taxonomy, WHAT COUNTS exclusions, confidence bands) adapted into the tool's own docstring, so live self-extraction applies the same bar offline windowing does. Implementation, per item: (1) journal the model's own `evidence_text` as a lightweight source event first (harness=`claude_desktop`, redacted via `server/capture/filters.py`) — Cowork's raw turns are never otherwise journaled, so this is the only trace that reaches the journal and gives the episode something real to cite; (2) build a `ReasoningEpisode` (`server/policies/protocols.py:113`) from the item's fields; (3) `ConsolidationStore.record_reasoning_episode()` (`server/consolidation/store.py:267`) with `policy_name="cowork_live_v1"`, `policy_version="0.1"` (distinct provenance from offline windowing, same staging path) and `approval_state` from the shared `reasoning_auto_accept_threshold` config (see Review posture below).
+- `destination="wiki_proposal"` — no new plumbing, an internal call to the existing `propose_wiki_update(target_path, proposed_content, rationale, source_context=evidence_text)`. Same review path as every other proposal.
+- Routing rule (stated in both the tool docstring and `SERVER_INSTRUCTIONS`): *episodic* = something that happened/was decided/was concluded in this conversation; *wiki-worthy* = durable, reusable, still-true-read-cold-later knowledge.
+
+### Review posture (Todd, 2026-09-18)
+
+Start with full manual review via the existing `tier1_review_queue()` to gauge quality and tune the rubric. Once trusted, flip `reasoning_auto_accept_threshold` to a real confidence value and have a scheduled job call the existing `promote_auto_accepted()` — both pieces already exist, this is a config change made after calibration, not new code. **This threshold is shared with MS4b** (below) — one calibration, not two.
+
+### Honesty constraint
+
+Stays **interaction-triggered, not automatic** in the cron/hook sense — no session-end signal exists for Cowork. Per `docs/ROADMAP.md`'s own principle, docs must not imply continuous capture this mechanism can't deliver: this is a better-structured checkpoint than today's bare `capture_note` marker, not a background daemon.
 
 ### Tasks
 
-- [ ] JSONL transcript parser → canonical source events, preserving native session / turn / tool / model ids.
-- [ ] Hook installer that **merges** a CMF block into `~/.claude/settings.json` — never overwrites the existing `Notification` hook or statusline config.
-- [ ] `SessionStart` hook: open a CMF session, optionally inject prior context.
-- [ ] `Stop` hook: enqueue the completed transcript for consolidation.
-- [ ] Backfill mode across all existing project directories, idempotent on re-run.
-- [ ] Per-project allow/deny.
-- [ ] Hooks must complete fast and fail open — never block or slow a turn.
-- [ ] Secret filtering over tool payloads (Claude Code payloads frequently contain file contents and command output).
+- [ ] `capture_session` tool registered in `server/mcp.py`, docstring carries the adapted rubric + routing rule.
+- [ ] `server/capture/session_capture.py` — per-item journal-then-stage logic.
+- [ ] Update `SERVER_INSTRUCTIONS` (`server/mcp.py:66-86`) to point "session wrapping up" at `capture_session`, not `capture_note`.
+- [ ] Tests: per-item staging, evidence-event creation, secret redaction in `evidence_text`, shared-threshold approval-state behavior.
+- [ ] Docs: `docs/CLIENTS.md`/`docs/ROADMAP.md` corrected to reflect the new tool and the interaction-triggered honesty constraint.
+- [ ] (Todd, outside this repo) Update his own custom Claude instructions to reference `capture_session` by name once shipped.
 
 ### Exit gate
 
-**How much of a coding session is worth keeping?** A transcript is mostly file reads and tool output. Per ADR 0005, "summaries" is no longer a hand-wave — MS3.5's reasoning-episode derivation already runs on the journal. The MS4b decision is narrower: **which raw Claude Code event types reach the journal at all** (full turns vs. tool-output-elided), given MS3.5's stage derives the synthesis on top. Keep enough raw turns that reasoning extraction has substrate; elide pure file-read / tool-output noise.
+Manual dry run: at the end of a real Cowork session, ask the model to call `capture_session` with a few real items, inspect `queued_for_review` output via the review CLI, confirm evidence/taxonomy/confidence look right before trusting it on real volume.
+
+**Effort:** 1-2 sessions (one new tool + docstring + tests, no new subsystem).
+**Risk:** Low. No new storage, reuses `record_reasoning_episode`/`propose_wiki_update` as-is.
+
+---
+
+## MS4b — Claude Code (Desktop's Code tab) transcript adapter — parked, fully designed (2026-09-18)
+
+**Status:** Not the current priority (see MS4a2 above), but fully designed and ready to build when picked up.
+
+**Goal:** Highest-fidelity capture available in the stack — full local transcripts and lifecycle hooks.
+
+**Scope correction (2026-09-18):** Originally scoped as "the standalone Claude Code CLI" only. A direct filesystem check found Desktop's **Code tab** (Todd's actual daily driver, standalone CLI used occasionally) writes the *same* JSONL transcript format to the *same* `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` path — real multi-MB files confirmed. The parser reads by file path/format, not by which binary wrote it, so both are covered by one adapter. Cowork itself still has no transcript; that gap is MS4a2's territory, not this one's.
+
+### Available surfaces (measured against 8 real transcript files, 0.3MB–8.0MB)
+
+Every line is JSON with a `type` field: `user` (string content = real turn, or `tool_result` list = tool output fed back), `assistant` (`text`/`thinking`/`tool_use` blocks — `thinking` often holds a coding session's real substance), plus several Desktop-only bridging types (`bridge-session`, `ai-title`, `atis-latch`, `frame-link`, `pr-link`, etc.) absent from the plain CLI's schema — parser must skip-and-log unrecognized types, never raise. Measured "kept" density: **~50–75 real turns per MB** (~80–85% of raw lines are metadata/tool-output noise) — this answers the exit gate's own "which raw event types reach the journal" question concretely. `~/.claude/settings.json` `hooks` block exists (`Notification` already in use) but **whether Desktop's Code tab actually fires `SessionStart`/`Stop` hooks is unverified** — nothing in this repo demonstrates it; needs a live test before depending on it.
+
+### Dedup against already-imported exports (Todd, 2026-09-18)
+
+Real risk, confirmed against the live journal: `claude`-harness events (the already-imported Claude export) run through `2026-09-04T00:36:13Z`; `gemini`/`chatgpt` exports through `2026-09-04`/`2026-08-31`. A full-history backfill would re-walk the same conversations under harness `claude_code` instead of `claude` — **not** caught by `compute_event_id`'s existing dedup (harness is part of the hash). Mitigation: `backfill --all-projects` defaults to a date cutoff (`CMF_CLAUDE_CODE_BACKFILL_SINCE`, read from the import registry) rather than attempting content-hash matching across differently-shaped importers.
+
+### Review posture
+
+Same as MS4a2 above — start manual via `tier1_review_queue()`, same shared `reasoning_auto_accept_threshold`, flip to automatic once calibrated.
+
+### Tasks
+
+- [ ] `server/adapters/claude_code/parser.py` — line → canonical `SourceEvent`, keep/skip rule per the measured types above, secret redaction via `server/capture/filters.py` before hashing, harness hardcoded to `claude_code` (never resolved via MCP `client_info` — sidesteps the known-broken Cowork/Code-tab identity ambiguity in `server/capture/identity.py` entirely).
+- [ ] `server/adapters/claude_code/transcript_reader.py` — byte-offset incremental tailing (files grow live during a session; new `claude_code_tail_state` table in `journal.db`), plus `CMF_CLAUDE_CODE_PROJECT_ALLOW`/`_DENY`.
+- [ ] `server/adapters/claude_code/worker.py::process_pending()` — tails changed files, journals new events, calls `run_reasoning_consolidation(..., reasoning_auto_accept_threshold=<shared config>)` per touched conversation. **Verified**: this function never calls `promote_reviewed`/`promote_auto_accepted` under any configuration — threshold only controls `queued_for_review` vs `auto_accepted`. `CMF_LLM_PROVIDER=local` for this worker specifically (see LLM provider decision below), independent of the interactive server's config.
+- [ ] Trigger: a launchd agent polling every ~10-15 min (precedent: `com.cmf.spark-tunnel.plist`) as the reliable default, working regardless of hook applicability. A `Stop`-hook accelerant is optional, built last, only if the live hook test (below) passes.
+- [ ] `server/adapters/claude_code/hooks.py` — settings.json merge-installer (deep-merge only under `hooks.<EventName>`, back up the file first, never touch `Notification`/`statusLine`/`enabledPlugins`); hook body must do nothing but launch a detached (`nohup ... & disown`) worker and return — no synchronous LLM work.
+- [ ] `server/adapters/claude_code/cli.py` — `backfill --all-projects`, `tail --once`, `status`.
+- [ ] Tests against the 8 real transcript files already available under `~/.claude/projects/-Users-todd-Dev-context-memory-fabric/` — no need to wait for a new session.
+- [ ] Live hook-applicability test: trivial `SessionStart`/`Stop` sentinel hook, open a real Code-tab session, confirm whether it fires — record the answer here.
+
+### LLM provider: local only, not Gemini
+
+`ReasoningEpisodePolicyV1.evaluate_window()` draws from the same shared Gemini rate-limiter ledger live interactive `remember()` calls depend on. With the chosen `TimeGapWindower`, one 8MB/595-turn session is already ~30 extraction calls — meets-or-exceeds the tightest candidate model tier (`rpd=20`) in a single unattended session, with no human gate in front of it (unlike promotion, naturally throttled by review pace). Local Spark has zero quota cost; wall-clock doesn't matter since this runs entirely in the background. **Decision: `CMF_LLM_PROVIDER=local` for this worker, always** — real per-window wall-clock time is unmeasured (only promotion's ~25-38s/episode exists, which includes ~20 embedding calls this step never makes) and is the first thing to measure once built, to set the real poller cadence.
+
+### Exit gate
+
+**How much of a coding session is worth keeping?** Answered concretely by the measurement above, not left as a hand-wave: full text for `user`/`assistant text`/`thinking` blocks, bounded 1000-char summaries only for `tool_result`/`tool_use`.
 
 **Effort:** 3–4 sessions.
-**Risk:** Low-medium. Local files, documented hooks. Volume is the real risk — coding transcripts are large and everything consolidated costs an extraction call.
+**Risk:** Low-medium. Volume and the export-overlap dedup risk (mitigated above) are the real considerations, not hooks (which have a local, zero-cost, hook-independent fallback).
 
 ---
 
@@ -162,10 +216,17 @@ MS6b's governance tooling ([plan-history.md](plan-history.md#ms6b--governance)) 
   - **The 9 deferred, resolved by Todd (2026-09-11):** *Sensitive/personal (5)* — a finding connecting current binocular vision instability to a past brain injury + neuro-ophthalmologic history; the matching hypothesis and investigation episodes from the same thread (astigmatism theory, single-eye-vs-both testing); an investigation seeking medical guidance on OTC pain relievers after a head injury; an investigation analyzing a condo board-meeting transcript evaluating specific named candidates (Ken, Kevin, Brian) for board openings — **Todd approved all 5**. *Genuinely uncertain (4)* — a home-AV finding describing a symptom mid-troubleshooting (Shield/projector power state); a hypothesis about whether current homeowners insurance covers required EV-charger terms; a hypothesis interpreting the condo board's resistance motive as capacity-hoarding rather than genuine cost concern; an experiment with real measured data (Jackery AC-vs-DC power draw) the user themself questioned the accuracy of — Todd rejected the home-AV symptom and the power-draw measurement, approved both EV-charging hypotheses.
   - **Final tally: 171 approved, 799 rejected, 0 deferred**, all 171 promoted into `mem-fabric-local` across three batches, **171/171 succeeded, 0 failed** (real qwen3.5-122b extraction per episode, local/unmetered). Graph grew **295 → 465 Episodic nodes** (verified via direct Cypher count), entities 393→665, `RELATES_TO` edges →501.
   - **A real bug surfaced when Todd asked why the first batch was 164, not 163** (2026-09-11): one of the 164 wasn't a tier-2 approval at all — it was the *original, pre-correction* 360-cam/eclipse episode (the misattribution `correct_memory` fixed earlier in the MS6b work), silently re-promoted with its stale wrong content. Root cause: `reviews` is last-writer-wins per memory_id and `correct_memory` never touches it, so the old memory_id's `approved` verdict from 2026-09-08 stayed on record after the correction superseded it; `correct_memory` separately clears the old memory_id's `PromotionStore` row (the graph identity moved to the new memory_id). Those two facts together made `actions.promote_approved`'s "approved and not yet promoted" query — which had no idea `derived_memories.approval_state` existed — treat the superseded old memory_id as freshly eligible. **Fixed:** the query now excludes any memory_id whose `derived_memories.approval_state` is `rejected`/`superseded_by_reasoning`/`superseded_by_correction`, joining against `derived_memories` rather than reading `reviews` alone (`server/review/actions.py`). New regression test `test_superseded_by_correction_is_not_reeligible` (`tests/test_ms6_review.py`) reproduces the exact sequence and passed on the very next real promotion batch (the 2 final EV-charging approvals). **Cleanup:** the wrongly-revived `chatgpt-photo-006` episode (uuid `2734ac71-...`) removed from `mem-fabric-local`, its stray `PromotionStore` row deleted.
-- [ ] **25,961 heuristic-pattern rows still `queued_for_review`**, none ever routed through `ReviewStore` (0 have a `reviews` row — every heuristic-pattern state change so far, including the 27,516 already `rejected` and 3,251 `superseded_by_reasoning`, was a direct bulk `UPDATE`, not an individually reviewed verdict). MS3.6's own assessment stands: mostly re-judged duplicates across policy versions and low-signal raw turns, not undiscovered content. `retire-stale-versions` / `bulk-reject-stale-policy-versions` already exist for this — the open question is whether it's worth running them again now, or whether this pile is simply not worth further attention.
+- [ ] **25,961 heuristic-pattern rows still `queued_for_review`** across three reprocessed policy versions (1.0: 9,658, 1.1: 9,721, 1.2: 6,582) — the same underlying events reclassified three times, older versions never formally retired. **`retire-stale-versions`** (`python -m server.review.cli retire-stale-versions [--apply]`, implementation `bulk_reject_stale_policy_versions()` in `server/review/actions.py:238` — one tool, not two; there is no separate `bulk-reject-stale-policy-versions` CLI command) already exists for exactly this and keeps the newest version's row per source event, rejecting the rest — its own docstring: "25,961 queued rows cover only 9,757 distinct events, and 16,303 of them carry an explicit `supersedes` pointer." Resurfaced 2026-09-18 while scoping MS4a2/MS4b's episode-proposals file mirror (below) — running this is the actual fix, not file-mirroring 26k near-duplicates.
 - [ ] **The corpus is growing, not static.** The reasoning-episode pool alone grew from 1,243 rows (the 2026-09-05/06 reprocess) to 1,310 by 2026-09-11 — capture (MCP-boundary + imports) kept running after the 2026-09-08 review pass. A recurring/periodic tier-1 review pass is probably the more accurate framing going forward, rather than treating any fixed count as a target to eventually finish. `uv run python -m server.review.cli queue --tier 1` shows what's currently outstanding.
 - **Not sourced from new adapters at all yet:** MS4b (Claude Code), MS4c (OpenClaw), MS4d (Codex/Gemini CLI) remain unbuilt — none of the above touches those.
 - **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
+
+### Proposal-directory housekeeping (found 2026-09-18, scoping MS4a2/MS4b)
+
+Both proposal-review surfaces store everything flat with no move-on-review, and MS4a2's `capture_session` will only add volume to both:
+
+- [ ] **`wiki-proposals/` (78 files, flat, all statuses mixed).** `server/proposals.py`'s `_save_proposal()`/`review_proposal()` always write back to the same flat location; `get_proposals_dir()`/`list_proposals()` glob one directory. Fix: move to `wiki-proposals/approved/` or `wiki-proposals/rejected/` on a terminal status (`applied` stays under `approved/` — sub-state, not a third folder), update lookups to check both locations, one-time migration script to sort the existing 78 by current status.
+- [ ] **Staged reasoning episodes have no file representation at all** — they're `derived_memories` rows in `imports/journal/journal.db` (SQLite, already gitignored), not files. Real current volume (queried 2026-09-18): `reasoning-episode@0.2` (current policy) has **1,243 `queued_for_review`** — 301 tier1-shaped (decision/plan/rejected_alternative/retrospective), 942 tier2-shaped (investigation/experiment/hypothesis/finding) — every one accumulated *since* the 2026-09-11 review pass above, unreviewed. Fix: a write-through file mirror, `episode-proposals/{tier1,tier2}/{memory_id}.json`, moved to `.../approved/` or `.../rejected/` by `approve_episode`/`reject_episode` (`server/review/actions.py`) — SQLite stays authoritative, the file is a read-only projection. Explicitly excludes `heuristic-pattern` (that's the retirement item above's job) and stale `reasoning-episode@0.1` (66 rows). Backfill tier1 first (301, matches `tier1_review_queue()`'s own prioritization), tier2 as a second pass.
 
 ### Auth hardening (deferred out of MS6c, 2026-09-16)
 
