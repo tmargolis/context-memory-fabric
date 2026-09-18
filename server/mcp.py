@@ -32,6 +32,12 @@ from server.context import get_context as assemble_context
 from server.core.config import load_config
 from server.core.http_auth import AUTH_TOKEN_ENV_VAR, BearerTokenAuthMiddleware, get_configured_auth_token
 from server.core.oauth_provider import CMFOAuthProvider
+from server.episode_proposals import (
+    format_episode_mirror_for_mcp,
+    format_episode_mirror_list,
+    list_episode_mirrors,
+    read_episode_mirror,
+)
 from server.importer import import_memories_content
 from server.journal.store import SqliteEventStore
 from server.memory import (
@@ -53,6 +59,8 @@ from server.proposals import (
     list_proposals,
     review_proposal,
 )
+from server.review.actions import apply_verdicts, approve_episode, defer_episode, reject_episode
+from server.review.store import ReviewStore
 from server.wiki import invalidate_corpus_cache, search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
@@ -1139,6 +1147,178 @@ async def promote_auto_accepted_memories(
         consolidation_store.close()
         journal_store.close()
         promotion_store.close()
+
+
+@app.tool(
+    title="List Staged Episodes",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def list_episode_proposals(
+    tier: Annotated[
+        Optional[str],
+        Field(description="Filter by tier: 'tier1' (decision/plan/retrospective/rejected_alternative) or 'tier2' (everything else). Omit for both."),
+    ] = None,
+    approval_state: Annotated[
+        Optional[str],
+        Field(description="Filter by status: 'queued_for_review', 'auto_accepted', 'approved', or 'rejected'. Omit to list all."),
+    ] = None,
+) -> str:
+    """List staged reasoning episodes awaiting or past review. Read-only.
+
+    WHEN TO USE:
+    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's
+      live capture — both stage through the same queue and both are listed here.
+    - Use before review_episode, to find the memory_id.
+
+    EXAMPLES OF USER INTENT:
+    - 'What episodes are still queued for review?'
+    - 'Show me the tier1 decisions waiting to be reviewed.'
+
+    DISTINCTIONS:
+    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from
+      list_wiki_proposals, which lists durable Wiki proposals, not episodic memory candidates.
+    """
+    try:
+        items = list_episode_mirrors(tier=tier, approval_state=approval_state)
+        return format_episode_mirror_list(items)
+    except Exception as e:
+        logger.error(f"Error listing episode proposals: {e}")
+        return f"Error listing episode proposals: {e}"
+
+
+@app.tool(
+    title="Get Staged Episode",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def get_episode_proposal(
+    memory_id: Annotated[str, Field(description="The memory_id to retrieve, as returned by list_episode_proposals.")],
+) -> str:
+    """Retrieve one staged episode's full detail: statement, reasoning kind, confidence,
+    rationale, evidence, and review status if already decided. Read-only.
+
+    WHEN TO USE:
+    - Use to read a specific episode's full content before deciding to approve, reject, or defer it.
+
+    DISTINCTIONS:
+    - Read-only. review_episode records the decision. Different from get_wiki_proposal, which
+      reads a durable Wiki proposal, not an episodic memory candidate.
+    """
+    try:
+        data = read_episode_mirror(memory_id)
+        if data is None:
+            return f"No staged episode found with memory_id '{memory_id}'."
+        return format_episode_mirror_for_mcp(data)
+    except Exception as e:
+        logger.error(f"Error retrieving episode proposal '{memory_id}': {e}")
+        return f"Error retrieving episode proposal '{memory_id}': {e}"
+
+
+@app.tool(
+    title="Review Staged Episode",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def review_episode(
+    memory_id: Annotated[str, Field(description="The memory_id to review, as returned by list_episode_proposals.")],
+    verdict: Annotated[str, Field(description="'approved', 'rejected', or 'deferred'.")],
+    reason: Annotated[
+        Optional[str],
+        Field(description="Why this verdict — a verdict with no recorded reason loses why it was made."),
+    ] = None,
+    reviewer: Annotated[
+        Optional[str],
+        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+    ] = None,
+) -> str:
+    """Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.
+
+    WHEN TO USE:
+    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.
+    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) —
+      use 'rejected' for anything that isn't a keeper, not as a soft rejection.
+
+    CRITICAL SAFETY CONTRACT:
+    - This tool only records a decision — it never calls remember() or writes to Graphiti. A separately
+      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own
+      promotion step to actually reach episodic memory.
+
+    DISTINCTIONS:
+    - Different from review_wiki_proposal, which decides a durable Wiki proposal, not an episode.
+    """
+    if verdict not in ("approved", "rejected", "deferred"):
+        return f"Invalid verdict '{verdict}' — must be 'approved', 'rejected', or 'deferred'."
+    verdict_fn = {"approved": approve_episode, "rejected": reject_episode, "deferred": defer_episode}[verdict]
+    with ReviewStore() as review_store:
+        try:
+            verdict_fn(review_store, memory_id, reviewer=reviewer or "todd", reason=reason)
+        except Exception as e:
+            logger.error(f"Error reviewing episode '{memory_id}': {e}")
+            return f"Error reviewing episode '{memory_id}': {e}"
+
+    data = read_episode_mirror(memory_id)
+    if data is None:
+        return f"Episode `{memory_id}` recorded as **{verdict}**, but no mirror file was found to display (it may predate the mirror)."
+    return format_episode_mirror_for_mcp(data)
+
+
+@app.tool(
+    title="Bulk Review Staged Episodes",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def bulk_review_episodes(
+    verdicts: Annotated[
+        list[dict],
+        Field(
+            description="One entry per episode: {'memory_id': str, 'verdict': 'approved'|'rejected'|'deferred', 'reason': optional str}. Mixed verdicts in one call are fine."
+        ),
+    ],
+    reviewer: Annotated[
+        Optional[str],
+        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+    ] = None,
+) -> str:
+    """Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.
+
+    WHEN TO USE:
+    - Use to clear several episodes at once rather than one review_episode call per episode — each
+      decision is still individually recorded, with its own optional reason.
+
+    DISTINCTIONS:
+    - Unlike bulk_reject_wiki_proposals, this accepts mixed verdicts (approve some, reject others,
+      defer the rest) in a single call, not just a batch reject with one shared reason.
+    """
+    with ReviewStore() as review_store:
+        try:
+            result = apply_verdicts(review_store, verdicts, reviewer=reviewer or "todd")
+        except Exception as e:
+            logger.error(f"Error bulk-reviewing episodes: {e}")
+            return f"Error bulk-reviewing episodes: {e}"
+
+    lines = [f"Applied {result['total']} verdict(s): {result['applied']}."]
+    if result["errors"]:
+        lines.append("**Errors:**")
+        for err in result["errors"]:
+            lines.append(f"- `{err['memory_id']}`: {err['error']}")
+    return "\n".join(lines)
 
 
 def main():

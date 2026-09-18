@@ -128,8 +128,10 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # promote_auto_accepted_memories + 5 MS6d proposal-review tools
         # (list/get/review/apply/bulk_reject_wiki_proposals) + capture_session
         # (MS4a2; capture_note removed the same day, unused in production
-        # and unreachable by any retrieval path -- see plan-active.md).
-        self.assertEqual(len(names), 17)
+        # and unreachable by any retrieval path -- see plan-active.md) +
+        # 4 episode-proposals review tools (list/get/review/bulk_review,
+        # found missing 2026-09-18 -- parity with the wiki proposal loop).
+        self.assertEqual(len(names), 21)
 
 
 if __name__ == "__main__":

@@ -77,7 +77,10 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 18 as of MS4a2 (added capture_session).
         # 17 as of the same-day capture_note removal (unused in production,
         # unreachable by any retrieval path -- see plan-active.md).
-        self.assertEqual(len(self.expected), 17)
+        # 21 as of the episode-proposals review tools (list/get/review/
+        # bulk_review_episodes), found missing 2026-09-18 -- parity with
+        # the wiki proposal review loop.
+        self.assertEqual(len(self.expected), 21)
 
 
 if __name__ == "__main__":

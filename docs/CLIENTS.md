@@ -266,7 +266,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 17 Context Memory Fabric tools (12 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured; `capture_session`'s wiki_proposal destination is likewise a no-op without one):
+All connected clients receive access to the full suite of 21 Context Memory Fabric tools (16 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_wiki_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured; `capture_session`'s wiki_proposal destination is likewise a no-op without one; the four episode-proposals review tools are always registered, since episodic memory has no knowledge-provider dependency):
 
 1. **`get_context(topic)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory.
 2. **`search_wiki(query)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.).
@@ -285,3 +285,9 @@ All connected clients receive access to the full suite of 17 Context Memory Fabr
 15. **`apply_wiki_proposal(proposal_id, expected_sha256, dry_run)`** *(Corpus Write, Destructive)* — MS6d: the only tool that writes into `LLM_WIKI_PATH`. Refuses anything not already `approved`; refuses on target drift since the proposal was created; `dry_run=True` by default; best-effort git commit in the Wiki repo on a real apply.
 16. **`bulk_reject_wiki_proposals(proposal_ids, reason)`** *(Decision Record)* — MS6d: rejects a batch of pending proposals with one recorded reason each, for triaging the review backlog.
 17. **`capture_session(items, project, source_description)`** *(State + Proposal Write)* — Milestone 4a2: captures several distinct findings from one live conversation in a single call, routing each item to either a reviewable staged episode (same queue offline reasoning-episode extraction uses) or a Wiki proposal, per the item's own `destination`. Replaces `capture_note` (removed 2026-09-18 — its journal-only marker was never surfaced by any retrieval path and had never been used in production).
+18. **`list_episode_proposals(tier, approval_state)`** *(Read-Only)* — lists staged reasoning episodes (from either the offline windowed pipeline or `capture_session`'s live capture), optionally filtered by tier or status.
+19. **`get_episode_proposal(memory_id)`** *(Read-Only)* — full detail for one staged episode: statement, reasoning kind, confidence, rationale, evidence, and review status if already decided.
+20. **`review_episode(memory_id, verdict, reason, reviewer)`** *(Decision Record)* — records approve/reject/defer on a staged episode. Never calls `remember()` or writes to Graphiti — only records the decision, same safety split `review_wiki_proposal` follows for Wiki proposals.
+21. **`bulk_review_episodes(verdicts, reviewer)`** *(Decision Record)* — records decisions on a batch of episodes in one call, mixed verdicts allowed (unlike `bulk_reject_wiki_proposals`, which only rejects with one shared reason).
+
+Episode review had no MCP-exposed equivalent to the wiki proposal lifecycle until 2026-09-18 — only `server/review/cli.py`'s CLI exposed `approve_episode`/`reject_episode`. Found the same day a live `capture_session` test needed rejecting: no MCP client could do it.
