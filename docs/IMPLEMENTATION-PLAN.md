@@ -38,7 +38,7 @@ Task-list checkboxes: `[ ]` not started · `[/]` in progress · `[x]` done.
 | 10.5 | [MS6d](plan-history.md#ms6d--durable-knowledge-proposal-review) | Durable-knowledge proposal review — list/get/review/apply over MCP | 🟢 done 2026-09-16 |
 | 11 | [MS4a](plan-history.md#ms4a--mcp-boundary-capture-claude-desktop) | MCP-boundary capture — live cross-harness verification | 🟢 done 2026-09-16 |
 | — | [**MS7b**](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13) | *Experiment* — wiki-derived entity layer + enriched episode bodies | 🟢 done 2026-09-17 — enriched bodies adopted ([PR #7](https://github.com/tmargolis/context-memory-fabric/pull/7)), wiki-structured layer closed onto canonical `mem-fabric-local`; extraction-quality follow-ups in [Backlog](plan-active.md#backlog) |
-| 11.5 | [**MS4a2**](plan-active.md#ms4a2--cowork-live-session-episodeentitywiki-capture-current-priority-2026-09-18) | Cowork live-session capture (`capture_session` tool) | 🟡 **current priority**, in progress 2026-09-18 |
+| 11.5 | [**MS4a2**](plan-active.md#ms4a2--cowork-live-session-episodeentitywiki-capture-current-priority-2026-09-18) | Cowork live-session capture (`capture_session` tool) | 🟡 built + unit-tested 2026-09-18, live exit-gate dry run still to do |
 | 12 | [MS4b](plan-active.md#ms4b--claude-code-desktops-code-tab-transcript-adapter--parked-fully-designed-2026-09-18) | Claude Code (Desktop's Code tab) transcript adapter | ⚪ parked, fully designed |
 | 13 | [MS4c](plan-active.md#ms4c--openclaw-adapter-and-cmf-http) | OpenClaw adapter (+ `cmf-http`) | ⚪ |
 | 14 | [MS4d](plan-active.md#ms4d--codex-and-gemini-cli) | Codex, Gemini CLI | ⚪ |
