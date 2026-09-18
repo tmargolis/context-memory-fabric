@@ -4,54 +4,9 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ---
 
-## MS4a2 — Cowork live-session episode/entity/wiki capture (current priority, 2026-09-18)
+## MS4b — Claude Code (Desktop's Code tab) transcript adapter — current priority (2026-09-18)
 
-**Goal:** Auto-generate real episodes (and durable wiki content) from live Claude Desktop/Cowork conversations, without a manual export/import round trip.
-
-**Why now:** Todd's actual near-term priority, ahead of MS4b. Cowork has no local transcript and no hook API (`docs/ROADMAP.md`'s Milestone 4 section) — confirmed architectural limit, not a gap to design around — so the only levers are server instructions and new tools the live model can call using what it already has in context.
-
-**Terminology note (worth stating once, since the names collide):** `capture_note` (an MCP tool that existed until 2026-09-18, see below) wrote a bare marker to the *journal* only, not an episodic memory. A `:Note` *graph node* (wiki-derived layer, `seed_wiki_graph.py`) is a different concept — it represents one actual Markdown file under `LLM_WIKI_PATH`, a real durable wiki doc. `capture_session` (below) is a third thing.
-
-**`capture_note` removed the same day (Todd, 2026-09-18).** Checked what it actually did before deciding: its journal row was never read back by any retrieval path (`search_wiki`/`recall_mem`/`get_context` all read Graphiti or the wiki files, never raw journal events) and the only mechanism that could ever surface it — offline reasoning-episode consolidation, which treats any `actor_type="user"` event as a candidate turn regardless of `event_type` — has no scheduler and has never run against live capture. The real journal confirmed this wasn't a live behavior change: **zero `capture_note` events existed** at removal time. `capture_session`'s confidence floor (0.4-0.6, "inferred from terse turns or mostly from context") covers the vague-checkpoint case `capture_note` might have been reached for, at least landing in a review queue instead of a dead end. Removed: the MCP tool (`server/mcp.py`), `capture_manual_note()` and `EVENT_TYPE_CAPTURE_NOTE` (`server/capture/middleware.py`), its dedicated test, and every doc/test reference (`README.md`, `docs/CLIENTS.md`, four hardcoded tool-count/set assertions, the MCP contract fixture). Tool count: 18 → 17.
-
-### Design: one `capture_session` tool, routes to either destination
-
-One tool call at a checkpoint; the model tags each item `destination: "episode" | "wiki_proposal"` rather than needing two separate tool calls:
-
-- `destination="episode"` — reuses `ReasoningEpisodePolicyV1`'s existing extraction rubric (`server/policies/reasoning_episode_v1.py`'s `_SYSTEM` prompt, lines 54-105: 8-way `reasoning_kind` taxonomy, WHAT COUNTS exclusions, confidence bands) adapted into the tool's own docstring, so live self-extraction applies the same bar offline windowing does. Implementation, per item: (1) journal the model's own `evidence_text` as a lightweight source event first (harness=`claude_desktop`, redacted via `server/capture/filters.py`) — Cowork's raw turns are never otherwise journaled, so this is the only trace that reaches the journal and gives the episode something real to cite; (2) build a `ReasoningEpisode` (`server/policies/protocols.py:113`) from the item's fields; (3) `ConsolidationStore.record_reasoning_episode()` (`server/consolidation/store.py:267`) with `policy_name="cowork_live_v1"`, `policy_version="0.1"` (distinct provenance from offline windowing, same staging path) and `approval_state` from the shared `reasoning_auto_accept_threshold` config (see Review posture below).
-- `destination="wiki_proposal"` — no new plumbing, an internal call to the existing `propose_wiki_update(target_path, proposed_content, rationale, source_context=evidence_text)`. Same review path as every other proposal.
-- Routing rule (stated in both the tool docstring and `SERVER_INSTRUCTIONS`): *episodic* = something that happened/was decided/was concluded in this conversation; *wiki-worthy* = durable, reusable, still-true-read-cold-later knowledge.
-
-### Review posture (Todd, 2026-09-18)
-
-Start with full manual review via the existing `tier1_review_queue()` to gauge quality and tune the rubric. Once trusted, flip `reasoning_auto_accept_threshold` to a real confidence value and have a scheduled job call the existing `promote_auto_accepted()` — both pieces already exist, this is a config change made after calibration, not new code. **This threshold is shared with MS4b** (below) — one calibration, not two.
-
-### Honesty constraint
-
-Stays **interaction-triggered, not automatic** in the cron/hook sense — no session-end signal exists for Cowork. Per `docs/ROADMAP.md`'s own principle, docs must not imply continuous capture this mechanism can't deliver: this is a real review-queue write, not a background daemon.
-
-### Tasks
-
-- [x] `capture_session` tool registered in `server/mcp.py`, docstring carries the adapted rubric + routing rule.
-- [x] `server/capture/session_capture.py` — per-item journal-then-stage logic. Routes to `record_reasoning_episode()` (episode) or `create_wiki_proposal()` (wiki_proposal); one bad item reported per-item, never fatal to the rest of a batch (a broad `except Exception` around each item, on top of per-field validation).
-- [x] Update `SERVER_INSTRUCTIONS` (`server/mcp.py:66-86`) to point "session wrapping up" at `capture_session`.
-- [x] Tests: `tests/test_capture_session.py`, 13 cases — staging, evidence-event creation (verified the cited event actually lands in `events`), secret redaction in `evidence_text` (a synthetic API-key-shaped string confirmed stripped), threshold behavior (unset → always `queued_for_review`; set → `auto_accepted` above it, `queued_for_review` below), wiki-proposal routing, mixed episode+wiki batches, per-item error isolation.
-- [x] Docs: `docs/CLIENTS.md` corrected — `capture_session` added to the tool list and the MCP-boundary-capture mitigations, and the per-client table's stale "Cowork and Code tab resolve distinctly" claim replaced with the real MS6c finding (they can collapse to the same harness bucket).
-- [x] `capture_note` removed same-day per the finding above — see the terminology note. Full suite green (435 passed) after every doc/test reference updated.
-- [x] (Todd, outside this repo) Custom Claude instructions redrafted to reference `capture_session` (and drop the `capture_note` line that was briefly drafted, once the removal decision was made) — his to paste in.
-
-### Exit gate — not yet run
-
-**Manual dry run, live, still to do:** at the end of a real Cowork session, ask the model to call `capture_session` with a few real items, inspect `queued_for_review` output via the review CLI, confirm evidence/taxonomy/confidence look right before trusting it on real volume. Code is built and unit-tested (2026-09-18) but this milestone stays open — not moved to plan-history.md — until that live pass actually happens, matching this doc's own convention of moving a milestone only once its exit gate is answered, not once its code lands.
-
-**Effort:** 1-2 sessions (one new tool + docstring + tests, no new subsystem) — actual: 1 session.
-**Risk:** Low. No new storage, reuses `record_reasoning_episode`/`propose_wiki_update` as-is.
-
----
-
-## MS4b — Claude Code (Desktop's Code tab) transcript adapter — parked, fully designed (2026-09-18)
-
-**Status:** Not the current priority (see MS4a2 above), but fully designed and ready to build when picked up.
+**Status:** [MS4a2](plan-history.md#ms4a2--cowork-live-session-episodewiki-capture-2026-09-18) closed out and shipped (live exit-gate dry run passed 2026-09-18). This is next, fully designed and ready to build.
 
 **Goal:** Highest-fidelity capture available in the stack — full local transcripts and lifecycle hooks.
 

@@ -645,3 +645,56 @@ Edges: `Section-[:CONTAINS]->Section`, `Section-[:MENTIONS]->Entity`, `Section-[
 **Phase 0 (enriched episode bodies) shipped to `main` separately** — [PR #7](https://github.com/tmargolis/context-memory-fabric/pull/7) cherry-picks just `enriched_episode_content()` out of the `ms7b-wiki-entities` branch, isolated from the wiki-structured layer that stays undeployed. The `ms7b-wiki-entities` branch itself is kept for now as the historical record of the experiment, not merged wholesale and not deleted.
 
 **Outstanding, filed to Backlog rather than reopening this milestone:** whether to prune the `Project`/`IN_PROJECT` layer (an open question since before this experiment started — see [Backlog](plan-active.md#backlog)) and the wiki-entity-extraction quality gap found while inspecting the pruned result.
+
+---
+
+## MS4a2 — Cowork live-session episode/wiki capture (2026-09-18)
+
+**Goal:** Auto-generate real episodes (and durable wiki content) from live Claude Desktop/Cowork conversations, without a manual export/import round trip.
+
+**Why now:** Todd's actual near-term priority, ahead of MS4b. Cowork has no local transcript and no hook API (`docs/ROADMAP.md`'s Milestone 4 section) — confirmed architectural limit, not a gap to design around — so the only levers are server instructions and new tools the live model can call using what it already has in context.
+
+**Terminology note (worth stating once, since the names collide):** `capture_note` (an MCP tool that existed until 2026-09-18, see below) wrote a bare marker to the *journal* only, not an episodic memory. A `:Note` *graph node* (wiki-derived layer, `seed_wiki_graph.py`) is a different concept — it represents one actual Markdown file under `LLM_WIKI_PATH`, a real durable wiki doc. `capture_session` (below) is a third thing.
+
+**`capture_note` removed the same day (Todd, 2026-09-18).** Checked what it actually did before deciding: its journal row was never read back by any retrieval path (`search_wiki`/`recall_mem`/`get_context` all read Graphiti or the wiki files, never raw journal events) and the only mechanism that could ever surface it — offline reasoning-episode consolidation, which treats any `actor_type="user"` event as a candidate turn regardless of `event_type` — has no scheduler and has never run against live capture. The real journal confirmed this wasn't a live behavior change: **zero `capture_note` events existed** at removal time. `capture_session`'s confidence floor (0.4-0.6, "inferred from terse turns or mostly from context") covers the vague-checkpoint case `capture_note` might have been reached for, at least landing in a review queue instead of a dead end. Removed: the MCP tool (`server/mcp.py`), `capture_manual_note()` and `EVENT_TYPE_CAPTURE_NOTE` (`server/capture/middleware.py`), its dedicated test, and every doc/test reference (`README.md`, `docs/CLIENTS.md`, four hardcoded tool-count/set assertions, the MCP contract fixture). Tool count: 18 → 17.
+
+### Design: one `capture_session` tool, routes to either destination
+
+One tool call at a checkpoint; the model tags each item `destination: "episode" | "wiki_proposal"` rather than needing two separate tool calls:
+
+- `destination="episode"` — reuses `ReasoningEpisodePolicyV1`'s existing extraction rubric (`server/policies/reasoning_episode_v1.py`'s `_SYSTEM` prompt, lines 54-105: 8-way `reasoning_kind` taxonomy, WHAT COUNTS exclusions, confidence bands) adapted into the tool's own docstring, so live self-extraction applies the same bar offline windowing does. Implementation, per item: (1) journal the model's own `evidence_text` as a lightweight source event first (harness=`claude_desktop`, redacted via `server/capture/filters.py`) — Cowork's raw turns are never otherwise journaled, so this is the only trace that reaches the journal and gives the episode something real to cite; (2) build a `ReasoningEpisode` (`server/policies/protocols.py:113`) from the item's fields; (3) `ConsolidationStore.record_reasoning_episode()` (`server/consolidation/store.py:267`) with `policy_name="cowork_live_v1"`, `policy_version="0.1"` (distinct provenance from offline windowing, same staging path) and `approval_state` from the shared `reasoning_auto_accept_threshold` config (see Review posture below).
+- `destination="wiki_proposal"` — no new plumbing, an internal call to the existing `propose_wiki_update(target_path, proposed_content, rationale, source_context=evidence_text)`. Same review path as every other proposal.
+- Routing rule (stated in both the tool docstring and `SERVER_INSTRUCTIONS`): *episodic* = something that happened/was decided/was concluded in this conversation; *wiki-worthy* = durable, reusable, still-true-read-cold-later knowledge.
+
+### Review posture (Todd, 2026-09-18)
+
+Start with full manual review via the existing `tier1_review_queue()` to gauge quality and tune the rubric. Once trusted, flip `reasoning_auto_accept_threshold` to a real confidence value and have a scheduled job call the existing `promote_auto_accepted()` — both pieces already exist, this is a config change made after calibration, not new code. **This threshold is shared with MS4b** (below) — one calibration, not two.
+
+### Honesty constraint
+
+Stays **interaction-triggered, not automatic** in the cron/hook sense — no session-end signal exists for Cowork. Per `docs/ROADMAP.md`'s own principle, docs must not imply continuous capture this mechanism can't deliver: this is a real review-queue write, not a background daemon.
+
+### Tasks
+
+- [x] `capture_session` tool registered in `server/mcp.py`, docstring carries the adapted rubric + routing rule.
+- [x] `server/capture/session_capture.py` — per-item journal-then-stage logic. Routes to `record_reasoning_episode()` (episode) or `create_wiki_proposal()` (wiki_proposal); one bad item reported per-item, never fatal to the rest of a batch (a broad `except Exception` around each item, on top of per-field validation).
+- [x] Update `SERVER_INSTRUCTIONS` (`server/mcp.py:66-86`) to point "session wrapping up" at `capture_session`.
+- [x] Tests: `tests/test_capture_session.py`, 13 cases — staging, evidence-event creation (verified the cited event actually lands in `events`), secret redaction in `evidence_text` (a synthetic API-key-shaped string confirmed stripped), threshold behavior (unset → always `queued_for_review`; set → `auto_accepted` above it, `queued_for_review` below), wiki-proposal routing, mixed episode+wiki batches, per-item error isolation.
+- [x] Docs: `docs/CLIENTS.md` corrected — `capture_session` added to the tool list and the MCP-boundary-capture mitigations, and the per-client table's stale "Cowork and Code tab resolve distinctly" claim replaced with the real MS6c finding (they can collapse to the same harness bucket).
+- [x] `capture_note` removed same-day per the finding above — see the terminology note. Full suite green (435 passed) after every doc/test reference updated.
+- [x] (Todd, outside this repo) Custom Claude instructions redrafted to reference `capture_session` (and drop the `capture_note` line that was briefly drafted, once the removal decision was made) — his to paste in.
+
+### Exit gate — ANSWERED (2026-09-18)
+
+**Manual dry run, run live in a real Cowork session, both destinations exercised for real:**
+
+- **Episode path:** "we just decided to cap the review-batch size at 50 episodes per pass... wrap up this checkpoint and capture that decision." Staged for real — `episode-proposals/tier1/cf2e6189....json`: `policy_name=cowork_live_v1`, `reasoning_kind=decision`, `confidence=0.95`, `approval_state=queued_for_review`, a real evidence event journaled and cited. Verified by content grep (the mirror's filename is a content hash, not searchable by memory_id) and by confirming no matching wiki proposal was also created.
+- **Wiki path:** asked to document the episode-proposals mirror's own layout as a durable wiki proposal. Created `prop_20260918_163113_0dc89442` for `WIKI/projects/Context-Memory-Fabric/Episode-Proposals-Mirror.md`, staged only, `LLM_Wiki` untouched — confirmed via direct file read.
+- Both test items rejected afterward via `reject_episode`/`review_proposal` (real memory, not meant to be kept) — both correctly moved to their `rejected/` subfolders, confirmed by path check.
+
+**Real finding, not blocking:** for the episode-path test, the model's own stated plan said it would route the item as `destination="wiki_proposal"` ("a durable operating rule"), then the actual tool call used `destination="episode"`. The content is genuinely borderline (a decision that is also a standing rule), so this is a real gap in the routing rule's disambiguation for that shape of content, not a bug — filed to Backlog rather than block this exit gate on it, since both actual writes (episode and wiki, in the two separate live tests) landed correctly and safely regardless of which one time chose which path.
+
+**Separate finding, addressed the same day:** the live test also surfaced that Claude Desktop mirrors captured facts into its own local per-project memory (`~/.claude/projects/*/memory/*.md`), independent of CMF — confirmed the mirrored file exists correctly, but this creates two independently-writable copies of the same fact with no reconciliation. Todd's custom Claude instructions were updated with an explicit tie-break: CMF is authoritative over local project memory when the two disagree.
+
+**Effort:** 1-2 sessions (one new tool + docstring + tests, no new subsystem) — actual: 1 session build + live verification the same day.
+**Risk:** Low, and realized-low: no new storage, reused `record_reasoning_episode`/`propose_wiki_update` as-is, both real writes landed exactly as designed on the first live try.
