@@ -12,7 +12,12 @@ import unittest
 
 from server.consolidation.store import ConsolidationStore
 from server.core.models import DatePrecision
-from server.episode_proposals import _mirror_filename, tier_for_reasoning_kind
+from server.episode_proposals import (
+    _mirror_filename,
+    list_episode_mirrors,
+    read_episode_mirror,
+    tier_for_reasoning_kind,
+)
 from server.policies.protocols import ExtractionCategory, ReasoningEpisode
 from server.review.actions import approve_episode, reject_episode
 from server.review.store import ReviewStore
@@ -92,19 +97,32 @@ class TestEpisodeMirror(unittest.TestCase):
 
     def test_approve_moves_to_approved_subfolder(self):
         self._stage("m4", kind="decision")
-        approve_episode(self.rev, "m4")
+        approve_episode(self.rev, "m4", reviewer="todd", reason="looks right")
 
         filename = _mirror_filename("m4")
         self.assertFalse((self.mirror_root / "tier1" / filename).exists())
-        self.assertTrue((self.mirror_root / "tier1" / "approved" / filename).exists())
+        moved = self.mirror_root / "tier1" / "approved" / filename
+        self.assertTrue(moved.exists())
+        # content must match location, not just the old staged value (found
+        # 2026-09-18: a file could sit in a terminal folder while its own
+        # approval_state field still said queued_for_review)
+        data = json.loads(moved.read_text())
+        self.assertEqual(data["approval_state"], "approved")
+        self.assertEqual(data["reviewer"], "todd")
+        self.assertEqual(data["review_reason"], "looks right")
+        self.assertIn("reviewed_at", data)
 
     def test_reject_moves_to_rejected_subfolder(self):
         self._stage("m5", kind="investigation")
-        reject_episode(self.rev, "m5")
+        reject_episode(self.rev, "m5", reviewer="todd", reason="not durable enough")
 
         filename = _mirror_filename("m5")
         self.assertFalse((self.mirror_root / "tier2" / filename).exists())
-        self.assertTrue((self.mirror_root / "tier2" / "rejected" / filename).exists())
+        moved = self.mirror_root / "tier2" / "rejected" / filename
+        self.assertTrue(moved.exists())
+        data = json.loads(moved.read_text())
+        self.assertEqual(data["approval_state"], "rejected")
+        self.assertEqual(data["review_reason"], "not durable enough")
 
     def test_long_memory_id_does_not_exceed_filename_limit(self):
         """Real production bug (2026-09-18): a windowed episode's memory_id
@@ -129,6 +147,73 @@ class TestEpisodeMirror(unittest.TestCase):
         the real project directory as a side effect."""
         self.assertEqual(self.cons._episode_proposals_dir, self.mirror_root)
         self.assertEqual(self.mirror_root.parent, self.db_path.parent)
+
+
+class TestEpisodeMirrorReaders(unittest.TestCase):
+    """list_episode_mirrors()/read_episode_mirror() -- the read side the new
+    list_episode_proposals/get_episode_proposal MCP tools sit on top of."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmp.name) / "journal.db"
+        self.cons = ConsolidationStore(db_path=self.db_path)
+        self.rev = ReviewStore(db_path=self.db_path)
+        self.mirror_root = self.db_path.parent / "episode-proposals"
+
+    def tearDown(self):
+        self.cons.close()
+        self.rev.close()
+        self._tmp.cleanup()
+
+    def _stage(self, memory_id, kind="decision", policy_name="reasoning-episode"):
+        self.cons.record_reasoning_episode(
+            job_id=f"job:{memory_id}", memory_id=memory_id, episode=_episode(kind=kind),
+            policy_name=policy_name, policy_version="0.2",
+            approval_state="queued_for_review", supersedes=None,
+        )
+
+    def test_read_by_memory_id(self):
+        self._stage("r1", kind="decision")
+        data = read_episode_mirror("r1", base_dir=self.mirror_root)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["memory_id"], "r1")
+
+    def test_read_missing_returns_none(self):
+        self.assertIsNone(read_episode_mirror("no-such-id", base_dir=self.mirror_root))
+
+    def test_list_covers_both_tiers_by_default(self):
+        self._stage("r2", kind="decision")   # tier1
+        self._stage("r3", kind="finding")    # tier2
+        items = list_episode_mirrors(base_dir=self.mirror_root)
+        ids = {d["memory_id"] for d in items}
+        self.assertEqual(ids, {"r2", "r3"})
+
+    def test_list_filters_by_tier(self):
+        self._stage("r4", kind="decision")
+        self._stage("r5", kind="finding")
+        tier1_only = list_episode_mirrors(tier="tier1", base_dir=self.mirror_root)
+        self.assertEqual({d["memory_id"] for d in tier1_only}, {"r4"})
+
+    def test_list_finds_items_moved_to_approved_or_rejected(self):
+        self._stage("r6", kind="decision")
+        self._stage("r7", kind="decision")
+        approve_episode(self.rev, "r6")
+        reject_episode(self.rev, "r7")
+
+        approved = list_episode_mirrors(approval_state="approved", base_dir=self.mirror_root)
+        rejected = list_episode_mirrors(approval_state="rejected", base_dir=self.mirror_root)
+        self.assertEqual({d["memory_id"] for d in approved}, {"r6"})
+        self.assertEqual({d["memory_id"] for d in rejected}, {"r7"})
+
+    def test_read_after_reject_reflects_new_status(self):
+        """The bug Todd found (2026-09-18): a mirror moved to rejected/ but
+        still reading 'queued_for_review'. Covered end-to-end via the
+        public read path here, not just move_episode_mirror() directly."""
+        self._stage("r8", kind="decision")
+        reject_episode(self.rev, "r8", reason="not durable")
+        data = read_episode_mirror("r8", base_dir=self.mirror_root)
+        self.assertEqual(data["approval_state"], "rejected")
+        self.assertEqual(data["review_reason"], "not durable")
 
 
 if __name__ == "__main__":

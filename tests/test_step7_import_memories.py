@@ -411,6 +411,11 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "review_wiki_proposal",
             "apply_wiki_proposal",
             "bulk_reject_wiki_proposals",
+            # Episode-proposals review MCP tools (found 2026-09-18, parity with MS6d)
+            "list_episode_proposals",
+            "get_episode_proposal",
+            "review_episode",
+            "bulk_review_episodes",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

@@ -98,6 +98,62 @@
     },
     "title": "Bulk Reject Wiki Proposals"
   },
+  "bulk_review_episodes": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.\n\n    WHEN TO USE:\n    - Use to clear several episodes at once rather than one review_episode call per episode \u2014 each\n      decision is still individually recorded, with its own optional reason.\n\n    DISTINCTIONS:\n    - Unlike bulk_reject_wiki_proposals, this accepts mixed verdicts (approve some, reject others,\n      defer the rest) in a single call, not just a batch reject with one shared reason.\n    ",
+    "input_schema": {
+      "properties": {
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "title": "Reviewer"
+        },
+        "verdicts": {
+          "description": "One entry per episode: {'memory_id': str, 'verdict': 'approved'|'rejected'|'deferred', 'reason': optional str}. Mixed verdicts in one call are fine.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Verdicts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "verdicts"
+      ],
+      "title": "bulk_review_episodesArguments",
+      "type": "object"
+    },
+    "name": "bulk_review_episodes",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "bulk_review_episodesOutput",
+      "type": "object"
+    },
+    "title": "Bulk Review Staged Episodes"
+  },
   "capture_health": {
     "annotations": {
       "destructive_hint": false,
@@ -345,6 +401,45 @@
     },
     "title": "Get Unified Personal Context"
   },
+  "get_episode_proposal": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Retrieve one staged episode's full detail: statement, reasoning kind, confidence,\n    rationale, evidence, and review status if already decided. Read-only.\n\n    WHEN TO USE:\n    - Use to read a specific episode's full content before deciding to approve, reject, or defer it.\n\n    DISTINCTIONS:\n    - Read-only. review_episode records the decision. Different from get_wiki_proposal, which\n      reads a durable Wiki proposal, not an episodic memory candidate.\n    ",
+    "input_schema": {
+      "properties": {
+        "memory_id": {
+          "description": "The memory_id to retrieve, as returned by list_episode_proposals.",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "get_episode_proposalArguments",
+      "type": "object"
+    },
+    "name": "get_episode_proposal",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_episode_proposalOutput",
+      "type": "object"
+    },
+    "title": "Get Staged Episode"
+  },
   "get_wiki_proposal": {
     "annotations": {
       "destructive_hint": false,
@@ -538,6 +633,63 @@
       "type": "object"
     },
     "title": "Import Historical Memories"
+  },
+  "list_episode_proposals": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_wiki_proposals, which lists durable Wiki proposals, not episodic memory candidates.\n    ",
+    "input_schema": {
+      "properties": {
+        "approval_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by status: 'queued_for_review', 'auto_accepted', 'approved', or 'rejected'. Omit to list all.",
+          "title": "Approval State"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by tier: 'tier1' (decision/plan/retrospective/rejected_alternative) or 'tier2' (everything else). Omit for both.",
+          "title": "Tier"
+        }
+      },
+      "title": "list_episode_proposalsArguments",
+      "type": "object"
+    },
+    "name": "list_episode_proposals",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_episode_proposalsOutput",
+      "type": "object"
+    },
+    "title": "List Staged Episodes"
   },
   "list_wiki_proposals": {
     "annotations": {
@@ -855,6 +1007,77 @@
       "type": "object"
     },
     "title": "Remember Episodic Event or Decision"
+  },
+  "review_episode": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.\n\n    WHEN TO USE:\n    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.\n    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) \u2014\n      use 'rejected' for anything that isn't a keeper, not as a soft rejection.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision \u2014 it never calls remember() or writes to Graphiti. A separately\n      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own\n      promotion step to actually reach episodic memory.\n\n    DISTINCTIONS:\n    - Different from review_wiki_proposal, which decides a durable Wiki proposal, not an episode.\n    ",
+    "input_schema": {
+      "properties": {
+        "memory_id": {
+          "description": "The memory_id to review, as returned by list_episode_proposals.",
+          "title": "Memory Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why this verdict \u2014 a verdict with no recorded reason loses why it was made.",
+          "title": "Reason"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "title": "Reviewer"
+        },
+        "verdict": {
+          "description": "'approved', 'rejected', or 'deferred'.",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id",
+        "verdict"
+      ],
+      "title": "review_episodeArguments",
+      "type": "object"
+    },
+    "name": "review_episode",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "review_episodeOutput",
+      "type": "object"
+    },
+    "title": "Review Staged Episode"
   },
   "review_wiki_proposal": {
     "annotations": {

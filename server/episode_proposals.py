@@ -141,8 +141,21 @@ def write_episode_mirror(
     return path
 
 
-def move_episode_mirror(memory_id: str, new_status: str, base_dir: Optional[Path] = None) -> Optional[Path]:
-    """Move an existing mirror to its tier's approved/ or rejected/ subfolder.
+def move_episode_mirror(
+    memory_id: str,
+    new_status: str,
+    base_dir: Optional[Path] = None,
+    reviewer: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[Path]:
+    """Move an existing mirror to its tier's approved/ or rejected/ subfolder
+    AND update its content to match -- found 2026-09-18: the move used to be
+    a pure filesystem rename, so a file could sit in rejected/ while its own
+    `approval_state` field still read "queued_for_review", a real
+    location-vs-content contradiction. `approval_state` now becomes the
+    terminal value directly (same single-evolving-field convention
+    `WikiProposal.status` already uses), plus `reviewed_at` and, when given,
+    `reviewer`/`review_reason`.
 
     A no-op (returns None) if no mirror exists for this memory_id -- e.g. a
     heuristic-pattern memory_id, which is never mirrored, or an id from
@@ -163,7 +176,94 @@ def move_episode_mirror(memory_id: str, new_status: str, base_dir: Optional[Path
 
     if existing != target:
         existing.rename(target)
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    data["approval_state"] = new_status
+    data["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    if reviewer is not None:
+        data["reviewer"] = reviewer
+    if reason is not None:
+        data["review_reason"] = reason
+    target.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return target
+
+
+def read_episode_mirror(memory_id: str, base_dir: Optional[Path] = None) -> Optional[dict[str, Any]]:
+    """Read one mirror's content by memory_id, wherever its current status
+    has it filed. Read-only -- same role get_proposal() plays for wiki
+    proposals."""
+    root = get_episode_proposals_dir(base_dir)
+    path = _locate_mirror(memory_id, root)
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception("Failed loading episode mirror %s", path)
+        return None
+
+
+def list_episode_mirrors(
+    tier: Optional[str] = None,
+    approval_state: Optional[str] = None,
+    base_dir: Optional[Path] = None,
+) -> list[dict[str, Any]]:
+    """List mirrored episodes, optionally filtered by tier ('tier1'/'tier2')
+    and/or approval_state ('queued_for_review'/'auto_accepted'/'approved'/
+    'rejected'). Same role list_proposals() plays for wiki proposals --
+    reads the file mirror, not derived_memories directly, so it naturally
+    covers every policy_name that ever calls record_reasoning_episode()
+    without needing to know their names."""
+    root = get_episode_proposals_dir(base_dir)
+    tiers = [tier] if tier else ["tier1", "tier2"]
+    results: list[dict[str, Any]] = []
+    for t in tiers:
+        for search_dir in (root / t, root / t / "approved", root / t / "rejected"):
+            if not search_dir.exists():
+                continue
+            for item in search_dir.glob("*.json"):
+                try:
+                    data = json.loads(item.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    logger.warning("Failed loading episode mirror file %s", item)
+                    continue
+                if approval_state is None or data.get("approval_state") == approval_state:
+                    results.append(data)
+    results.sort(key=lambda d: d.get("written_at", ""))
+    return results
+
+
+def format_episode_mirror_for_mcp(data: dict[str, Any]) -> str:
+    lines = [
+        "### 🧠 Staged Episode\n",
+        f"- **Memory ID:** `{data['memory_id']}`",
+        f"- **Status:** `{data['approval_state']}`",
+        f"- **Tier:** `{data['tier']}` ({data['reasoning_kind']})",
+        f"- **Confidence:** {data['confidence']}",
+        f"- **Policy:** `{data['policy_name']}@{data['policy_version']}`",
+        f"- **Statement:** {data['statement']}",
+    ]
+    if data.get("driving_question"):
+        lines.append(f"- **Driving Question:** {data['driving_question']}")
+    if data.get("rationale"):
+        lines.append(f"- **Rationale:** {data['rationale']}")
+    if data.get("thread_key"):
+        lines.append(f"- **Thread:** `{data['thread_key']}`")
+    if data.get("reviewer"):
+        lines.append(f"- **Reviewed by:** {data['reviewer']} at {data.get('reviewed_at')}")
+    if data.get("review_reason"):
+        lines.append(f"- **Review reason:** {data['review_reason']}")
+    return "\n".join(lines)
+
+
+def format_episode_mirror_list(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "No staged episodes found."
+    lines = ["| Memory ID | Tier | Kind | Confidence | Status |", "|---|---|---|---|---|"]
+    for d in items:
+        short_id = d["memory_id"] if len(d["memory_id"]) <= 60 else d["memory_id"][:57] + "..."
+        lines.append(f"| `{short_id}` | {d['tier']} | {d['reasoning_kind']} | {d['confidence']} | {d['approval_state']} |")
+    return "\n".join(lines)
 
 
 def backfill_from_rows(rows: list[dict[str, Any]], base_dir: Optional[Path] = None) -> dict[str, int]:

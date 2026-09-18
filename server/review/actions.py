@@ -47,11 +47,16 @@ def _episode_proposals_dir_for(review_store: ReviewStore) -> Optional[Path]:
     return review_store.db_path.parent / "episode-proposals"
 
 
-def _move_mirror_best_effort(review_store: ReviewStore, memory_id: str, new_status: str) -> None:
+def _move_mirror_best_effort(
+    review_store: ReviewStore, memory_id: str, new_status: str, reviewer: str, reason: Optional[str]
+) -> None:
     """episode-proposals/ file mirror follow-through -- best-effort, never
     allowed to fail a real review verdict that already committed."""
     try:
-        move_episode_mirror(memory_id, new_status, base_dir=_episode_proposals_dir_for(review_store))
+        move_episode_mirror(
+            memory_id, new_status, base_dir=_episode_proposals_dir_for(review_store),
+            reviewer=reviewer, reason=reason,
+        )
     except OSError:
         logger.exception("episode-proposals mirror move failed for %s -> %s (non-fatal)", memory_id, new_status)
 
@@ -60,7 +65,7 @@ def approve_episode(
     review_store: ReviewStore, memory_id: str, reviewer: str = DEFAULT_REVIEWER, reason: Optional[str] = None
 ) -> str:
     audit_id = review_store.record(memory_id, "approve_episode", APPROVED, reviewer, reason=reason, tier=1)
-    _move_mirror_best_effort(review_store, memory_id, "approved")
+    _move_mirror_best_effort(review_store, memory_id, "approved", reviewer, reason)
     return audit_id
 
 
@@ -68,7 +73,7 @@ def reject_episode(
     review_store: ReviewStore, memory_id: str, reviewer: str = DEFAULT_REVIEWER, reason: Optional[str] = None
 ) -> str:
     audit_id = review_store.record(memory_id, "reject_episode", REJECTED, reviewer, reason=reason)
-    _move_mirror_best_effort(review_store, memory_id, "rejected")
+    _move_mirror_best_effort(review_store, memory_id, "rejected", reviewer, reason)
     return audit_id
 
 
