@@ -69,6 +69,19 @@ class DocProposal:
     review_notes: Optional[str] = None
     applied_at: Optional[str] = None
     applied_commit_sha: Optional[str] = None
+    # "review by conversation" (found 2026-09-19) -- unlike a ReasoningEpisode,
+    # a doc proposal never carried a link back to the journal event/
+    # conversation that produced it; source_context was free text only.
+    # Same None-default convention as the MS6d fields above: absent on every
+    # proposal created before this existed, populated going forward by
+    # whatever calls create_doc_proposal() (the offline pipeline, capture_session).
+    # source_conversation_id_inferred marks the one-time backfill's best-effort
+    # entries (timestamp-correlated against known episode conversation
+    # boundaries from the same run, not a stored ground-truth link) so they're
+    # never confused with a real one.
+    source_conversation_id: Optional[str] = None
+    source_harness: Optional[str] = None
+    source_conversation_id_inferred: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -176,6 +189,8 @@ def create_doc_proposal(
     proposed_content: str,
     rationale: str,
     source_context: Optional[str] = None,
+    source_conversation_id: Optional[str] = None,
+    source_harness: Optional[str] = None,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
 ) -> DocProposal:
@@ -237,6 +252,8 @@ def create_doc_proposal(
         created_at=now_iso,
         rationale=rationale.strip(),
         source_context=source_context.strip() if source_context else None,
+        source_conversation_id=source_conversation_id,
+        source_harness=source_harness,
         current_sha256=current_sha,
         proposed_sha256=proposed_sha,
         proposed_content=proposed_content,
@@ -281,9 +298,17 @@ def format_proposal_for_mcp(proposal: DocProposal) -> str:
 def list_proposals(
     proposals_dir: Optional[Path] = None,
     status: Optional[str] = None,
+    conversation_id: Optional[str] = None,
 ) -> list[DocProposal]:
     """List stored proposals from the local state directory (flat root +
-    approved/ + rejected/ subfolders -- see _status_subdir)."""
+    approved/ + rejected/ subfolders -- see _status_subdir).
+
+    `conversation_id` filters to proposals whose `source_conversation_id`
+    matches exactly -- a proposal created before that field existed, or one
+    with no resolvable source, has `source_conversation_id=None` and never
+    matches a non-None filter value (docs/plan-active.md, "review by
+    conversation", 2026-09-19).
+    """
     store_dir = get_proposals_dir(proposals_dir)
     proposals: list[DocProposal] = []
 
@@ -294,8 +319,11 @@ def list_proposals(
             try:
                 data = json.loads(item.read_text(encoding="utf-8"))
                 prop = DocProposal.from_dict(data)
-                if status is None or prop.status == status:
-                    proposals.append(prop)
+                if status is not None and prop.status != status:
+                    continue
+                if conversation_id is not None and prop.source_conversation_id != conversation_id:
+                    continue
+                proposals.append(prop)
             except Exception as e:
                 logger.warning(f"Failed loading proposal file {item}: {e}")
 

@@ -343,6 +343,8 @@ def run_reasoning_consolidation(
                             proposed_content=episode.proposed_content or "",
                             rationale=episode.rationale or "",
                             source_context=episode.statement,
+                            source_conversation_id=window.conversation_id,
+                            source_harness=harness_slug,
                             wiki_root=wiki_root,
                             proposals_dir=proposals_dir,
                         )
@@ -368,6 +370,8 @@ def run_reasoning_consolidation(
                     policy_version=policy.version,
                     approval_state=approval,
                     supersedes=prior["memory_id"] if prior is not None else None,
+                    conversation_id=window.conversation_id,
+                    harness=harness_slug,
                 )
                 stats["episodes_created"] += 1
                 stats["by_reasoning_kind"][episode.reasoning_kind] += 1

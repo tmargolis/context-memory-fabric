@@ -59,7 +59,7 @@ def cmd_backfill(args: argparse.Namespace) -> int:
 
 def cmd_stats(args: argparse.Namespace) -> int:
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs, PromotionStore(args.db) as ps:
-        q = review_queue(cs._conn, rs, ps, tier=1, policy_version=args.policy_version)
+        q = review_queue(cs._conn, rs, ps, tier=1, policy_version=args.policy_version, policy_name=args.policy_name)
         _print_json(
             {
                 "tier1_pending": q["episode_count"],
@@ -83,7 +83,7 @@ def cmd_queue(args: argparse.Namespace) -> int:
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs, PromotionStore(args.db) as ps:
         q = review_queue(
             cs._conn, rs, ps, tier=args.tier, projects=args.project or None, harness=args.harness,
-            policy_version=args.policy_version,
+            policy_version=args.policy_version, policy_name=args.policy_name,
         )
         for bucket in q["buckets"]:
             if not bucket["episodes"]:
@@ -95,11 +95,11 @@ def cmd_queue(args: argparse.Namespace) -> int:
         print(f"\n{q['episode_count']} pending across {q['bucket_count']} buckets "
               f"({q['already_reviewed']} already reviewed, {q['tier2_total']} tier-2 not in scope)")
         if q["episode_count"] == 0:
-            _hint_other_versions(cs, args.policy_version)
+            _hint_other_versions(cs, args.policy_version, policy_name=args.policy_name)
     return 0
 
 
-def _hint_other_versions(cs: ConsolidationStore, requested: str) -> None:
+def _hint_other_versions(cs: ConsolidationStore, requested: str, policy_name: str = "reasoning-episode") -> None:
     """An empty queue means "none at this version", not "nothing to review".
 
     Worth saying out loud: the default tracks the *current* policy version, so
@@ -108,8 +108,9 @@ def _hint_other_versions(cs: ConsolidationStore, requested: str) -> None:
     """
     rows = cs._conn.execute(
         "SELECT policy_version, COUNT(*) n FROM derived_memories "
-        "WHERE policy_name='reasoning-episode' AND approval_state='queued_for_review' "
-        "GROUP BY 1 ORDER BY n DESC"
+        "WHERE policy_name=? AND approval_state='queued_for_review' "
+        "GROUP BY 1 ORDER BY n DESC",
+        (policy_name,),
     ).fetchall()
     by_version = {r["policy_version"]: r["n"] for r in rows}
     if by_version.get(requested):
@@ -120,8 +121,17 @@ def _hint_other_versions(cs: ConsolidationStore, requested: str) -> None:
     others = [(v, n) for v, n in by_version.items() if v != requested]
     if others:
         listed = ", ".join(f"{v} ({n} queued)" for v, n in others)
-        print(f"\nNote: no rows at all at policy version {requested}; other versions: {listed}")
+        print(f"\nNote: no {policy_name!r} rows at all at policy version {requested}; other versions: {listed}")
         print(f"      Review them with:  --policy-version {others[0][0]}")
+    else:
+        other_names = cs._conn.execute(
+            "SELECT DISTINCT policy_name FROM derived_memories WHERE policy_name != ? AND approval_state='queued_for_review'",
+            (policy_name,),
+        ).fetchall()
+        if other_names:
+            listed = ", ".join(r["policy_name"] for r in other_names)
+            print(f"\nNote: no {policy_name!r} rows queued at all; other policies with queued rows: {listed}")
+            print(f"      Review one of them with:  --policy-name {other_names[0]['policy_name']} --policy-version <its version>")
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -129,7 +139,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         q = review_queue(
             cs._conn, rs, ps, tier=args.tier, projects=args.project or None,
             harness=args.harness, include_evidence=True, max_evidence_chars=args.max_evidence_chars,
-            policy_version=args.policy_version,
+            policy_version=args.policy_version, policy_name=args.policy_name,
         )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(q, indent=1, sort_keys=True, default=str))
@@ -278,6 +288,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats = sub.add_parser("stats", help="Review queue and promotion counts")
     p_stats.add_argument("--policy-version", default=REASONING_POLICY_VERSION,
                          help="Reasoning policy version to report (default: current, %(default)s)")
+    p_stats.add_argument("--policy-name", default="reasoning-episode",
+                         help="Windowed-extraction policy name to report (default: %(default)s; also try 'extract' or 'cowork_live_v1')")
     p_stats.set_defaults(func=cmd_stats)
 
     p_queue = sub.add_parser("queue", help="Print the review queue by project bucket")
@@ -286,6 +298,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_queue.add_argument("--harness", default=None)
     p_queue.add_argument("--policy-version", default=REASONING_POLICY_VERSION,
                           help="Reasoning policy version to review (default: current, %(default)s)")
+    p_queue.add_argument("--policy-name", default="reasoning-episode",
+                          help="Windowed-extraction policy name to review (default: %(default)s; also try 'extract' or 'cowork_live_v1')")
     p_queue.set_defaults(func=cmd_queue)
 
     p_export = sub.add_parser("export", help="Export the queue with evidence inlined, for the review artifact")
@@ -296,6 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--max-evidence-chars", dest="max_evidence_chars", type=int, default=1200)
     p_export.add_argument("--policy-version", default=REASONING_POLICY_VERSION,
                           help="Reasoning policy version to review (default: current, %(default)s)")
+    p_export.add_argument("--policy-name", default="reasoning-episode",
+                          help="Windowed-extraction policy name to review (default: %(default)s; also try 'extract' or 'cowork_live_v1')")
     p_export.set_defaults(func=cmd_export)
 
     p_apply = sub.add_parser("apply", help="Apply verdicts back from the review surface")

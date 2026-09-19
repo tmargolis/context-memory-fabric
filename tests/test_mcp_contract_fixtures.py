@@ -80,7 +80,10 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 21 as of the episode-proposals review tools (list/get/review/
         # bulk_review_episodes), found missing 2026-09-18 -- parity with
         # the wiki proposal review loop.
-        self.assertEqual(len(self.expected), 21)
+        # 22 as of list_review_conversations (found 2026-09-19, "review by
+        # conversation" -- the conversation-bucket-picking step ahead of
+        # list_episode_proposals/list_doc_proposals's new conversation_id filter).
+        self.assertEqual(len(self.expected), 22)
 
 
 if __name__ == "__main__":

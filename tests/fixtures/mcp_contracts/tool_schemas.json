@@ -642,9 +642,22 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "List durable-knowledge doc proposals (MS6d). Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, or to check the outcome of a past proposal.\n    - Use before review_doc_proposal/apply_doc_proposal, to find the proposal_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What doc proposals are still pending?'\n    - 'Show me all the proposals I've approved but not yet applied.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale.\n    ",
+    "description": "List durable-knowledge doc proposals (MS6d). Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, or to check the outcome of a past proposal.\n    - Use before review_doc_proposal/apply_doc_proposal, to find the proposal_id.\n    - Call list_review_conversations() first, then pass one of its conversation_ids here, to review a\n      batch conversation-by-conversation instead of as one long flat list.\n\n    EXAMPLES OF USER INTENT:\n    - 'What doc proposals are still pending?'\n    - 'Show me all the proposals I've approved but not yet applied.'\n    - 'What doc proposals came out of that conversation?'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale. Different from\n      list_review_conversations, which lists the conversations themselves with pending counts.\n    ",
     "input_schema": {
       "properties": {
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter to proposals sourced from one conversation/session, as returned by list_review_conversations(). Omit to list across all conversations. Proposals created before this field existed (or with no resolvable source) never match.",
+          "title": "Conversation Id"
+        },
         "status": {
           "anyOf": [
             {
@@ -686,7 +699,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates.\n    ",
+    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n    - Call list_review_conversations() first, then pass one of its conversation_ids here, to review a\n      batch conversation-by-conversation instead of as one long flat list \u2014 the recommended flow for a\n      large backlog from a single source (e.g. an offline consolidation run over many sessions).\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n    - 'Show me what came out of that one conversation.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates. Different\n      from list_review_conversations, which lists the conversations themselves with pending counts, not\n      the episodes inside one.\n    ",
     "input_schema": {
       "properties": {
         "approval_state": {
@@ -701,6 +714,19 @@
           "default": null,
           "description": "Filter by status: 'queued_for_review', 'auto_accepted', 'approved', or 'rejected'. Omit to list all.",
           "title": "Approval State"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter to episodes sourced from one conversation/session, as returned by list_review_conversations(). Omit to list across all conversations.",
+          "title": "Conversation Id"
         },
         "tier": {
           "anyOf": [
@@ -734,6 +760,69 @@
       "type": "object"
     },
     "title": "List Staged Episodes"
+  },
+  "list_review_conversations": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "List conversations/sessions that have staged episodes or doc proposals awaiting review, with\n    per-conversation pending counts. Read-only.\n\n    WHEN TO USE:\n    - Use as the first step of a conversation-by-conversation review pass over a batch that came from one\n      source (e.g. an offline consolidation run over many Claude Code sessions) \u2014 pick a conversation_id\n      from here, then call list_episode_proposals(conversation_id=...) / list_doc_proposals(conversation_id=...)\n      to review just that conversation's items as one coherent unit, instead of one long undifferentiated list.\n    - Sorted busiest-first (tier-1 episodes + doc proposals), so working top-to-bottom clears the largest\n      chunks of the backlog soonest.\n    - Filter to a specific batch with `harness`/`policy_name` \u2014 e.g. `harness=\"claude_code\", policy_name=\"extract\"`\n      for an ExtractPolicyV1 consolidation run's own output. Unfiltered spans the whole corpus's backlog,\n      which is rarely what you want (see the `harness` field description).\n\n    EXAMPLES OF USER INTENT:\n    - 'I want to review these by conversation, not as one big list.'\n    - 'Which sessions still have pending episodes or doc proposals?'\n    - 'Show me just the conversations from that Claude Code batch.'\n\n    DISTINCTIONS:\n    - Read-only. Lists conversations, not the items inside them \u2014 list_episode_proposals/list_doc_proposals\n      still do that, now with an optional conversation_id filter. Tier-2 episode counts are shown for\n      context only; they are not in review scope and are not part of the \"review-scope\" total.\n    - An item with no resolvable source conversation (written before this existed, or an unlinkable doc\n      proposal) is not represented in any bucket here \u2014 it still shows up in the unfiltered listings.\n    ",
+    "input_schema": {
+      "properties": {
+        "harness": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter to one harness (e.g. 'claude_code', 'chatgpt', 'gemini', 'claude'). Strongly recommended over listing unfiltered \u2014 the unfiltered corpus-wide view is hundreds of conversations, mostly old tier-2-only leftovers.",
+          "title": "Harness"
+        },
+        "include_tier2_only": {
+          "default": false,
+          "description": "If true, also list conversations whose only pending items are tier-2 episodes (out of review scope) \u2014 default false hides these as exhausted-backlog noise.",
+          "title": "Include Tier2 Only",
+          "type": "boolean"
+        },
+        "policy_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter episodes to one extraction policy (e.g. 'extract', 'reasoning-episode', 'cowork_live_v1'). Doc proposals have no policy_name and are unaffected by this filter \u2014 combine with `harness` to scope both together.",
+          "title": "Policy Name"
+        }
+      },
+      "title": "list_review_conversationsArguments",
+      "type": "object"
+    },
+    "name": "list_review_conversations",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_review_conversationsOutput",
+      "type": "object"
+    },
+    "title": "List Conversations Pending Review"
   },
   "promote_auto_accepted_memories": {
     "annotations": {
