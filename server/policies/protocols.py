@@ -111,17 +111,31 @@ class ExtractionPolicy(Protocol):
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ReasoningEpisode:
-    """One piece of thinking synthesised from a topical window by a
-    model-based policy. `category` stays one of the four ExtractionCategory
-    values (usually EPISODIC); `reasoning_kind` is the property that names
-    the *kind* of thinking (see server.core.models.REASONING_KINDS). ADR
-    0005 decision 1: reasoning_kind is a property, never a fifth category.
+    """One candidate synthesised from a topical window by a model-based
+    policy. `category` stays one of the four ExtractionCategory values.
 
-    `statement` is a concise synthesis ("investigated why promotion produced
-    junk; root cause was Case C trusting a bare date"), not raw turns.
-    `evidence_event_ids` is the subset of the window's events this episode
-    actually rests on, so the journal link stays precise even when one
-    window yields several episodes.
+    Two shapes ride this one dataclass rather than a union type, per
+    docs/plan-active.md's "Wiki→doc rename and doc-proposal extraction"
+    (2026-09-19) -- `WindowedExtractionPolicy.evaluate_window()`'s return
+    type stays `list[ReasoningEpisode]` unchanged, so a policy emitting both
+    shapes in one model call needs no protocol/pipeline signature change:
+
+    - `category=EPISODIC` (the original, MS3.5/ADR 0005 shape): `statement`
+      is a concise synthesis ("investigated why promotion produced junk;
+      root cause was Case C trusting a bare date"), not raw turns.
+      `reasoning_kind` names the *kind* of thinking (see
+      server.core.models.REASONING_KINDS) -- ADR 0005 decision 1: a
+      property, never a fifth category. `evidence_event_ids` is the subset
+      of the window's events this episode actually rests on.
+    - `category=DURABLE_CANDIDATE` (added for `ExtractPolicyV1`,
+      server/policies/extract_v1.py): `target_path`/`proposed_content`
+      carry a proposed doc's relative path and full file content;
+      `rationale` carries why it belongs in durable knowledge rather than
+      an episode; `statement` is still populated, as a one-line summary.
+      `reasoning_kind`/`thread_key`/`status` are meaningless here and
+      policies should leave them at their defaults -- the consolidation
+      pipeline routes a DURABLE_CANDIDATE item to `create_doc_proposal()`
+      instead of `record_reasoning_episode()`, never reading those fields.
     """
 
     category: ExtractionCategory
@@ -136,6 +150,9 @@ class ReasoningEpisode:
     thread_key: Optional[str] = None
     event_date: Optional[datetime] = None
     date_precision: DatePrecision = DatePrecision.NONE
+    # DURABLE_CANDIDATE-only -- see class docstring.
+    target_path: Optional[str] = None
+    proposed_content: Optional[str] = None
 
 
 @runtime_checkable

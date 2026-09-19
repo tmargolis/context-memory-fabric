@@ -113,10 +113,12 @@ total wall-clock: 3194s (~53 min)
 
 ### Phase 2 tasks — `ExtractPolicyV1` (branch off updated main, after Phase 1 merges)
 
-- [ ] New `server/policies/extract_v1.py`, `class ExtractPolicyV1(ReasoningEpisodePolicyV1)` — `name="extract"`, `version="1.0"`, `reasoning_episode_v1.py` untouched.
-- [ ] Extend `evaluate_window()` to also emit `DocProposal`-shaped candidates alongside episodes, one model call.
-- [ ] New candidates route to the renamed `doc-proposals/` review surface from Phase 1.
-- [ ] Tests; PR opened, Todd reviews/merges.
+- [x] New `server/policies/extract_v1.py`, `class ExtractPolicyV1(ReasoningEpisodePolicyV1)` — `name="extract"`, `version="1.0"`, `server/policies/reasoning_episode_v1.py` untouched (only its `_local_generate`/`_select_generate_fn` gained backward-compatible optional `schema`/`schema_name` params, default behavior unchanged, so the subclass could bind its own wider JSON schema without duplicating the whole LM Studio call).
+- [x] Extended `evaluate_window()` to also emit `DURABLE_CANDIDATE`-tagged `ReasoningEpisode` items alongside episodes, from one model call — reused the existing dataclass (now carrying two optional `target_path`/`proposed_content` fields, see its docstring in `server/policies/protocols.py`) rather than a union return type, so `WindowedExtractionPolicy`'s protocol signature never changed.
+- [x] `run_reasoning_consolidation()` (the shared pipeline both policies go through) now branches per-candidate on `category`: `DURABLE_CANDIDATE` routes to `create_doc_proposal()` (new `wiki_root`/`proposals_dir` test-only params, same convention as `capture_session`), everything else keeps the original `record_reasoning_episode()` path unchanged. `ReasoningEpisodePolicyV1` never emits `DURABLE_CANDIDATE`, so this is a verified no-op for it (regression test below).
+- [x] Tests: new `tests/test_extract_policy_v1.py` (9 cases — policy-level: episode-only/doc-only/mixed replies from one call, malformed-candidate dropped without crashing, prompt contains doc instructions; pipeline-level: a doc proposal lands in the store not `derived_memories`, a mixed window writes both, and a regression guard confirming `ReasoningEpisodePolicyV1` still never creates doc proposals through the shared pipeline branch). Full suite: **499 passed** (490 + 9 new), 6 skipped, 8 deselected, 0 failures.
+- [x] **Live smoke test against real Spark** (`CMF_LLM_PROVIDER=local`, `unsloth/qwen3.5-122b-a10b`, `json_schema` structured mode): one real model call over a window mixing a database-choice decision and an explicit "write that up as reference documentation" request correctly returned both an `episodic`/`decision` candidate and a `durable_candidate` with a sensible `target_path`, full Markdown `proposed_content`, and a rationale — confirms the extended schema is actually accepted by constrained decoding, not just parseable in the fake-model unit tests.
+- [x] PR opened: [PR #15](https://github.com/tmargolis/context-memory-fabric/pull/15). Awaiting Todd's review/merge.
 
 ### Phase 3 tasks — re-derive the 34 MS4b conversations (after Phase 2 merges)
 

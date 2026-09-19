@@ -39,6 +39,8 @@ gate discussion of why that matters for auto-accept policy).
 
 from collections import defaultdict
 from datetime import datetime
+import logging
+from pathlib import Path
 from typing import Any, Optional
 
 from server.consolidation.store import ConsolidationStore
@@ -55,6 +57,9 @@ from server.policies.protocols import (
     ReasoningEpisode,
     WindowedExtractionPolicy,
 )
+from server.proposals import create_doc_proposal
+
+logger = logging.getLogger(__name__)
 
 # Milestone 3 exit gate: auto-accept only user-stated, explicitly-dated
 # episodic candidates above this confidence. Set from the labeled fixture
@@ -224,9 +229,12 @@ def run_reasoning_consolidation(
     min_window_events: int = 3,
     reasoning_auto_accept_threshold: Optional[float] = None,
     max_windows: Optional[int] = None,
+    wiki_root: Optional[Path] = None,
+    proposals_dir: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Segment matching journal events into topical windows and derive
-    reasoning episodes for each window that clears triage.
+    reasoning episodes (and, for a policy that also emits them --
+    ExtractPolicyV1 -- doc proposals) for each window that clears triage.
 
     Idempotent per (window, policy@version): a window whose job already
     succeeded (or was triaged out, while `triage` is on) is skipped.
@@ -241,6 +249,14 @@ def run_reasoning_consolidation(
     Stops cleanly on `GeminiQuotaExhaustedError` — the offending window's
     job is left retryable, nothing partial is written, and the evidence is
     already safe in the journal.
+
+    `wiki_root`/`proposals_dir` are test-only (default None -> real paths,
+    same convention server.capture.session_capture.capture_session already
+    follows) -- passed through untouched to create_doc_proposal() for any
+    DURABLE_CANDIDATE item a policy emits (see ReasoningEpisode's docstring
+    in server.policies.protocols for the two shapes evaluate_window() can
+    return). ReasoningEpisodePolicyV1 never emits that category, so these
+    params are inert no-ops for it.
     """
     windower = windower or default_windower()
     thread_index = thread_index or ThreadIndex(consolidation_store.db_path)
@@ -256,6 +272,8 @@ def run_reasoning_consolidation(
         "windows_sent_to_model": 0,
         "windows_failed": 0,
         "episodes_created": 0,
+        "doc_proposals_created": 0,
+        "doc_proposals_failed": 0,
         "by_reasoning_kind": defaultdict(int),
         "by_approval_state": defaultdict(int),
         "quota_exhausted": False,
@@ -318,6 +336,26 @@ def run_reasoning_consolidation(
 
             harness_slug = window.events[0].source.harness
             for idx, episode in enumerate(episodes):
+                if episode.category == ExtractionCategory.DURABLE_CANDIDATE:
+                    try:
+                        create_doc_proposal(
+                            target_path=episode.target_path or "",
+                            proposed_content=episode.proposed_content or "",
+                            rationale=episode.rationale or "",
+                            source_context=episode.statement,
+                            wiki_root=wiki_root,
+                            proposals_dir=proposals_dir,
+                        )
+                        stats["doc_proposals_created"] += 1
+                    except (ValueError, RuntimeError) as exc:
+                        # A malformed target_path or an unconfigured knowledge
+                        # provider must not lose the window's episodes or abort
+                        # the run -- same one-item-doesn't-sink-the-batch
+                        # posture as _capture_doc_item in session_capture.py.
+                        logger.warning("ExtractPolicyV1 doc proposal dropped for %s: %s", job_id, exc)
+                        stats["doc_proposals_failed"] += 1
+                    continue
+
                 memory_id = f"reason:{win_id}:{idx}::{policy.name}@{policy.version}"
                 anchor = episode.evidence_event_ids[0] if episode.evidence_event_ids else primary
                 prior = consolidation_store.latest_derivation_for_event(anchor, exclude_memory_id=memory_id)
