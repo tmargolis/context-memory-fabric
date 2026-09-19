@@ -7,7 +7,7 @@ Validates:
 - Binary target rejection
 - Search isolation (proposals do not enter search_wiki)
 - Process persistence across fresh store instances
-- Full 5-way semantic contract (remember, recall, search_wiki, propose_wiki_update, get_context)
+- Full 5-way semantic contract (remember, recall, search_wiki, propose_doc_update, get_context)
 """
 
 import hashlib
@@ -24,11 +24,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from server.context import get_context
 from server.corpus import CorpusAsset, ExtractionStatus
-from server.mcp import app, get_context as mcp_get_context, propose_wiki_update as mcp_propose_wiki_update, recall_mem as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
+from server.mcp import app, get_context as mcp_get_context, propose_doc_update as mcp_propose_doc_update, recall_mem as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
 from server.memory import close_graphiti
 from server.proposals import (
-    WikiProposal,
-    create_wiki_proposal,
+    DocProposal,
+    create_doc_proposal,
     format_proposal_for_mcp,
     get_proposal,
     list_proposals,
@@ -45,7 +45,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         self.wiki_root = Path(self.temp_wiki.name)
 
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
 
         # Populate a minimal synthetic Wiki
         wiki_dir = self.wiki_root / "WIKI"
@@ -73,7 +73,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         initial_sha = hashlib.sha256(self.initial_content.encode("utf-8")).hexdigest()
         proposed_sha = hashlib.sha256(proposed_text.encode("utf-8")).hexdigest()
 
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path="WIKI/project.md",
             proposed_content=proposed_text,
             rationale=rationale,
@@ -106,7 +106,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         proposed_text = "# New Project\nInitial draft for review."
         rationale = "New project documentation."
 
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path=target_path,
             proposed_content=proposed_text,
             rationale=rationale,
@@ -153,7 +153,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
     def test_search_isolation(self):
         """Verify proposal content never leaks into durable knowledge search results."""
         secret_token = "SecretProposalTokenNotInWiki999"
-        create_wiki_proposal(
+        create_doc_proposal(
             target_path="WIKI/project.md",
             proposed_content=f"# Project Atlas\nContains {secret_token}",
             rationale="Testing search isolation",
@@ -167,7 +167,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
 
     def test_process_persistence(self):
         """Verify proposals persist to disk and can be retrieved by a fresh reader instance."""
-        prop = create_wiki_proposal(
+        prop = create_doc_proposal(
             target_path="WIKI/project.md",
             proposed_content="# Project Atlas\nUpdated content",
             rationale="Persistence test",
@@ -191,7 +191,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         tools = await app.list_tools()
         tool_names = {t.name for t in tools}
         expected_tools = {
-            "remember", "recall_mem", "search_wiki", "get_context", "propose_wiki_update",
+            "remember", "recall_mem", "search_wiki", "get_context", "propose_doc_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_health",  # MS4a MCP-boundary capture
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
@@ -216,7 +216,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Personal-Context-Service", wiki_res)
 
         # 5. Durable Write Proposal (Persistent Proposal Only, No Canonical Mutation)
-        prop_res = await mcp_propose_wiki_update(
+        prop_res = await mcp_propose_doc_update(
             target_path="WIKI/projects/Personal-Context-Service.md",
             proposed_content="# Proposed Personal Context Service Update\nSynthetic proposal content.",
             rationale="Test proposal via MCP tool",

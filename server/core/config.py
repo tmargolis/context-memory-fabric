@@ -110,7 +110,7 @@ class CMFConfig:
         Does not validate the path exists/is readable — that check runs
         lazily on first real access (server.corpus.get_corpus_root), exactly
         as it did before Milestone 1. This property only answers "should
-        server.mcp register search_wiki/propose_wiki_update", which must be
+        server.mcp register search_wiki/propose_doc_update", which must be
         cheap and side-effect-free since it runs at every server startup.
         """
         return bool(self.llm_wiki_path and self.llm_wiki_path.strip())
@@ -155,9 +155,9 @@ def _resolve_state_dir() -> Path:
     """
     env_state_dir = os.getenv("CMF_STATE_DIR")
     if env_state_dir:
-        return Path(env_state_dir).expanduser().resolve() / "wiki-proposals"
+        return Path(env_state_dir).expanduser().resolve() / "doc-proposals"
     project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / "wiki-proposals"
+    return project_root / "doc-proposals"
 
 
 def _provider(env_var: str) -> str:

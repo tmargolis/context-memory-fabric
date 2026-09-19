@@ -397,7 +397,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "recall_mem",
             "search_wiki",
             "get_context",
-            "propose_wiki_update",
+            "propose_doc_update",
             "import_memories",
             "import_chatgpt_exports",
             "edit_memory",
@@ -406,11 +406,11 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
             # MS6d — durable-knowledge proposal review/apply loop
-            "list_wiki_proposals",
-            "get_wiki_proposal",
-            "review_wiki_proposal",
-            "apply_wiki_proposal",
-            "bulk_reject_wiki_proposals",
+            "list_doc_proposals",
+            "get_doc_proposal",
+            "review_doc_proposal",
+            "apply_doc_proposal",
+            "bulk_reject_doc_proposals",
             # Episode-proposals review MCP tools (found 2026-09-18, parity with MS6d)
             "list_episode_proposals",
             "get_episode_proposal",

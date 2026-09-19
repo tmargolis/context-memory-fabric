@@ -1,5 +1,5 @@
 {
-  "apply_wiki_proposal": {
+  "apply_doc_proposal": {
     "annotations": {
       "destructive_hint": true,
       "idempotent_hint": false,
@@ -7,7 +7,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Write an approved Wiki proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_wiki_proposal, to\n      actually apply it. Always dry-run first.\n\n    CRITICAL SAFETY CONTRACT:\n    - Refuses any proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or \u2014 for a\n      new-file proposal \u2014 if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
+    "description": "Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_doc_proposal, to\n      actually apply it. Always dry-run first.\n\n    CRITICAL SAFETY CONTRACT:\n    - Refuses any proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or \u2014 for a\n      new-file proposal \u2014 if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
     "input_schema": {
       "properties": {
         "dry_run": {
@@ -17,7 +17,7 @@
           "type": "boolean"
         },
         "expected_sha256": {
-          "description": "The proposal's proposed_sha256, as returned by get_wiki_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy.",
+          "description": "The proposal's proposed_sha256, as returned by get_doc_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy.",
           "title": "Expected Sha256",
           "type": "string"
         },
@@ -31,10 +31,10 @@
         "proposal_id",
         "expected_sha256"
       ],
-      "title": "apply_wiki_proposalArguments",
+      "title": "apply_doc_proposalArguments",
       "type": "object"
     },
-    "name": "apply_wiki_proposal",
+    "name": "apply_doc_proposal",
     "output_schema": {
       "properties": {
         "result": {
@@ -45,12 +45,12 @@
       "required": [
         "result"
       ],
-      "title": "apply_wiki_proposalOutput",
+      "title": "apply_doc_proposalOutput",
       "type": "object"
     },
-    "title": "Apply Wiki Proposal"
+    "title": "Apply Doc Proposal"
   },
-  "bulk_reject_wiki_proposals": {
+  "bulk_reject_doc_proposals": {
     "annotations": {
       "destructive_hint": false,
       "idempotent_hint": false,
@@ -58,11 +58,11 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Reject a batch of pending Wiki proposals with one recorded reason each (MS6d).\n\n    WHEN TO USE:\n    - Use to triage the pending-review backlog in one pass rather than one call per\n      proposal \u2014 each rejection is still individually recorded, just sharing one reason.\n\n    DISTINCTIONS:\n    - Each proposal_id not currently 'pending_review' is skipped and reported, not silently\n      dropped or treated as an error for the whole batch.\n    ",
+    "description": "Reject a batch of pending doc proposals with one recorded reason each (MS6d).\n\n    WHEN TO USE:\n    - Use to triage the pending-review backlog in one pass rather than one call per\n      proposal \u2014 each rejection is still individually recorded, just sharing one reason.\n\n    DISTINCTIONS:\n    - Each proposal_id not currently 'pending_review' is skipped and reported, not silently\n      dropped or treated as an error for the whole batch.\n    ",
     "input_schema": {
       "properties": {
         "proposal_ids": {
-          "description": "The proposal_ids to reject, e.g. from a list_wiki_proposals(status='pending_review') result.",
+          "description": "The proposal_ids to reject, e.g. from a list_doc_proposals(status='pending_review') result.",
           "items": {
             "type": "string"
           },
@@ -79,10 +79,10 @@
         "proposal_ids",
         "reason"
       ],
-      "title": "bulk_reject_wiki_proposalsArguments",
+      "title": "bulk_reject_doc_proposalsArguments",
       "type": "object"
     },
-    "name": "bulk_reject_wiki_proposals",
+    "name": "bulk_reject_doc_proposals",
     "output_schema": {
       "properties": {
         "result": {
@@ -93,10 +93,10 @@
       "required": [
         "result"
       ],
-      "title": "bulk_reject_wiki_proposalsOutput",
+      "title": "bulk_reject_doc_proposalsOutput",
       "type": "object"
     },
-    "title": "Bulk Reject Wiki Proposals"
+    "title": "Bulk Reject Doc Proposals"
   },
   "bulk_review_episodes": {
     "annotations": {
@@ -106,7 +106,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.\n\n    WHEN TO USE:\n    - Use to clear several episodes at once rather than one review_episode call per episode \u2014 each\n      decision is still individually recorded, with its own optional reason.\n\n    DISTINCTIONS:\n    - Unlike bulk_reject_wiki_proposals, this accepts mixed verdicts (approve some, reject others,\n      defer the rest) in a single call, not just a batch reject with one shared reason.\n    ",
+    "description": "Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.\n\n    WHEN TO USE:\n    - Use to clear several episodes at once rather than one review_episode call per episode \u2014 each\n      decision is still individually recorded, with its own optional reason.\n\n    DISTINCTIONS:\n    - Unlike bulk_reject_doc_proposals, this accepts mixed verdicts (approve some, reject others,\n      defer the rest) in a single call, not just a batch reject with one shared reason.\n    ",
     "input_schema": {
       "properties": {
         "reviewer": {
@@ -192,11 +192,11 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    Wiki proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"wiki_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one episode directly to Graphiti with no review step at\n      all \u2014 this tool stages episodes into the same reviewable queue offline extraction uses\n      (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only in\n      that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"wiki_proposal\" item creates a pending proposal file\n      under wiki-proposals/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
+    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    doc proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"doc_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one episode directly to Graphiti with no review step at\n      all \u2014 this tool stages episodes into the same reviewable queue offline extraction uses\n      (`tier1_review_queue()`), not a direct graph write. Different from `propose_doc_update` only in\n      that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"doc_proposal\" item creates a pending proposal file\n      under doc-proposals/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
     "input_schema": {
       "properties": {
         "items": {
-          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'wiki_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='wiki_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): complete desired file content, not a diff; wiki_rationale (str, required): why this belongs in durable Wiki.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'wiki_proposal' it is carried as background context.",
+          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='doc_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): complete desired file content, not a diff; doc_rationale (str, required): why this belongs in durable knowledge.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'doc_proposal' it is carried as background context.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -251,7 +251,7 @@
       "title": "capture_sessionOutput",
       "type": "object"
     },
-    "title": "Capture Session Findings as Episodes or Wiki Proposals"
+    "title": "Capture Session Findings as Episodes or Doc Proposals"
   },
   "edit_memory": {
     "annotations": {
@@ -401,6 +401,45 @@
     },
     "title": "Get Unified Personal Context"
   },
+  "get_doc_proposal": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Retrieve one durable-knowledge doc proposal's full detail (MS6d): rationale,\n    unified diff, and the sha256 hashes needed to review or apply it. Read-only.\n\n    WHEN TO USE:\n    - Use to read a specific proposal's diff before deciding to approve or reject it.\n\n    DISTINCTIONS:\n    - Read-only. review_doc_proposal records the decision; apply_doc_proposal writes it.\n    ",
+    "input_schema": {
+      "properties": {
+        "proposal_id": {
+          "description": "The proposal_id to retrieve, e.g. 'prop_20260916_125736_a33f295a'.",
+          "title": "Proposal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id"
+      ],
+      "title": "get_doc_proposalArguments",
+      "type": "object"
+    },
+    "name": "get_doc_proposal",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_doc_proposalOutput",
+      "type": "object"
+    },
+    "title": "Get Doc Proposal"
+  },
   "get_episode_proposal": {
     "annotations": {
       "destructive_hint": false,
@@ -409,7 +448,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "Retrieve one staged episode's full detail: statement, reasoning kind, confidence,\n    rationale, evidence, and review status if already decided. Read-only.\n\n    WHEN TO USE:\n    - Use to read a specific episode's full content before deciding to approve, reject, or defer it.\n\n    DISTINCTIONS:\n    - Read-only. review_episode records the decision. Different from get_wiki_proposal, which\n      reads a durable Wiki proposal, not an episodic memory candidate.\n    ",
+    "description": "Retrieve one staged episode's full detail: statement, reasoning kind, confidence,\n    rationale, evidence, and review status if already decided. Read-only.\n\n    WHEN TO USE:\n    - Use to read a specific episode's full content before deciding to approve, reject, or defer it.\n\n    DISTINCTIONS:\n    - Read-only. review_episode records the decision. Different from get_doc_proposal, which\n      reads a durable doc proposal, not an episodic memory candidate.\n    ",
     "input_schema": {
       "properties": {
         "memory_id": {
@@ -439,45 +478,6 @@
       "type": "object"
     },
     "title": "Get Staged Episode"
-  },
-  "get_wiki_proposal": {
-    "annotations": {
-      "destructive_hint": false,
-      "idempotent_hint": true,
-      "open_world_hint": false,
-      "read_only_hint": true,
-      "title": null
-    },
-    "description": "Retrieve one durable-knowledge Wiki proposal's full detail (MS6d): rationale,\n    unified diff, and the sha256 hashes needed to review or apply it. Read-only.\n\n    WHEN TO USE:\n    - Use to read a specific proposal's diff before deciding to approve or reject it.\n\n    DISTINCTIONS:\n    - Read-only. review_wiki_proposal records the decision; apply_wiki_proposal writes it.\n    ",
-    "input_schema": {
-      "properties": {
-        "proposal_id": {
-          "description": "The proposal_id to retrieve, e.g. 'prop_20260916_125736_a33f295a'.",
-          "title": "Proposal Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "proposal_id"
-      ],
-      "title": "get_wiki_proposalArguments",
-      "type": "object"
-    },
-    "name": "get_wiki_proposal",
-    "output_schema": {
-      "properties": {
-        "result": {
-          "title": "Result",
-          "type": "string"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "title": "get_wiki_proposalOutput",
-      "type": "object"
-    },
-    "title": "Get Wiki Proposal"
   },
   "import_chatgpt_exports": {
     "annotations": {
@@ -634,6 +634,50 @@
     },
     "title": "Import Historical Memories"
   },
+  "list_doc_proposals": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "List durable-knowledge doc proposals (MS6d). Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, or to check the outcome of a past proposal.\n    - Use before review_doc_proposal/apply_doc_proposal, to find the proposal_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What doc proposals are still pending?'\n    - 'Show me all the proposals I've approved but not yet applied.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale.\n    ",
+    "input_schema": {
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by status: 'pending_review', 'approved', 'rejected', or 'applied'. Omit to list all proposals.",
+          "title": "Status"
+        }
+      },
+      "title": "list_doc_proposalsArguments",
+      "type": "object"
+    },
+    "name": "list_doc_proposals",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_doc_proposalsOutput",
+      "type": "object"
+    },
+    "title": "List Doc Proposals"
+  },
   "list_episode_proposals": {
     "annotations": {
       "destructive_hint": false,
@@ -642,7 +686,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_wiki_proposals, which lists durable Wiki proposals, not episodic memory candidates.\n    ",
+    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates.\n    ",
     "input_schema": {
       "properties": {
         "approval_state": {
@@ -690,50 +734,6 @@
       "type": "object"
     },
     "title": "List Staged Episodes"
-  },
-  "list_wiki_proposals": {
-    "annotations": {
-      "destructive_hint": false,
-      "idempotent_hint": true,
-      "open_world_hint": false,
-      "read_only_hint": true,
-      "title": null
-    },
-    "description": "List durable-knowledge Wiki proposals (MS6d). Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, or to check the outcome of a past proposal.\n    - Use before review_wiki_proposal/apply_wiki_proposal, to find the proposal_id.\n\n    EXAMPLES OF USER INTENT:\n    - 'What wiki proposals are still pending?'\n    - 'Show me all the proposals I've approved but not yet applied.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_wiki_proposal for one proposal's full diff and rationale.\n    ",
-    "input_schema": {
-      "properties": {
-        "status": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Filter by status: 'pending_review', 'approved', 'rejected', or 'applied'. Omit to list all proposals.",
-          "title": "Status"
-        }
-      },
-      "title": "list_wiki_proposalsArguments",
-      "type": "object"
-    },
-    "name": "list_wiki_proposals",
-    "output_schema": {
-      "properties": {
-        "result": {
-          "title": "Result",
-          "type": "string"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "title": "list_wiki_proposalsOutput",
-      "type": "object"
-    },
-    "title": "List Wiki Proposals"
   },
   "promote_auto_accepted_memories": {
     "annotations": {
@@ -785,7 +785,7 @@
     },
     "title": "Promote Auto-Accepted Memories"
   },
-  "propose_wiki_update": {
+  "propose_doc_update": {
     "annotations": {
       "destructive_hint": false,
       "idempotent_hint": false,
@@ -793,7 +793,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Create a persistent reviewable proposal to create or update a Wiki document without modifying LLM_Wiki.\n\n    WHEN TO USE:\n    - Use when the user asks to add, update, draft, or propose a change to the durable Wiki, or when stable reusable knowledge should be promoted from episodic experience into durable documentation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Propose an update to WIKI/projects/Personal-Context-Service.md.'\n    - 'Draft a new wiki page for Project Orion in WIKI/projects/Orion.md.'\n    - 'Suggest adding our new database decision to the wiki documentation.'\n    - 'Propose a new research backlog note in TO-RESEARCH/audio-transcription.md.'\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under wiki-proposals/ with SHA-256 hashes and a unified diff for human inspection.\n\n    DISTINCTIONS:\n    - Writes a pending proposal JSON file to local state (wiki-proposals/). Does not write to Graphiti or modify canonical Wiki files.\n\n    SIDE EFFECTS:\n    - Creates a persistent proposal file on disk in wiki-proposals/. Non-destructive to LLM_Wiki.\n    ",
+    "description": "Create a persistent reviewable proposal to create or update a Wiki document without modifying LLM_Wiki.\n\n    WHEN TO USE:\n    - Use when the user asks to add, update, draft, or propose a change to the durable Wiki, or when stable reusable knowledge should be promoted from episodic experience into durable documentation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Propose an update to WIKI/projects/Personal-Context-Service.md.'\n    - 'Draft a new wiki page for Project Orion in WIKI/projects/Orion.md.'\n    - 'Suggest adding our new database decision to the wiki documentation.'\n    - 'Propose a new research backlog note in TO-RESEARCH/audio-transcription.md.'\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under doc-proposals/ with SHA-256 hashes and a unified diff for human inspection.\n\n    DISTINCTIONS:\n    - Writes a pending proposal JSON file to local state (doc-proposals/). Does not write to Graphiti or modify canonical Wiki files.\n\n    SIDE EFFECTS:\n    - Creates a persistent proposal file on disk in doc-proposals/. Non-destructive to LLM_Wiki.\n    ",
     "input_schema": {
       "properties": {
         "proposed_content": {
@@ -830,10 +830,10 @@
         "proposed_content",
         "rationale"
       ],
-      "title": "propose_wiki_updateArguments",
+      "title": "propose_doc_updateArguments",
       "type": "object"
     },
-    "name": "propose_wiki_update",
+    "name": "propose_doc_update",
     "output_schema": {
       "properties": {
         "result": {
@@ -844,10 +844,10 @@
       "required": [
         "result"
       ],
-      "title": "propose_wiki_updateOutput",
+      "title": "propose_doc_updateOutput",
       "type": "object"
     },
-    "title": "Propose Durable Wiki Update"
+    "title": "Propose Durable Doc Update"
   },
   "recall_mem": {
     "annotations": {
@@ -1008,6 +1008,77 @@
     },
     "title": "Remember Episodic Event or Decision"
   },
+  "review_doc_proposal": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.\n\n    WHEN TO USE:\n    - Use after reading a proposal's diff via get_doc_proposal, to approve or reject it.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision. It never writes to the canonical Wiki \u2014 only\n      apply_doc_proposal does that, and only on a proposal this tool has already approved.\n      No single tool call can get from a fresh proposal to a canonical write.\n\n    DISTINCTIONS:\n    - Refuses a proposal that isn't currently 'pending_review' \u2014 re-review is not a silent\n      overwrite of a prior verdict.\n    ",
+    "input_schema": {
+      "properties": {
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why this verdict \u2014 a verdict with no recorded reason loses why it was made.",
+          "title": "Notes"
+        },
+        "proposal_id": {
+          "description": "The proposal_id to review.",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "title": "Reviewer"
+        },
+        "verdict": {
+          "description": "'approved' or 'rejected'.",
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "verdict"
+      ],
+      "title": "review_doc_proposalArguments",
+      "type": "object"
+    },
+    "name": "review_doc_proposal",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "review_doc_proposalOutput",
+      "type": "object"
+    },
+    "title": "Review Doc Proposal"
+  },
   "review_episode": {
     "annotations": {
       "destructive_hint": false,
@@ -1016,7 +1087,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.\n\n    WHEN TO USE:\n    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.\n    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) \u2014\n      use 'rejected' for anything that isn't a keeper, not as a soft rejection.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision \u2014 it never calls remember() or writes to Graphiti. A separately\n      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own\n      promotion step to actually reach episodic memory.\n\n    DISTINCTIONS:\n    - Different from review_wiki_proposal, which decides a durable Wiki proposal, not an episode.\n    ",
+    "description": "Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.\n\n    WHEN TO USE:\n    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.\n    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) \u2014\n      use 'rejected' for anything that isn't a keeper, not as a soft rejection.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision \u2014 it never calls remember() or writes to Graphiti. A separately\n      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own\n      promotion step to actually reach episodic memory.\n\n    DISTINCTIONS:\n    - Different from review_doc_proposal, which decides a durable doc proposal, not an episode.\n    ",
     "input_schema": {
       "properties": {
         "memory_id": {
@@ -1078,77 +1149,6 @@
       "type": "object"
     },
     "title": "Review Staged Episode"
-  },
-  "review_wiki_proposal": {
-    "annotations": {
-      "destructive_hint": false,
-      "idempotent_hint": false,
-      "open_world_hint": false,
-      "read_only_hint": false,
-      "title": null
-    },
-    "description": "Record a human decision on a pending Wiki proposal (MS6d). Does NOT modify LLM_Wiki.\n\n    WHEN TO USE:\n    - Use after reading a proposal's diff via get_wiki_proposal, to approve or reject it.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision. It never writes to the canonical Wiki \u2014 only\n      apply_wiki_proposal does that, and only on a proposal this tool has already approved.\n      No single tool call can get from a fresh proposal to a canonical write.\n\n    DISTINCTIONS:\n    - Refuses a proposal that isn't currently 'pending_review' \u2014 re-review is not a silent\n      overwrite of a prior verdict.\n    ",
-    "input_schema": {
-      "properties": {
-        "notes": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Why this verdict \u2014 a verdict with no recorded reason loses why it was made.",
-          "title": "Notes"
-        },
-        "proposal_id": {
-          "description": "The proposal_id to review.",
-          "title": "Proposal Id",
-          "type": "string"
-        },
-        "reviewer": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
-          "title": "Reviewer"
-        },
-        "verdict": {
-          "description": "'approved' or 'rejected'.",
-          "title": "Verdict",
-          "type": "string"
-        }
-      },
-      "required": [
-        "proposal_id",
-        "verdict"
-      ],
-      "title": "review_wiki_proposalArguments",
-      "type": "object"
-    },
-    "name": "review_wiki_proposal",
-    "output_schema": {
-      "properties": {
-        "result": {
-          "title": "Result",
-          "type": "string"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "title": "review_wiki_proposalOutput",
-      "type": "object"
-    },
-    "title": "Review Wiki Proposal"
   },
   "search_wiki": {
     "annotations": {

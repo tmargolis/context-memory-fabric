@@ -3,14 +3,14 @@ episodes (Backlog, "Proposal-directory housekeeping," 2026-09-18).
 
 Staged reasoning episodes (the output of MS3.5's windowed extraction, and
 MS4a2's `capture_session`) have always lived only as `derived_memories`
-rows in SQLite (`imports/journal/journal.db`) -- unlike wiki proposals,
-which are one JSON file per proposal under `wiki-proposals/`. This module
+rows in SQLite (`imports/journal/journal.db`) -- unlike doc proposals,
+which are one JSON file per proposal under `doc-proposals/`. This module
 adds a write-through file projection alongside SQLite, which stays the
 sole source of truth: job tracking, `supersedes` lineage, and idempotency
 all depend on it, and nothing here is meant to be hand-edited as an
 alternate input path. Review still happens via `approve_episode`/
 `reject_episode` (or the review CLI) -- the mirror is read-only/
-informational, same convention `wiki-proposals/`'s files follow once
+informational, same convention `doc-proposals/`'s files follow once
 MS6d's review/apply split exists for them too.
 
 Layout: `episode-proposals/{tier1,tier2}/{sha256(memory_id)}.json` (a
@@ -154,7 +154,7 @@ def move_episode_mirror(
     `approval_state` field still read "queued_for_review", a real
     location-vs-content contradiction. `approval_state` now becomes the
     terminal value directly (same single-evolving-field convention
-    `WikiProposal.status` already uses), plus `reviewed_at` and, when given,
+    `DocProposal.status` already uses), plus `reviewed_at` and, when given,
     `reviewer`/`review_reason`.
 
     A no-op (returns None) if no mirror exists for this memory_id -- e.g. a

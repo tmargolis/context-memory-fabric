@@ -83,7 +83,7 @@ falkordb_data/
 *.log
 
 # Context Memory Fabric runtime state and proposals
-wiki-proposals/
+doc-proposals/
 episode-proposals/
 imports/
 

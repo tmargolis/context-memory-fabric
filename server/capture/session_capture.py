@@ -1,4 +1,4 @@
-"""capture_session (MS4a2): live episode/wiki-proposal capture from Cowork.
+"""capture_session (MS4a2): live episode/doc-proposal capture from Cowork.
 
 Cowork keeps no local transcript and exposes no hook API (docs/ROADMAP.md's
 Milestone 4 section) -- the model itself, mid-conversation, is the only
@@ -17,8 +17,8 @@ Two destinations per item:
   reasoning_episode() the offline pipeline uses, under a distinct
   policy_name ("cowork_live_v1") so provenance stays honest about which
   path produced it.
-- "wiki_proposal": no new plumbing -- calls the existing
-  create_wiki_proposal() unchanged.
+- "doc_proposal": no new plumbing -- calls the existing
+  create_doc_proposal() unchanged.
 
 approval_state is read from CMF_REASONING_AUTO_ACCEPT_THRESHOLD, the same
 env var MS4b's (not yet built) offline worker is designed to share -- one
@@ -41,7 +41,7 @@ from server.core.models import DatePrecision, REASONING_KINDS, SourceEvent, Sour
 from server.journal.identity import compute_content_hash, compute_event_id
 from server.journal.store import SqliteEventStore
 from server.policies.protocols import ExtractionCategory, ReasoningEpisode
-from server.proposals import create_wiki_proposal
+from server.proposals import create_doc_proposal
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ EVENT_TYPE_SESSION_EVIDENCE = "capture_session_evidence"
 POLICY_NAME = "cowork_live_v1"
 POLICY_VERSION = "0.1"
 
-VALID_DESTINATIONS = ("episode", "wiki_proposal")
+VALID_DESTINATIONS = ("episode", "doc_proposal")
 
 
 @dataclass
@@ -203,22 +203,22 @@ def _capture_episode_item(
     )
 
 
-def _capture_wiki_item(
+def _capture_doc_item(
     item: dict[str, Any], wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None
 ) -> SessionItemResult:
     target_path = (item.get("target_path") or "").strip()
     proposed_content = item.get("proposed_content") or ""
     if not target_path or not proposed_content.strip():
         return SessionItemResult(
-            "wiki_proposal", False, "",
-            error="'target_path' and 'proposed_content' are required for destination='wiki_proposal'.",
+            "doc_proposal", False, "",
+            error="'target_path' and 'proposed_content' are required for destination='doc_proposal'.",
         )
-    rationale = (item.get("wiki_rationale") or item.get("rationale") or "").strip()
+    rationale = (item.get("doc_rationale") or item.get("rationale") or "").strip()
     if not rationale:
-        return SessionItemResult("wiki_proposal", False, "", error="'wiki_rationale' is required for destination='wiki_proposal'.")
+        return SessionItemResult("doc_proposal", False, "", error="'doc_rationale' is required for destination='doc_proposal'.")
 
     try:
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path=target_path,
             proposed_content=proposed_content,
             rationale=rationale,
@@ -230,10 +230,10 @@ def _capture_wiki_item(
         # RuntimeError covers get_corpus_root() when no knowledge provider
         # is configured (LLM_WIKI_PATH unset) -- reported per-item like any
         # other bad input, never allowed to crash the rest of the batch.
-        return SessionItemResult("wiki_proposal", False, "", error=str(e))
+        return SessionItemResult("doc_proposal", False, "", error=str(e))
 
     return SessionItemResult(
-        "wiki_proposal", True,
+        "doc_proposal", True,
         f"Proposal `{proposal.proposal_id}` created for `{proposal.target_path}` ({proposal.operation}).",
         proposal_id=proposal.proposal_id,
     )
@@ -249,12 +249,12 @@ def capture_session(
     wiki_root: Optional[Any] = None,
     proposals_dir: Optional[Any] = None,
 ) -> list[SessionItemResult]:
-    """Route each item to record_reasoning_episode() or create_wiki_proposal()
+    """Route each item to record_reasoning_episode() or create_doc_proposal()
     per its own 'destination'. One bad item is reported, not fatal to the rest.
 
     `db_path`/`wiki_root`/`proposals_dir` are test-only -- production always
     uses the default paths, same convention PromotionStore/ConsolidationStore/
-    create_wiki_proposal already follow.
+    create_doc_proposal already follow.
     """
     results: list[SessionItemResult] = []
     with ConsolidationStore(db_path=db_path) as consolidation_store:
@@ -265,8 +265,8 @@ def capture_session(
                     result = _capture_episode_item(
                         item, project, source_description, session, request_id, consolidation_store, db_path=db_path
                     )
-                elif destination == "wiki_proposal":
-                    result = _capture_wiki_item(item, wiki_root=wiki_root, proposals_dir=proposals_dir)
+                elif destination == "doc_proposal":
+                    result = _capture_doc_item(item, wiki_root=wiki_root, proposals_dir=proposals_dir)
                 else:
                     result = SessionItemResult(
                         destination or "(missing)", False, "",

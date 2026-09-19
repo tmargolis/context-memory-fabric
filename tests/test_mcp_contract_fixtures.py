@@ -73,7 +73,7 @@ class TestMCPContractFixtures(unittest.TestCase):
         # message is missed. Update deliberately alongside README.md/CLIENTS.md.
         # 11 as of Milestone 4a (added capture_note, capture_health).
         # 12 as of the auto_accepted promotion tool (promote_auto_accepted_memories).
-        # 17 as of MS6d (added list/get/review/apply/bulk_reject_wiki_proposals).
+        # 17 as of MS6d (added list/get/review/apply/bulk_reject_doc_proposals).
         # 18 as of MS4a2 (added capture_session).
         # 17 as of the same-day capture_note removal (unused in production,
         # unreachable by any retrieval path -- see plan-active.md).

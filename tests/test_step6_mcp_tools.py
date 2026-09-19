@@ -25,7 +25,7 @@ from server.context import get_context
 from server.mcp import (
     app,
     get_context as mcp_get_context,
-    propose_wiki_update as mcp_propose_wiki_update,
+    propose_doc_update as mcp_propose_doc_update,
     recall_mem as mcp_recall,
     remember as mcp_remember,
     search_wiki as mcp_search_wiki,
@@ -46,20 +46,20 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(app.instructions)
         self.assertIn("default personal context layer for the user", app.instructions)
         self.assertIn("prefer get_context", app.instructions)
-        self.assertIn("propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki", app.instructions)
+        self.assertIn("propose_doc_update creates a proposal but does not modify canonical LLM_Wiki", app.instructions)
 
         # 2. Tool Listing
         tools = await app.list_tools()
         tool_dict = {t.name: t for t in tools}
         expected_tools = {
-            "remember", "recall_mem", "search_wiki", "get_context", "propose_wiki_update",
+            "remember", "recall_mem", "search_wiki", "get_context", "propose_doc_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_health",  # MS4a MCP-boundary capture
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
             # MS6d — durable-knowledge proposal review/apply loop
-            "list_wiki_proposals", "get_wiki_proposal", "review_wiki_proposal",
-            "apply_wiki_proposal", "bulk_reject_wiki_proposals",
+            "list_doc_proposals", "get_doc_proposal", "review_doc_proposal",
+            "apply_doc_proposal", "bulk_reject_doc_proposals",
             # Episode-proposals review MCP tools (found 2026-09-18, parity with MS6d)
             "list_episode_proposals", "get_episode_proposal", "review_episode", "bulk_review_episodes",
         }
@@ -77,17 +77,17 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(tool_dict["search_wiki"].annotations.read_only_hint)
         self.assertTrue(tool_dict["recall_mem"].annotations.read_only_hint)
         self.assertFalse(tool_dict["remember"].annotations.read_only_hint)
-        self.assertFalse(tool_dict["propose_wiki_update"].annotations.read_only_hint)
+        self.assertFalse(tool_dict["propose_doc_update"].annotations.read_only_hint)
         self.assertFalse(tool_dict["import_memories"].annotations.read_only_hint)
         self.assertFalse(tool_dict["edit_memory"].annotations.read_only_hint)
 
         for name, tool in tool_dict.items():
-            if name == "apply_wiki_proposal":
+            if name == "apply_doc_proposal":
                 continue  # MS6d — deliberately destructive_hint=True; it's the one tool that writes LLM_Wiki
             self.assertFalse(tool.annotations.destructive_hint, f"Tool {name} should not be marked destructive")
         self.assertTrue(
-            tool_dict["apply_wiki_proposal"].annotations.destructive_hint,
-            "apply_wiki_proposal must stay marked destructive — it's the only tool that writes to LLM_Wiki",
+            tool_dict["apply_doc_proposal"].annotations.destructive_hint,
+            "apply_doc_proposal must stay marked destructive — it's the only tool that writes to LLM_Wiki",
         )
 
         # 5. Routing Keywords & Safety Contracts in Descriptions
@@ -103,8 +103,8 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Direct episodic write", tool_dict["remember"].description)
         self.assertIn("Do NOT call this automatically for every casual chat message", tool_dict["remember"].description)
 
-        self.assertIn("DOES NOT modify LLM_Wiki", tool_dict["propose_wiki_update"].description)
-        self.assertIn("wiki-proposals/", tool_dict["propose_wiki_update"].description)
+        self.assertIn("DOES NOT modify LLM_Wiki", tool_dict["propose_doc_update"].description)
+        self.assertIn("doc-proposals/", tool_dict["propose_doc_update"].description)
 
         # 6. Parameter descriptions. capture_health is a legitimate zero-argument
         # status tool (MS4a) — every other tool here takes at least one

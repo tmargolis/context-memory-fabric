@@ -1,8 +1,14 @@
 """Durable knowledge proposal store and validation for Context Memory Fabric.
 
 Manages pending update/creation proposals for LLM_Wiki without modifying the
-canonical corpus. Proposals persist locally under wiki-proposals/ for human
-review.
+canonical corpus. Proposals persist locally under doc-proposals/ for human
+review. Named generically (`DocProposal`, not `WikiProposal`) because the
+proposal/review lifecycle itself is provider-agnostic -- LLM_Wiki is the
+only knowledge provider that exists today (see MS5 in docs/plan-active.md),
+but nothing in this module's shape assumes it stays that way. The apply
+step's actual corpus writes (`wiki_root`, "LLM_Wiki") remain wiki-specific
+implementation, deliberately -- generalizing *that* is MS5's job, not this
+rename's (docs/plan-active.md, "Wiki→doc rename", 2026-09-19).
 """
 
 from dataclasses import asdict, dataclass, field
@@ -41,7 +47,7 @@ SUPPORTED_TEXT_EXTENSIONS = {
 
 
 @dataclass
-class WikiProposal:
+class DocProposal:
     """Record representing a pending proposal to create or update a Wiki file."""
 
     proposal_id: str
@@ -68,7 +74,7 @@ class WikiProposal:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WikiProposal":
+    def from_dict(cls, data: dict[str, Any]) -> "DocProposal":
         return cls(**data)
 
 
@@ -79,17 +85,17 @@ REVIEW_VERDICTS = ("approved", "rejected")
 
 
 def get_proposals_dir(custom_dir: Optional[Path] = None) -> Path:
-    """Return the directory where wiki proposals are stored locally."""
+    """Return the directory where doc proposals are stored locally."""
     if custom_dir is not None:
         p = custom_dir
     else:
         env_state_dir = os.getenv("CMF_STATE_DIR")
         if env_state_dir:
-            p = Path(env_state_dir).expanduser().resolve() / "wiki-proposals"
+            p = Path(env_state_dir).expanduser().resolve() / "doc-proposals"
         else:
-            # Default to <project_root>/wiki-proposals
+            # Default to <project_root>/doc-proposals
             project_root = Path(__file__).resolve().parent.parent
-            p = project_root / "wiki-proposals"
+            p = project_root / "doc-proposals"
 
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -165,14 +171,14 @@ def validate_target_path(target_path: str, wiki_root: Path) -> Path:
     return resolved
 
 
-def create_wiki_proposal(
+def create_doc_proposal(
     target_path: str,
     proposed_content: str,
     rationale: str,
     source_context: Optional[str] = None,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
-) -> WikiProposal:
+) -> DocProposal:
     """Create and persist a new reviewable Wiki update proposal.
 
     Does NOT modify the target file in LLM_Wiki.
@@ -223,7 +229,7 @@ def create_wiki_proposal(
     if not unified_diff_str.strip():
         unified_diff_str = f"(No textual differences between current and proposed content for {rel_path_str})"
 
-    proposal = WikiProposal(
+    proposal = DocProposal(
         proposal_id=prop_id,
         status="pending_review",
         operation=operation,
@@ -239,15 +245,15 @@ def create_wiki_proposal(
 
     # Persist to local JSON file (pending_review -> flat root, via _save_proposal)
     _save_proposal(proposal, proposals_dir)
-    logger.info(f"Saved wiki proposal '{prop_id}'")
+    logger.info(f"Saved doc proposal '{prop_id}'")
 
     return proposal
 
 
-def format_proposal_for_mcp(proposal: WikiProposal) -> str:
-    """Format a WikiProposal into clear Markdown for MCP tool responses."""
+def format_proposal_for_mcp(proposal: DocProposal) -> str:
+    """Format a DocProposal into clear Markdown for MCP tool responses."""
     lines = [
-        "### 📝 Wiki Update Proposal Generated\n",
+        "### 📝 Doc Update Proposal Generated\n",
         f"- **Proposal ID:** `{proposal.proposal_id}`",
         f"- **Status:** `{proposal.status}`",
         f"- **Operation:** `{proposal.operation.upper()}`",
@@ -275,11 +281,11 @@ def format_proposal_for_mcp(proposal: WikiProposal) -> str:
 def list_proposals(
     proposals_dir: Optional[Path] = None,
     status: Optional[str] = None,
-) -> list[WikiProposal]:
+) -> list[DocProposal]:
     """List stored proposals from the local state directory (flat root +
     approved/ + rejected/ subfolders -- see _status_subdir)."""
     store_dir = get_proposals_dir(proposals_dir)
-    proposals: list[WikiProposal] = []
+    proposals: list[DocProposal] = []
 
     for search_dir in (store_dir, store_dir / "approved", store_dir / "rejected"):
         if not search_dir.exists():
@@ -287,7 +293,7 @@ def list_proposals(
         for item in search_dir.glob("*.json"):
             try:
                 data = json.loads(item.read_text(encoding="utf-8"))
-                prop = WikiProposal.from_dict(data)
+                prop = DocProposal.from_dict(data)
                 if status is None or prop.status == status:
                     proposals.append(prop)
             except Exception as e:
@@ -300,7 +306,7 @@ def list_proposals(
 def get_proposal(
     proposal_id: str,
     proposals_dir: Optional[Path] = None,
-) -> Optional[WikiProposal]:
+) -> Optional[DocProposal]:
     """Retrieve a single proposal by ID, wherever its status has it filed."""
     store_dir = get_proposals_dir(proposals_dir)
     target = _locate_proposal_file(proposal_id, store_dir)
@@ -308,13 +314,13 @@ def get_proposal(
         return None
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
-        return WikiProposal.from_dict(data)
+        return DocProposal.from_dict(data)
     except Exception as e:
         logger.warning(f"Failed loading proposal {target}: {e}")
         return None
 
 
-def _save_proposal(proposal: WikiProposal, proposals_dir: Optional[Path] = None) -> None:
+def _save_proposal(proposal: DocProposal, proposals_dir: Optional[Path] = None) -> None:
     """Write a proposal to the subfolder its current status belongs in
     (_status_subdir), moving it there if it currently lives somewhere else
     -- a proposal never exists in two places at once."""
@@ -337,7 +343,7 @@ def review_proposal(
     reviewer: str = "todd",
     notes: Optional[str] = None,
     proposals_dir: Optional[Path] = None,
-) -> WikiProposal:
+) -> DocProposal:
     """Record a human decision on a pending proposal. Does NOT touch LLM_Wiki.
 
     This is the split MS6d's design relies on for safety: a verdict here is a
@@ -495,7 +501,7 @@ def apply_proposal(
     }
 
 
-def _git_commit_change(wiki_root: Path, resolved_target: Path, proposal: WikiProposal) -> Optional[str]:
+def _git_commit_change(wiki_root: Path, resolved_target: Path, proposal: DocProposal) -> Optional[str]:
     """Best-effort commit of an applied proposal inside the LLM_Wiki repo.
 
     Not required for the apply to succeed — the file write is the durable
@@ -526,7 +532,7 @@ def _git_commit_change(wiki_root: Path, resolved_target: Path, proposal: WikiPro
         return None
 
 
-def format_proposal_list(proposals: list[WikiProposal]) -> str:
+def format_proposal_list(proposals: list[DocProposal]) -> str:
     """Format a list of proposals as a compact Markdown table for MCP tool responses."""
     if not proposals:
         return "No proposals found."
@@ -536,7 +542,7 @@ def format_proposal_list(proposals: list[WikiProposal]) -> str:
     return "\n".join(lines)
 
 
-def format_review_result(proposal: WikiProposal) -> str:
+def format_review_result(proposal: DocProposal) -> str:
     lines = [
         f"### Proposal `{proposal.proposal_id}` — {proposal.status}",
         f"- **Reviewer:** {proposal.reviewer}",
@@ -546,7 +552,7 @@ def format_review_result(proposal: WikiProposal) -> str:
         lines.append(f"- **Notes:** {proposal.review_notes}")
     if proposal.status == "approved":
         lines.append(
-            f"\n> Ready to apply. Call `apply_wiki_proposal(proposal_id=\"{proposal.proposal_id}\", "
+            f"\n> Ready to apply. Call `apply_doc_proposal(proposal_id=\"{proposal.proposal_id}\", "
             f"expected_sha256=\"{proposal.proposed_sha256}\")` with `dry_run=True` first."
         )
     return "\n".join(lines)
