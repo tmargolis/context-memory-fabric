@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from server.proposals import (
     apply_proposal,
     bulk_reject_proposals,
-    create_wiki_proposal,
+    create_doc_proposal,
     get_proposal,
     list_proposals,
     review_proposal,
@@ -39,7 +39,7 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.wiki_root = Path(self.temp_wiki.name)
 
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
 
         wiki_dir = self.wiki_root / "WIKI"
         wiki_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +60,7 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.temp_proposals.cleanup()
 
     def _make_proposal(self, content="# Project Atlas\nProject Atlas uses PostgreSQL and Redis."):
-        return create_wiki_proposal(
+        return create_doc_proposal(
             target_path="WIKI/project.md",
             proposed_content=content,
             rationale="Adding Redis for caching layer.",
@@ -187,7 +187,7 @@ class TestMS6dProposalReview(unittest.TestCase):
 
     def test_create_operation_refused_if_target_now_exists(self):
         """A CREATE proposal whose target was created by something else in the meantime."""
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path="WIKI/new-note.md",
             proposed_content="# New Note\nBrand new.",
             rationale="A new page.",
@@ -209,7 +209,7 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.assertEqual(target.read_text(), "# New Note\nSomeone beat us to it.")
 
     def test_create_operation_applies_cleanly(self):
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path="WIKI/new-note.md",
             proposed_content="# New Note\nBrand new.",
             rationale="A new page.",
@@ -278,12 +278,12 @@ class TestMS6dProposalReview(unittest.TestCase):
 
 
 class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
-    """apply_wiki_proposal must invalidate search_wiki's cache on a real apply
+    """apply_doc_proposal must invalidate search_wiki's cache on a real apply
     (found 2026-09-16: a real apply's target was invisible to search_wiki until
     something else happened to force a rescan)."""
 
     def test_invalidate_corpus_cache_clears_engine_and_assets(self):
-        from server.wiki import _GLOBAL_CORPUS_MANAGER, invalidate_corpus_cache
+        from server.providers.wiki.scanner import _GLOBAL_CORPUS_MANAGER, invalidate_corpus_cache
 
         _GLOBAL_CORPUS_MANAGER._engine = object()
         _GLOBAL_CORPUS_MANAGER._assets = [object()]
@@ -295,7 +295,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_apply_invalidates_cache(self):
         from unittest.mock import patch
-        from server.mcp import apply_wiki_proposal as mcp_apply_wiki_proposal
+        from server.mcp import apply_doc_proposal as mcp_apply_doc_proposal
 
         fake_result = {
             "dry_run": False,
@@ -306,7 +306,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
         }
         with patch("server.mcp.apply_proposal", return_value=fake_result), \
              patch("server.mcp.invalidate_corpus_cache") as mock_invalidate:
-            message = await mcp_apply_wiki_proposal(
+            message = await mcp_apply_doc_proposal(
                 proposal_id="prop_fake", expected_sha256="deadbeef", dry_run=False
             )
 
@@ -315,7 +315,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
 
     async def test_dry_run_apply_does_not_invalidate_cache(self):
         from unittest.mock import patch
-        from server.mcp import apply_wiki_proposal as mcp_apply_wiki_proposal
+        from server.mcp import apply_doc_proposal as mcp_apply_doc_proposal
 
         fake_result = {
             "dry_run": True,
@@ -325,7 +325,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
         }
         with patch("server.mcp.apply_proposal", return_value=fake_result), \
              patch("server.mcp.invalidate_corpus_cache") as mock_invalidate:
-            message = await mcp_apply_wiki_proposal(
+            message = await mcp_apply_doc_proposal(
                 proposal_id="prop_fake", expected_sha256="deadbeef", dry_run=True
             )
 
@@ -334,7 +334,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
 
 
 class TestProposalSubfolders(unittest.TestCase):
-    """2026-09-18: wiki-proposals/ moves a proposal into approved/ or
+    """2026-09-18: doc-proposals/ moves a proposal into approved/ or
     rejected/ on a terminal verdict, instead of leaving every status flat
     in the root — found once the root grew to 78 undifferentiated files."""
 
@@ -342,7 +342,7 @@ class TestProposalSubfolders(unittest.TestCase):
         self.temp_wiki = tempfile.TemporaryDirectory()
         self.wiki_root = Path(self.temp_wiki.name)
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "wiki-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
 
         wiki_dir = self.wiki_root / "WIKI"
         wiki_dir.mkdir(parents=True, exist_ok=True)
@@ -360,7 +360,7 @@ class TestProposalSubfolders(unittest.TestCase):
         self.temp_proposals.cleanup()
 
     def _make_proposal(self):
-        return create_wiki_proposal(
+        return create_doc_proposal(
             target_path="WIKI/project.md",
             proposed_content="# Project Atlas\nUses PostgreSQL and Redis.",
             rationale="Adding Redis.",

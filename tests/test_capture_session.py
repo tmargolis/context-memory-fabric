@@ -166,12 +166,12 @@ class TestCaptureSessionEpisodes(unittest.TestCase):
         self.assertTrue(results[1].ok)
 
 
-class TestCaptureSessionWikiProposals(unittest.TestCase):
+class TestCaptureSessionDocProposals(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "journal.db"
         self.wiki_root = Path(self.temp_dir.name) / "wiki"
-        self.proposals_dir = Path(self.temp_dir.name) / "wiki-proposals"
+        self.proposals_dir = Path(self.temp_dir.name) / "doc-proposals"
         (self.wiki_root / "WIKI").mkdir(parents=True)
         _git("init", "-q", cwd=self.wiki_root)
         _git("config", "user.email", "test@example.com", cwd=self.wiki_root)
@@ -187,10 +187,10 @@ class TestCaptureSessionWikiProposals(unittest.TestCase):
     def test_valid_wiki_item_creates_a_proposal(self):
         results = capture_session(
             items=[{
-                "destination": "wiki_proposal",
+                "destination": "doc_proposal",
                 "target_path": "WIKI/new-topic.md",
                 "proposed_content": "# New Topic\nSome durable content.",
-                "wiki_rationale": "Worth keeping as reference.",
+                "doc_rationale": "Worth keeping as reference.",
                 "evidence_text": "We discussed this topic at length.",
             }],
             project=None, source_description=None,
@@ -201,10 +201,10 @@ class TestCaptureSessionWikiProposals(unittest.TestCase):
         self.assertIsNotNone(results[0].proposal_id)
         self.assertTrue((self.proposals_dir / f"{results[0].proposal_id}.json").exists())
 
-    def test_missing_wiki_rationale_reported(self):
+    def test_missing_doc_rationale_reported(self):
         results = capture_session(
             items=[{
-                "destination": "wiki_proposal",
+                "destination": "doc_proposal",
                 "target_path": "WIKI/new-topic.md",
                 "proposed_content": "# New Topic\nSome content.",
                 "evidence_text": "x",
@@ -214,7 +214,7 @@ class TestCaptureSessionWikiProposals(unittest.TestCase):
             db_path=self.db_path, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
         )
         self.assertFalse(results[0].ok)
-        self.assertIn("wiki_rationale", results[0].error)
+        self.assertIn("doc_rationale", results[0].error)
 
     def test_mixed_batch_routes_each_item_independently(self):
         results = capture_session(
@@ -227,10 +227,10 @@ class TestCaptureSessionWikiProposals(unittest.TestCase):
                     "evidence_text": "We decided on FastAPI for async support.",
                 },
                 {
-                    "destination": "wiki_proposal",
+                    "destination": "doc_proposal",
                     "target_path": "WIKI/new-topic.md",
                     "proposed_content": "# New Topic\nSome durable content.",
-                    "wiki_rationale": "Reusable reference material.",
+                    "doc_rationale": "Reusable reference material.",
                     "evidence_text": "Durable knowledge worth keeping.",
                 },
             ],
@@ -238,7 +238,7 @@ class TestCaptureSessionWikiProposals(unittest.TestCase):
             session=self.session, request_id="req1",
             db_path=self.db_path, wiki_root=self.wiki_root, proposals_dir=self.proposals_dir,
         )
-        self.assertEqual([r.destination for r in results], ["episode", "wiki_proposal"])
+        self.assertEqual([r.destination for r in results], ["episode", "doc_proposal"])
         self.assertTrue(all(r.ok for r in results))
 
 

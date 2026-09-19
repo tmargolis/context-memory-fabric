@@ -39,8 +39,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from server.corpus import get_corpus_root
-from server.wiki import CorpusScanner
+from server.providers.wiki.corpus import get_corpus_root
+from server.providers.wiki.scanner import CorpusScanner
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)

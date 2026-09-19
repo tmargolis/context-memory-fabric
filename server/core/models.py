@@ -135,7 +135,7 @@ class DerivedMemory:
 class KnowledgeResult:
     """Normalized knowledge-provider result shape from ROADMAP.md.
 
-    The current FileKnowledgeProvider returns server.corpus.SearchResult
+    The current FileKnowledgeProvider returns server.providers.wiki.corpus.SearchResult
     directly rather than this type — SearchResult already carries
     equivalent fields for a single-provider deployment. This canonical
     shape becomes load-bearing in Milestone 5, when a second knowledge

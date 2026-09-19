@@ -20,7 +20,7 @@ import unittest
 
 from server.context import get_context
 from server.core.protocols import KnowledgeProvider, MemoryProvider
-from server.providers.knowledge_files import FileKnowledgeProvider
+from server.providers.wiki.provider import FileKnowledgeProvider
 from server.providers.memory_graphiti import GraphitiMemoryProvider
 from tests.fakes.fake_knowledge_provider import FakeDocument, FakeKnowledgeProvider
 from tests.fakes.fake_memory_provider import FakeMemoryProvider
@@ -107,7 +107,7 @@ class TestGetContextWithFakeProviders(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
-    """server.mcp registers search_wiki/propose_wiki_update only when a
+    """server.mcp registers search_wiki/propose_doc_update only when a
     knowledge provider is configured (acceptance test 1). The current
     process has LLM_WIKI_PATH set (this deployment's .env), so this test
     verifies the "configured" branch directly; the "unset" branch was
@@ -123,10 +123,10 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         tools = await app.list_tools()
         names = {t.name for t in tools}
         self.assertIn("search_wiki", names)
-        self.assertIn("propose_wiki_update", names)
+        self.assertIn("propose_doc_update", names)
         # 9 pre-MS4a tools + capture_health (MS4a MCP-boundary capture) +
         # promote_auto_accepted_memories + 5 MS6d proposal-review tools
-        # (list/get/review/apply/bulk_reject_wiki_proposals) + capture_session
+        # (list/get/review/apply/bulk_reject_doc_proposals) + capture_session
         # (MS4a2; capture_note removed the same day, unused in production
         # and unreachable by any retrieval path -- see plan-active.md) +
         # 4 episode-proposals review tools (list/get/review/bulk_review,

@@ -5,7 +5,7 @@ Loads the project-root .env as the very first thing that happens in the
 is imported.
 
 This is not redundant with the load_dotenv() calls in server.core.config,
-server.corpus and server.providers.memory_graphiti. Those run when their
+server.providers.wiki.corpus and server.providers.memory_graphiti. Those run when their
 function or module body executes, which is too late for one specific
 consumer: graphiti_core reads EMBEDDING_DIM into a module-level constant at
 import time --

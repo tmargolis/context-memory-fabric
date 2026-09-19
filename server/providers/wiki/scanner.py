@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 from typing import Literal, Optional, overload
 
-from server.corpus import (
+from server.providers.wiki.corpus import (
     IGNORED_DIR_NAMES,
     CorpusAsset,
     ExtractionStatus,
@@ -22,7 +22,7 @@ from server.corpus import (
     guess_media_type,
     is_excluded_path,
 )
-from server.extractors import DEFAULT_REGISTRY, ExtractorRegistry
+from server.providers.wiki.extractors import DEFAULT_REGISTRY, ExtractorRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +352,7 @@ _GLOBAL_CORPUS_MANAGER = WikiCorpusManager()
 def invalidate_corpus_cache() -> None:
     """Drop the in-memory corpus cache so the next search_wiki call rescans from disk.
 
-    Called after apply_wiki_proposal writes a real change into LLM_Wiki (MS6d), so a
+    Called after apply_doc_proposal writes a real change into LLM_Wiki (MS6d), so a
     newly-applied page isn't invisible behind the cached index until something else
     happens to pass force_rescan=True. Lazy — does not rescan immediately, just marks
     the cache stale, since a rescan can be expensive and applies are rare.

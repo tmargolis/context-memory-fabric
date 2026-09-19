@@ -50,7 +50,7 @@ from server.providers.memory_graphiti import remember_queued, resolve_target_dat
 from server.proposals import (
     apply_proposal,
     bulk_reject_proposals,
-    create_wiki_proposal,
+    create_doc_proposal,
     format_apply_result,
     format_proposal_for_mcp,
     format_proposal_list,
@@ -61,11 +61,11 @@ from server.proposals import (
 )
 from server.review.actions import apply_verdicts, approve_episode, defer_episode, reject_episode
 from server.review.store import ReviewStore
-from server.wiki import invalidate_corpus_cache, search_wiki as query_wiki
+from server.providers.wiki.scanner import invalidate_corpus_cache, search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
 
-# Capability discovery (Milestone 1): search_wiki and propose_wiki_update are
+# Capability discovery (Milestone 1): search_wiki and propose_doc_update are
 # only registered below when a knowledge provider is actually configured,
 # per docs/adr/0002-provider-boundaries.md. Read once at server-definition
 # time (module import), matching the current single-process, single-config
@@ -79,21 +79,21 @@ SERVER_INSTRUCTIONS = (
     "and recall_mem for temporal episodic retrieval. remember writes episodic state. "
     "edit_memory corrects, re-dates, or modifies existing episodic memory and entity nodes. "
     "reconcile_memories reconciles and upserts episodic memories with real upsert and reject semantics. "
-    "propose_wiki_update creates a proposal but does not modify canonical LLM_Wiki. "
+    "propose_doc_update creates a proposal but does not modify canonical LLM_Wiki. "
     "import_memories is an explicit administrative bulk-import tool for AI memory exports. "
     "import_chatgpt_exports is an administrative tool for native ChatGPT JSON export files. "
     "Every tool call you make is automatically journaled as evidence in the background (MS4a MCP-boundary "
     "capture) — this does not replace remember, which is still the tool for explicit, substantive episodic "
     "writes. At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call "
     "capture_session with one item per distinct fact worth keeping, routing each to destination='episode' "
-    "(something that happened/was decided/was concluded) or destination='wiki_proposal' (durable, reusable "
-    "knowledge still true read cold later) — this stages real, reviewable episodic memory and Wiki proposals "
+    "(something that happened/was decided/was concluded) or destination='doc_proposal' (durable, reusable "
+    "knowledge still true read cold later) — this stages real, reviewable episodic memory and doc proposals "
     "in one call, rather than several separate remember calls."
 ) + (
     ""
     if _config.knowledge_enabled
     else " No knowledge provider is configured in this deployment (LLM_WIKI_PATH unset): "
-    "search_wiki and propose_wiki_update are unavailable, and get_context returns episodic memory only."
+    "search_wiki and propose_doc_update are unavailable, and get_context returns episodic memory only."
 )
 
 # OAuth 2.1 support (MS6c) -- see server.core.oauth_provider's module
@@ -436,7 +436,7 @@ async def remember(
 
 
 @app.tool(
-    title="Capture Session Findings as Episodes or Wiki Proposals",
+    title="Capture Session Findings as Episodes or Doc Proposals",
     annotations=types.ToolAnnotations(
         read_only_hint=False,
         destructive_hint=False,
@@ -450,7 +450,7 @@ async def capture_session(
         Field(
             description=(
                 "One entry per distinct fact worth keeping from this conversation. Each item is an object "
-                "with a required 'destination' field ('episode' or 'wiki_proposal') plus fields for that "
+                "with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that "
                 "destination:\n"
                 "  destination='episode' — statement (str, required): a concise synthesis in your own words "
                 "(1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / "
@@ -460,12 +460,12 @@ async def capture_session(
                 "context; driving_question (str, optional); rationale (str, optional); thread_key (str, "
                 "optional): short lowercase hyphenated topic slug, stable across chats about the same "
                 "undertaking.\n"
-                "  destination='wiki_proposal' — target_path (str, required): relative path within LLM_Wiki; "
-                "proposed_content (str, required): complete desired file content, not a diff; wiki_rationale "
-                "(str, required): why this belongs in durable Wiki.\n"
+                "  destination='doc_proposal' — target_path (str, required): relative path within LLM_Wiki; "
+                "proposed_content (str, required): complete desired file content, not a diff; doc_rationale "
+                "(str, required): why this belongs in durable knowledge.\n"
                 "  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt "
                 "supporting this item — for 'episode' this becomes the item's only trace in the evidence "
-                "journal; for 'wiki_proposal' it is carried as background context."
+                "journal; for 'doc_proposal' it is carried as background context."
             )
         ),
     ],
@@ -481,7 +481,7 @@ async def capture_session(
 ) -> str:
     """Capture multiple distinct findings from a live Cowork conversation in one call, each routed to
     either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable
-    Wiki proposal.
+    doc proposal.
 
     WHEN TO USE:
     - Call at natural checkpoints — a decision reached, a milestone hit, a session wrapping up — the same
@@ -491,7 +491,7 @@ async def capture_session(
     ROUTING RULE (apply this per item):
     - destination="episode": something that HAPPENED, was DECIDED, or was CONCLUDED during this
       conversation — a fact about a point in time.
-    - destination="wiki_proposal": durable, reusable, reference-shaped knowledge that would still be true
+    - destination="doc_proposal": durable, reusable, reference-shaped knowledge that would still be true
       and useful read cold, later, out of this conversation's context.
 
     WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be
@@ -503,14 +503,14 @@ async def capture_session(
     DISTINCTIONS:
     - Different from `remember`, which writes one episode directly to Graphiti with no review step at
       all — this tool stages episodes into the same reviewable queue offline extraction uses
-      (`tier1_review_queue()`), not a direct graph write. Different from `propose_wiki_update` only in
+      (`tier1_review_queue()`), not a direct graph write. Different from `propose_doc_update` only in
       that this tool lets you submit several proposals (and episodes) together in one call.
 
     SIDE EFFECTS:
     - Each "episode" item journals a lightweight evidence event, then stages a reasoning episode with
       approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human
-      review, matching this project's default). Each "wiki_proposal" item creates a pending proposal file
-      under wiki-proposals/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported
+      review, matching this project's default). Each "doc_proposal" item creates a pending proposal file
+      under doc-proposals/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported
       individually; it does not prevent the other items in the same call from being captured.
     """
     if ctx is None:
@@ -551,7 +551,7 @@ async def capture_health() -> str:
     return format_health_report(get_default_health().snapshot())
 
 
-async def propose_wiki_update(
+async def propose_doc_update(
     target_path: Annotated[
         str,
         Field(
@@ -589,16 +589,16 @@ async def propose_wiki_update(
     - 'Propose a new research backlog note in TO-RESEARCH/audio-transcription.md.'
 
     CRITICAL SAFETY CONTRACT:
-    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under wiki-proposals/ with SHA-256 hashes and a unified diff for human inspection.
+    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under doc-proposals/ with SHA-256 hashes and a unified diff for human inspection.
 
     DISTINCTIONS:
-    - Writes a pending proposal JSON file to local state (wiki-proposals/). Does not write to Graphiti or modify canonical Wiki files.
+    - Writes a pending proposal JSON file to local state (doc-proposals/). Does not write to Graphiti or modify canonical Wiki files.
 
     SIDE EFFECTS:
-    - Creates a persistent proposal file on disk in wiki-proposals/. Non-destructive to LLM_Wiki.
+    - Creates a persistent proposal file on disk in doc-proposals/. Non-destructive to LLM_Wiki.
     """
     try:
-        proposal = create_wiki_proposal(
+        proposal = create_doc_proposal(
             target_path=target_path,
             proposed_content=proposed_content,
             rationale=rationale,
@@ -606,23 +606,23 @@ async def propose_wiki_update(
         )
         return format_proposal_for_mcp(proposal)
     except Exception as e:
-        logger.error(f"Error creating wiki proposal for '{target_path}': {e}")
-        return f"Error creating wiki proposal for '{target_path}': {e}"
+        logger.error(f"Error creating doc proposal for '{target_path}': {e}")
+        return f"Error creating doc proposal for '{target_path}': {e}"
 
 
 if _config.knowledge_enabled:
     app.tool(
-        title="Propose Durable Wiki Update",
+        title="Propose Durable Doc Update",
         annotations=types.ToolAnnotations(
             read_only_hint=False,
             destructive_hint=False,
             idempotent_hint=False,
             open_world_hint=False,
         ),
-    )(propose_wiki_update)
+    )(propose_doc_update)
 
 
-async def list_wiki_proposals(
+async def list_doc_proposals(
     status: Annotated[
         Optional[str],
         Field(
@@ -630,38 +630,38 @@ async def list_wiki_proposals(
         ),
     ] = None,
 ) -> str:
-    """List durable-knowledge Wiki proposals (MS6d). Read-only.
+    """List durable-knowledge doc proposals (MS6d). Read-only.
 
     WHEN TO USE:
     - Use to see what's waiting for review, or to check the outcome of a past proposal.
-    - Use before review_wiki_proposal/apply_wiki_proposal, to find the proposal_id.
+    - Use before review_doc_proposal/apply_doc_proposal, to find the proposal_id.
 
     EXAMPLES OF USER INTENT:
-    - 'What wiki proposals are still pending?'
+    - 'What doc proposals are still pending?'
     - 'Show me all the proposals I've approved but not yet applied.'
 
     DISTINCTIONS:
-    - Read-only listing. Use get_wiki_proposal for one proposal's full diff and rationale.
+    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale.
     """
     try:
         proposals = list_proposals(status=status)
         return format_proposal_list(proposals)
     except Exception as e:
-        logger.error(f"Error listing wiki proposals: {e}")
-        return f"Error listing wiki proposals: {e}"
+        logger.error(f"Error listing doc proposals: {e}")
+        return f"Error listing doc proposals: {e}"
 
 
-async def get_wiki_proposal(
+async def get_doc_proposal(
     proposal_id: Annotated[str, Field(description="The proposal_id to retrieve, e.g. 'prop_20260916_125736_a33f295a'.")],
 ) -> str:
-    """Retrieve one durable-knowledge Wiki proposal's full detail (MS6d): rationale,
+    """Retrieve one durable-knowledge doc proposal's full detail (MS6d): rationale,
     unified diff, and the sha256 hashes needed to review or apply it. Read-only.
 
     WHEN TO USE:
     - Use to read a specific proposal's diff before deciding to approve or reject it.
 
     DISTINCTIONS:
-    - Read-only. review_wiki_proposal records the decision; apply_wiki_proposal writes it.
+    - Read-only. review_doc_proposal records the decision; apply_doc_proposal writes it.
     """
     try:
         proposal = get_proposal(proposal_id)
@@ -669,11 +669,11 @@ async def get_wiki_proposal(
             return f"No proposal found with id '{proposal_id}'."
         return format_proposal_for_mcp(proposal)
     except Exception as e:
-        logger.error(f"Error retrieving wiki proposal '{proposal_id}': {e}")
-        return f"Error retrieving wiki proposal '{proposal_id}': {e}"
+        logger.error(f"Error retrieving doc proposal '{proposal_id}': {e}")
+        return f"Error retrieving doc proposal '{proposal_id}': {e}"
 
 
-async def review_wiki_proposal(
+async def review_doc_proposal(
     proposal_id: Annotated[str, Field(description="The proposal_id to review.")],
     verdict: Annotated[str, Field(description="'approved' or 'rejected'.")],
     notes: Annotated[
@@ -685,14 +685,14 @@ async def review_wiki_proposal(
         Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
     ] = None,
 ) -> str:
-    """Record a human decision on a pending Wiki proposal (MS6d). Does NOT modify LLM_Wiki.
+    """Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.
 
     WHEN TO USE:
-    - Use after reading a proposal's diff via get_wiki_proposal, to approve or reject it.
+    - Use after reading a proposal's diff via get_doc_proposal, to approve or reject it.
 
     CRITICAL SAFETY CONTRACT:
     - This tool only records a decision. It never writes to the canonical Wiki — only
-      apply_wiki_proposal does that, and only on a proposal this tool has already approved.
+      apply_doc_proposal does that, and only on a proposal this tool has already approved.
       No single tool call can get from a fresh proposal to a canonical write.
 
     DISTINCTIONS:
@@ -707,16 +707,16 @@ async def review_wiki_proposal(
     except ValueError as e:
         return f"Could not review proposal '{proposal_id}': {e}"
     except Exception as e:
-        logger.error(f"Error reviewing wiki proposal '{proposal_id}': {e}")
-        return f"Error reviewing wiki proposal '{proposal_id}': {e}"
+        logger.error(f"Error reviewing doc proposal '{proposal_id}': {e}")
+        return f"Error reviewing doc proposal '{proposal_id}': {e}"
 
 
-async def apply_wiki_proposal(
+async def apply_doc_proposal(
     proposal_id: Annotated[str, Field(description="The proposal_id to apply. Must already be 'approved'.")],
     expected_sha256: Annotated[
         str,
         Field(
-            description="The proposal's proposed_sha256, as returned by get_wiki_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy."
+            description="The proposal's proposed_sha256, as returned by get_doc_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy."
         ),
     ],
     dry_run: Annotated[
@@ -724,11 +724,11 @@ async def apply_wiki_proposal(
         Field(description="If true (default), reports what would happen without writing anything. Set false to actually apply."),
     ] = True,
 ) -> str:
-    """Write an approved Wiki proposal's content into LLM_Wiki (MS6d). The only MCP tool
+    """Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool
     that modifies the canonical durable-knowledge corpus.
 
     WHEN TO USE:
-    - Use once a proposal has been reviewed and approved via review_wiki_proposal, to
+    - Use once a proposal has been reviewed and approved via review_doc_proposal, to
       actually apply it. Always dry-run first.
 
     CRITICAL SAFETY CONTRACT:
@@ -756,18 +756,18 @@ async def apply_wiki_proposal(
     except ValueError as e:
         return f"Could not apply proposal '{proposal_id}': {e}"
     except Exception as e:
-        logger.error(f"Error applying wiki proposal '{proposal_id}': {e}")
-        return f"Error applying wiki proposal '{proposal_id}': {e}"
+        logger.error(f"Error applying doc proposal '{proposal_id}': {e}")
+        return f"Error applying doc proposal '{proposal_id}': {e}"
 
 
-async def bulk_reject_wiki_proposals(
+async def bulk_reject_doc_proposals(
     proposal_ids: Annotated[
         list[str],
-        Field(description="The proposal_ids to reject, e.g. from a list_wiki_proposals(status='pending_review') result."),
+        Field(description="The proposal_ids to reject, e.g. from a list_doc_proposals(status='pending_review') result."),
     ],
     reason: Annotated[str, Field(description="One reason recorded against every proposal in this batch.")],
 ) -> str:
-    """Reject a batch of pending Wiki proposals with one recorded reason each (MS6d).
+    """Reject a batch of pending doc proposals with one recorded reason each (MS6d).
 
     WHEN TO USE:
     - Use to triage the pending-review backlog in one pass rather than one call per
@@ -788,60 +788,60 @@ async def bulk_reject_wiki_proposals(
                 lines.append(f"- `{s['proposal_id']}`: {s['reason']}")
         return "\n".join(lines)
     except Exception as e:
-        logger.error(f"Error bulk-rejecting wiki proposals: {e}")
-        return f"Error bulk-rejecting wiki proposals: {e}"
+        logger.error(f"Error bulk-rejecting doc proposals: {e}")
+        return f"Error bulk-rejecting doc proposals: {e}"
 
 
 if _config.knowledge_enabled:
     app.tool(
-        title="List Wiki Proposals",
+        title="List Doc Proposals",
         annotations=types.ToolAnnotations(
             read_only_hint=True,
             destructive_hint=False,
             idempotent_hint=True,
             open_world_hint=False,
         ),
-    )(list_wiki_proposals)
+    )(list_doc_proposals)
 
     app.tool(
-        title="Get Wiki Proposal",
+        title="Get Doc Proposal",
         annotations=types.ToolAnnotations(
             read_only_hint=True,
             destructive_hint=False,
             idempotent_hint=True,
             open_world_hint=False,
         ),
-    )(get_wiki_proposal)
+    )(get_doc_proposal)
 
     app.tool(
-        title="Review Wiki Proposal",
+        title="Review Doc Proposal",
         annotations=types.ToolAnnotations(
             read_only_hint=False,
             destructive_hint=False,
             idempotent_hint=False,
             open_world_hint=False,
         ),
-    )(review_wiki_proposal)
+    )(review_doc_proposal)
 
     app.tool(
-        title="Apply Wiki Proposal",
+        title="Apply Doc Proposal",
         annotations=types.ToolAnnotations(
             read_only_hint=False,
             destructive_hint=True,
             idempotent_hint=False,
             open_world_hint=False,
         ),
-    )(apply_wiki_proposal)
+    )(apply_doc_proposal)
 
     app.tool(
-        title="Bulk Reject Wiki Proposals",
+        title="Bulk Reject Doc Proposals",
         annotations=types.ToolAnnotations(
             read_only_hint=False,
             destructive_hint=False,
             idempotent_hint=False,
             open_world_hint=False,
         ),
-    )(bulk_reject_wiki_proposals)
+    )(bulk_reject_doc_proposals)
 
 
 @app.tool(
@@ -1181,7 +1181,7 @@ async def list_episode_proposals(
 
     DISTINCTIONS:
     - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from
-      list_wiki_proposals, which lists durable Wiki proposals, not episodic memory candidates.
+      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates.
     """
     try:
         items = list_episode_mirrors(tier=tier, approval_state=approval_state)
@@ -1210,8 +1210,8 @@ async def get_episode_proposal(
     - Use to read a specific episode's full content before deciding to approve, reject, or defer it.
 
     DISTINCTIONS:
-    - Read-only. review_episode records the decision. Different from get_wiki_proposal, which
-      reads a durable Wiki proposal, not an episodic memory candidate.
+    - Read-only. review_episode records the decision. Different from get_doc_proposal, which
+      reads a durable doc proposal, not an episodic memory candidate.
     """
     try:
         data = read_episode_mirror(memory_id)
@@ -1257,7 +1257,7 @@ async def review_episode(
       promotion step to actually reach episodic memory.
 
     DISTINCTIONS:
-    - Different from review_wiki_proposal, which decides a durable Wiki proposal, not an episode.
+    - Different from review_doc_proposal, which decides a durable doc proposal, not an episode.
     """
     if verdict not in ("approved", "rejected", "deferred"):
         return f"Invalid verdict '{verdict}' — must be 'approved', 'rejected', or 'deferred'."
@@ -1303,7 +1303,7 @@ async def bulk_review_episodes(
       decision is still individually recorded, with its own optional reason.
 
     DISTINCTIONS:
-    - Unlike bulk_reject_wiki_proposals, this accepts mixed verdicts (approve some, reject others,
+    - Unlike bulk_reject_doc_proposals, this accepts mixed verdicts (approve some, reject others,
       defer the rest) in a single call, not just a batch reject with one shared reason.
     """
     with ReviewStore() as review_store:

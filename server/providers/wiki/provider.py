@@ -1,24 +1,27 @@
 """FileKnowledgeProvider: the local-file durable-knowledge provider.
 
-Wraps server.wiki/server.corpus behind server.core.protocols.KnowledgeProvider
-rather than relocating their code (Milestone 1; see
-docs/adr/0002-provider-boundaries.md). Unlike server/memory.py,
-server.wiki/server.corpus have no Graphiti-shaped coupling problem to solve
-by moving — they are already a self-contained local-filesystem
-implementation with no external service dependency, and dozens of existing
-tests import their classes and functions by name (CorpusScanner,
-WikiCorpusManager, search_wiki, search_corpus, scan_corpus, etc.). This
-provider is the seam a second knowledge provider (e.g. Milestone 5's GitHub
-provider) implements alongside, without requiring wiki.py/corpus.py to
-change.
+Wraps server.providers.wiki.scanner/server.providers.wiki.corpus behind
+server.core.protocols.KnowledgeProvider. Originally (Milestone 1; see
+docs/adr/0002-provider-boundaries.md) this wrapped corpus.py/wiki.py/
+extractors.py in place at the server/ root rather than relocating their
+code -- they had no Graphiti-shaped coupling problem to solve by moving,
+unlike server/memory.py. They've since moved anyway (docs/plan-active.md,
+"Wiki→doc rename", 2026-09-19), grouped into this same server/providers/wiki/
+package alongside this file, once Todd wanted providers organized into
+per-provider subfolders rather than scattered at server/ root -- dozens of
+existing tests still import their classes and functions by name
+(CorpusScanner, WikiCorpusManager, search_wiki, search_corpus, scan_corpus,
+etc.), just from their new module paths. This provider is the seam a
+second knowledge provider (e.g. Milestone 5's GitHub provider) implements
+alongside, in its own server/providers/<name>/ package.
 """
 
 import os
 
 from dotenv import load_dotenv
 
-from server.corpus import SearchResult
-from server.wiki import search_wiki
+from server.providers.wiki.corpus import SearchResult
+from server.providers.wiki.scanner import search_wiki
 
 
 class FileKnowledgeProvider:
@@ -27,7 +30,7 @@ class FileKnowledgeProvider:
     def is_configured(self) -> bool:
         """Cheap presence check — does not touch the filesystem.
 
-        Calls load_dotenv() itself (as server.corpus.get_corpus_root() does)
+        Calls load_dotenv() itself (as server.providers.wiki.corpus.get_corpus_root() does)
         rather than relying on some other module having already loaded .env
         as an import-time side effect — that dependency existed only
         incidentally (server.memory's import chain happens to call

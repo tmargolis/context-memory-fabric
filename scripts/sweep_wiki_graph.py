@@ -68,7 +68,7 @@ def _build_vault_index(root: Path) -> tuple[int, dict[str, int]]:
     file in the vault -- not just the WIKI/REPORTS/TO-RESEARCH scan scope,
     matching the broader vouching intent (a mention in RAW/ still counts).
     Word-boundary matched, so "art" inside "start" doesn't count."""
-    from server.corpus import IGNORED_DIR_NAMES
+    from server.providers.wiki.corpus import IGNORED_DIR_NAMES
 
     df: dict[str, int] = {}
     note_count = 0
@@ -293,7 +293,7 @@ def main() -> None:
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name
 
-    from server.corpus import get_corpus_root
+    from server.providers.wiki.corpus import get_corpus_root
     wiki_root = args.wiki_root or get_corpus_root()
 
     result = asyncio.run(sweep(args.graph_name, args.min_episodes, args.idf_threshold, wiki_root, args.dry_run))

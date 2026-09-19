@@ -10,7 +10,7 @@ one layer of indirection, so the day a second provider exists, only this
 file's factory functions need to change, not every caller.
 """
 
-from server.providers.knowledge_files import FileKnowledgeProvider
+from server.providers.wiki.provider import FileKnowledgeProvider
 from server.providers.memory_graphiti import GraphitiMemoryProvider
 
 

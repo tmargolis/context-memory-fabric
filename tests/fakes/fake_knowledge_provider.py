@@ -6,7 +6,7 @@ filesystem corpus, so tests do not depend on LLM_WIKI_PATH being set.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from server.corpus import ExtractionStatus, MatchBasis, SearchResult
+from server.providers.wiki.corpus import ExtractionStatus, MatchBasis, SearchResult
 
 
 @dataclass

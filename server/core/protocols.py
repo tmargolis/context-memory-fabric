@@ -9,7 +9,7 @@ real implementation.
 
 Signatures match what server/mcp.py's tools already call today
 (server.memory.remember/recall/edit_memory/reconcile_memories and
-server.wiki.search_wiki/search_corpus) rather than the fuller canonical
+server.providers.wiki.scanner.search_wiki/search_corpus) rather than the fuller canonical
 shapes in core/models.py — the goal of Milestone 1 is a seam with zero
 behavior change, not a rewrite of what data flows through it. Tightening
 these to return core.models types (DerivedMemory, KnowledgeResult) is
@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Protocol, runtime_checkable
 
-from server.corpus import SearchResult
+from server.providers.wiki.corpus import SearchResult
 
 
 @runtime_checkable
