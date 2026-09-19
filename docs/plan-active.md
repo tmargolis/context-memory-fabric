@@ -99,6 +99,30 @@ total wall-clock: 3194s (~53 min)
 
 **Also resolved:** the project-taxonomy question above — see the corpus backlog entry (`project='context-memory-fabric'` applied directly, keyword taxonomy not used for this batch; extending the same direct-tag approach to other repos is its own backlog item there).
 
+### Phase 1 tasks — wiki→doc rename + light reorg (branch, PR, no behavior change)
+
+- [ ] `server/proposals.py`: `WikiProposal` → `DocProposal`; `create_wiki_proposal` → `create_doc_proposal`; `get_proposals_dir()`'s default subdirectory `wiki-proposals/` → `doc-proposals/`; internal docstrings/comments updated to match.
+- [ ] `server/mcp.py`: hard-rename the six MCP tools — `propose_wiki_update`→`propose_doc_update`, `list_wiki_proposals`→`list_doc_proposals`, `get_wiki_proposal`→`get_doc_proposal`, `review_wiki_proposal`→`review_doc_proposal`, `apply_wiki_proposal`→`apply_doc_proposal`, `bulk_reject_wiki_proposals`→`bulk_reject_doc_proposals` — including their `title=` annotations, docstrings, and the shared capture-guidance text.
+- [ ] `capture_session`'s `destination='wiki_proposal'` → `destination='doc_proposal'` (tool description + `server/capture/session_capture.py`).
+- [ ] Reorg: `server/wiki.py` + `server/corpus.py` → `server/providers/wiki/` (module names TBD once the move is in front of me — likely `scanner.py`/`corpus.py` since the parent directory already says "wiki"), update every importer.
+- [ ] Rename the on-disk `wiki-proposals/` directory itself (`git mv`), and anything (`.gitignore`, scripts) that references the old path by name.
+- [ ] Update tests referencing the old names (`tests/test_ms6d_proposal_review.py` and any other `WikiProposal`/`wiki_proposal`/tool-name references) and live docs (`docs/CLIENTS.md`) that describe current tool names — **not** `plan-history.md`/closed ADRs, which stay as an accurate historical record of what those tools were called at the time.
+- [ ] Full test suite green; live MCP server tool registration sanity-checked (tool count, names).
+- [ ] PR opened, Todd reviews/merges.
+
+### Phase 2 tasks — `ExtractPolicyV1` (branch off updated main, after Phase 1 merges)
+
+- [ ] New `server/policies/extract_v1.py`, `class ExtractPolicyV1(ReasoningEpisodePolicyV1)` — `name="extract"`, `version="1.0"`, `reasoning_episode_v1.py` untouched.
+- [ ] Extend `evaluate_window()` to also emit `DocProposal`-shaped candidates alongside episodes, one model call.
+- [ ] New candidates route to the renamed `doc-proposals/` review surface from Phase 1.
+- [ ] Tests; PR opened, Todd reviews/merges.
+
+### Phase 3 tasks — re-derive the 34 MS4b conversations (after Phase 2 merges)
+
+- [ ] Explicitly reject/mark-superseded the 379 existing `reasoning-episode`-policy rows tied to these 34 conversations, so they don't sit as reviewable duplicates once the re-run's output exists.
+- [ ] Re-run `run_reasoning_consolidation()` with `ExtractPolicyV1` over the same 34 `claude_code` conversation_ids, from source journal events.
+- [ ] Review the fresh episode + doc-proposal output via `list_episode_proposals` / `list_doc_proposals`.
+
 ---
 
 ## MS4c — OpenClaw adapter and `cmf-http`
