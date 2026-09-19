@@ -212,7 +212,7 @@ _EPISODES_SCHEMA = {
 }
 
 
-def _local_generate(model: str, prompt: str) -> str:
+def _local_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, schema_name: str = "reasoning_episodes") -> str:
     """Same contract as _default_generate, against LM Studio on the Spark.
 
     Routed through LMStudioCompatClient rather than a bare AsyncOpenAI so the
@@ -221,6 +221,13 @@ def _local_generate(model: str, prompt: str) -> str:
     whose JSON landed in `reasoning_content` with an empty `content` is
     rescued. The latter is not an edge case -- GLM-4.7-Flash does it on every
     constrained-decoding call.
+
+    `schema`/`schema_name` default to this module's own episode-only shape
+    but are overridable -- ExtractPolicyV1 (server/policies/extract_v1.py)
+    binds its own wider schema via functools.partial rather than duplicating
+    this whole function, since constrained decoding needs the schema to
+    literally include every top-level key the model may emit (an unlisted
+    key is not just ignored, it's structurally unreachable).
 
     Synchronous by contract (GenerateFn returns str, and evaluate_window is
     sync), so the async client is driven with asyncio.run. Safe because this
@@ -239,7 +246,7 @@ def _local_generate(model: str, prompt: str) -> str:
     if config.local_structured_mode == "json_schema":
         response_format: dict = {
             "type": "json_schema",
-            "json_schema": {"name": "reasoning_episodes", "schema": _EPISODES_SCHEMA},
+            "json_schema": {"name": schema_name, "schema": schema},
         }
     else:
         response_format = {"type": "text"}
@@ -269,11 +276,23 @@ def _local_generate(model: str, prompt: str) -> str:
     raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
 
 
-def _select_generate_fn() -> GenerateFn:
-    """Pick the model call for the configured provider, at construction time."""
+def _select_generate_fn(schema: dict = _EPISODES_SCHEMA, schema_name: str = "reasoning_episodes") -> GenerateFn:
+    """Pick the model call for the configured provider, at construction time.
+
+    `schema`/`schema_name` only matter on the local path (see
+    _local_generate's docstring) -- the Gemini path is free-form JSON with
+    no grammar to widen, so a subclass's wider schema is simply unused
+    there, not an error.
+    """
+    import functools
+
     from server.core.config import load_config
 
-    return _local_generate if load_config().llm_is_local else _default_generate
+    if not load_config().llm_is_local:
+        return _default_generate
+    if schema is _EPISODES_SCHEMA and schema_name == "reasoning_episodes":
+        return _local_generate
+    return functools.partial(_local_generate, schema=schema, schema_name=schema_name)
 
 
 class ReasoningEpisodePolicyV1:
