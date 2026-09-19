@@ -37,6 +37,7 @@ def review_queue(
     review_store: ReviewStore,
     promotion_store: PromotionStore,
     policy_version: str = REASONING_POLICY_VERSION,
+    policy_name: str = "reasoning-episode",
     tier: Optional[int] = 1,
     projects: Optional[list[str]] = None,
     harness: Optional[str] = None,
@@ -50,11 +51,17 @@ def review_queue(
     That is what the export uses: a verdict should never require a
     round-trip back to the database, because the round-trip is what makes
     a reviewer skip the evidence and guess instead.
+
+    `policy_name` defaults to `'reasoning-episode'` for backward
+    compatibility -- pass e.g. `policy_name="extract"` to build the queue
+    for a different windowed-extraction policy's output instead (this was
+    a hardcoded literal, filed in docs/plan-active.md's Backlog, confirmed
+    as a second instance of the same bug class as tier1_review_queue's).
     """
     qmarks = ",".join("?" * len(_EXCLUDED_STATES))
-    params: list[Any] = [policy_version, *_EXCLUDED_STATES]
+    params: list[Any] = [policy_name, policy_version, *_EXCLUDED_STATES]
     clauses = [
-        "policy_name = 'reasoning-episode'",
+        "policy_name = ?",
         "policy_version = ?",
         f"approval_state NOT IN ({qmarks})",
     ]

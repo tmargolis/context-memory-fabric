@@ -417,12 +417,25 @@ class ConsolidationStore:
         return [rows[m] for m in memory_ids if m in rows]
 
     def query_reasoning_episodes(
-        self, policy_version: str, kinds: Optional[list[str]] = None, exclude_approval_states: Optional[list[str]] = None
+        self,
+        policy_version: str,
+        policy_name: str = "reasoning-episode",
+        kinds: Optional[list[str]] = None,
+        exclude_approval_states: Optional[list[str]] = None,
     ) -> list[sqlite3.Row]:
-        """Reasoning-episode rows for one policy version, optionally filtered
-        to a set of `reasoning_kind`s (MS3.6 tier routing)."""
-        clauses = ["policy_name = 'reasoning-episode'", "policy_version = ?"]
-        params: list[Any] = [policy_version]
+        """Rows for one (policy_name, policy_version), optionally filtered to
+        a set of `reasoning_kind`s (MS3.6 tier routing).
+
+        `policy_name` defaults to `'reasoning-episode'` for backward
+        compatibility -- every windowed-extraction policy (`cowork_live_v1`,
+        `extract`) versions itself independently, so a caller wanting rows
+        from one of those must pass its name and its own current version
+        explicitly (docs/plan-active.md's "Episode-proposals review MCP
+        tools" backlog item -- this was the hardcoded literal that made
+        those policies' rows invisible here).
+        """
+        clauses = ["policy_name = ?", "policy_version = ?"]
+        params: list[Any] = [policy_name, policy_version]
         if kinds:
             clauses.append(f"reasoning_kind IN ({','.join('?' * len(kinds))})")
             params.extend(kinds)

@@ -458,12 +458,22 @@ def default_tier(reasoning_kind: Optional[str]) -> int:
 
 
 def tier1_review_queue(
-    consolidation_store: ConsolidationStore, promotion_store: PromotionStore, policy_version: str = REASONING_POLICY_VERSION
+    consolidation_store: ConsolidationStore,
+    promotion_store: PromotionStore,
+    policy_version: str = REASONING_POLICY_VERSION,
+    policy_name: str = "reasoning-episode",
 ) -> list[sqlite3.Row]:
     """Reasoning episodes a reviewer should triage for promotion: tier-1
-    kind, not already promoted, not rejected/superseded."""
+    kind, not already promoted, not rejected/superseded.
+
+    `policy_name`/`policy_version` default to the original `reasoning-episode`
+    policy's current version for backward compatibility -- pass e.g.
+    `policy_name="extract", policy_version="1.0"` to triage a different
+    windowed-extraction policy's output instead.
+    """
     rows = consolidation_store.query_reasoning_episodes(
         policy_version=policy_version,
+        policy_name=policy_name,
         kinds=sorted(TIER1_KINDS),
         exclude_approval_states=["rejected", "superseded_by_reasoning", "superseded_by_correction"],
     )
