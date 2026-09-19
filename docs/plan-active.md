@@ -138,7 +138,7 @@ total wall-clock: 3194s (~53 min)
 - [x] New MCP tool `list_review_conversations(harness, policy_name, include_tier2_only)` (`server/review/conversations.py`) aggregating pending episode + doc-proposal counts by conversation, sorted busiest-first. **Found live:** unfiltered, this is 482 conversations across the whole corpus, almost all old tier-2-only leftovers — added `include_tier2_only=False` as the default (drops zero-review-scope buckets) plus `harness`/`policy_name` filters. `list_review_conversations(harness="claude_code", policy_name="extract")` now cleanly returns exactly MS4b's 21 conversations, 296 review-scope items — matches 227+69 exactly.
 - [x] `list_episode_proposals`/`list_doc_proposals` gained an optional `conversation_id` filter (`list_episode_mirrors()`/`list_proposals()` underneath), so an agent picks a conversation from `list_review_conversations()` then lists just its items.
 - [x] Tests: 16 new cases in `tests/test_review_conversations.py` (mirror/proposal conversation_id storage and filtering, aggregation, sort order, tier2-only exclusion, harness/policy_name filters, inferred-doc flagging, empty/table formatting). Full suite: **515 passed** (499 + 16 new), 0 regressions. MCP contract fixture regenerated (22 tools now, diff scoped to `list_review_conversations` plus the two extended tools' descriptions).
-- [ ] PR opened, Todd reviews/merges.
+- [x] PR opened: [PR #16](https://github.com/tmargolis/context-memory-fabric/pull/16). Awaiting Todd's review/merge.
 
 ---
 
