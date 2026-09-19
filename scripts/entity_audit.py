@@ -23,15 +23,30 @@ import asyncio
 from pathlib import Path
 import sqlite3
 
+from typing import Any, TypedDict
+
 from server.journal.store import DEFAULT_JOURNAL_PATH
 from server.providers.memory_graphiti import get_graphiti
 
 
-def _records(rows):
+class EntityAuditItem(TypedDict):
+    uuid: str
+    name: str
+    episode_count: int
+    projects: list[str]
+    summary_len: int
+    summary: str | None
+
+
+def _records(rows: Any) -> list[Any]:
     return rows[0] if rows and isinstance(rows[0], list) else (rows or [])
 
 
-async def entity_audit(db_path, graph_name: str, min_projects: int = 2) -> list[dict]:
+async def entity_audit(
+    db_path: Path | str,
+    graph_name: str,
+    min_projects: int = 2,
+) -> list[EntityAuditItem]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     episode_project = {
@@ -52,7 +67,7 @@ async def entity_audit(db_path, graph_name: str, min_projects: int = 2) -> list[
         )
     )
 
-    report = []
+    report: list[EntityAuditItem] = []
     for r in rows:
         episodes = r["episodes"]
         projects = {episode_project.get(ep, "?") for ep in episodes}
