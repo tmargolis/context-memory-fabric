@@ -109,7 +109,7 @@ total wall-clock: 3194s (~53 min)
 - [x] Updated tests: `test_ms6d_proposal_review.py`, `test_step6_mcp_tools.py`, `test_step6b_proposals.py`, `test_capture_session.py`, `test_step7_import_memories.py`, `test_ms1_provider_interfaces.py`, `test_mcp_contract_fixtures.py`, `test_step6a_corpus.py`, `test_step6a_real_wiki.py`, `tests/fakes/fake_knowledge_provider.py`, `tests/fixtures/ms7_eval/capture.py` (missed on the first pass, caught by a second explicit grep), plus the `tests/fixtures/mcp_contracts/tool_schemas.json` snapshot (regenerated from the live `app.list_tools()` output, not hand-edited — diff scoped to exactly the 6 renamed tool names, verified). `docs/CLIENTS.md` updated (tool table + prose). `plan-history.md`/closed ADRs deliberately left untouched — accurate historical record of what those tools were called at the time.
 - [x] Full test suite green: **490 passed, 6 skipped, 8 deselected**, 0 failures (confirmed again after the reorg, not just after the terminology rename).
 - [x] Live MCP server tool registration sanity-check: imported `server.mcp` fresh and called `list_tools()` directly — **21 tools**, all 6 renamed `*_doc_*` names present, `search_wiki` unchanged, no import errors from the module move.
-- [ ] PR opened, Todd reviews/merges.
+- [x] PR opened: [PR #14](https://github.com/tmargolis/context-memory-fabric/pull/14). Awaiting Todd's review/merge.
 
 ### Phase 2 tasks — `ExtractPolicyV1` (branch off updated main, after Phase 1 merges)
 
