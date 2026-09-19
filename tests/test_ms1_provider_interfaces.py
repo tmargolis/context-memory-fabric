@@ -130,8 +130,9 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # (MS4a2; capture_note removed the same day, unused in production
         # and unreachable by any retrieval path -- see plan-active.md) +
         # 4 episode-proposals review tools (list/get/review/bulk_review,
-        # found missing 2026-09-18 -- parity with the wiki proposal loop).
-        self.assertEqual(len(names), 21)
+        # found missing 2026-09-18 -- parity with the wiki proposal loop) +
+        # list_review_conversations (found 2026-09-19, "review by conversation").
+        self.assertEqual(len(names), 22)
 
 
 if __name__ == "__main__":

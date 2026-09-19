@@ -298,9 +298,17 @@ def format_proposal_for_mcp(proposal: DocProposal) -> str:
 def list_proposals(
     proposals_dir: Optional[Path] = None,
     status: Optional[str] = None,
+    conversation_id: Optional[str] = None,
 ) -> list[DocProposal]:
     """List stored proposals from the local state directory (flat root +
-    approved/ + rejected/ subfolders -- see _status_subdir)."""
+    approved/ + rejected/ subfolders -- see _status_subdir).
+
+    `conversation_id` filters to proposals whose `source_conversation_id`
+    matches exactly -- a proposal created before that field existed, or one
+    with no resolvable source, has `source_conversation_id=None` and never
+    matches a non-None filter value (docs/plan-active.md, "review by
+    conversation", 2026-09-19).
+    """
     store_dir = get_proposals_dir(proposals_dir)
     proposals: list[DocProposal] = []
 
@@ -311,8 +319,11 @@ def list_proposals(
             try:
                 data = json.loads(item.read_text(encoding="utf-8"))
                 prop = DocProposal.from_dict(data)
-                if status is None or prop.status == status:
-                    proposals.append(prop)
+                if status is not None and prop.status != status:
+                    continue
+                if conversation_id is not None and prop.source_conversation_id != conversation_id:
+                    continue
+                proposals.append(prop)
             except Exception as e:
                 logger.warning(f"Failed loading proposal file {item}: {e}")
 

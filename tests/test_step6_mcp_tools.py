@@ -62,6 +62,8 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "apply_doc_proposal", "bulk_reject_doc_proposals",
             # Episode-proposals review MCP tools (found 2026-09-18, parity with MS6d)
             "list_episode_proposals", "get_episode_proposal", "review_episode", "bulk_review_episodes",
+            # Conversation-grouped review (found 2026-09-19)
+            "list_review_conversations",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

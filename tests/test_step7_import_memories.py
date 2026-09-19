@@ -416,6 +416,8 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "get_episode_proposal",
             "review_episode",
             "bulk_review_episodes",
+            # Conversation-grouped review (found 2026-09-19)
+            "list_review_conversations",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

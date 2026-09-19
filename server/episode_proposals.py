@@ -218,14 +218,18 @@ def read_episode_mirror(memory_id: str, base_dir: Optional[Path] = None) -> Opti
 def list_episode_mirrors(
     tier: Optional[str] = None,
     approval_state: Optional[str] = None,
+    conversation_id: Optional[str] = None,
     base_dir: Optional[Path] = None,
 ) -> list[dict[str, Any]]:
-    """List mirrored episodes, optionally filtered by tier ('tier1'/'tier2')
-    and/or approval_state ('queued_for_review'/'auto_accepted'/'approved'/
-    'rejected'). Same role list_proposals() plays for wiki proposals --
-    reads the file mirror, not derived_memories directly, so it naturally
-    covers every policy_name that ever calls record_reasoning_episode()
-    without needing to know their names."""
+    """List mirrored episodes, optionally filtered by tier ('tier1'/'tier2'),
+    approval_state ('queued_for_review'/'auto_accepted'/'approved'/
+    'rejected'), and/or conversation_id (docs/plan-active.md, "review by
+    conversation", 2026-09-19 -- a mirror written before that field existed
+    has conversation_id=None and never matches a non-None filter value).
+    Same role list_proposals() plays for wiki proposals -- reads the file
+    mirror, not derived_memories directly, so it naturally covers every
+    policy_name that ever calls record_reasoning_episode() without needing
+    to know their names."""
     root = get_episode_proposals_dir(base_dir)
     tiers = [tier] if tier else ["tier1", "tier2"]
     results: list[dict[str, Any]] = []
@@ -239,8 +243,11 @@ def list_episode_mirrors(
                 except (OSError, json.JSONDecodeError):
                     logger.warning("Failed loading episode mirror file %s", item)
                     continue
-                if approval_state is None or data.get("approval_state") == approval_state:
-                    results.append(data)
+                if approval_state is not None and data.get("approval_state") != approval_state:
+                    continue
+                if conversation_id is not None and data.get("conversation_id") != conversation_id:
+                    continue
+                results.append(data)
     results.sort(key=lambda d: d.get("written_at", ""))
     return results
 

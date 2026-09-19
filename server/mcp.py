@@ -60,6 +60,8 @@ from server.proposals import (
     review_proposal,
 )
 from server.review.actions import apply_verdicts, approve_episode, defer_episode, reject_episode
+from server.review.conversations import format_review_conversations
+from server.review.conversations import list_review_conversations as get_review_conversations
 from server.review.store import ReviewStore
 from server.providers.wiki.scanner import invalidate_corpus_cache, search_wiki as query_wiki
 
@@ -629,22 +631,30 @@ async def list_doc_proposals(
             description="Filter by status: 'pending_review', 'approved', 'rejected', or 'applied'. Omit to list all proposals."
         ),
     ] = None,
+    conversation_id: Annotated[
+        Optional[str],
+        Field(description="Filter to proposals sourced from one conversation/session, as returned by list_review_conversations(). Omit to list across all conversations. Proposals created before this field existed (or with no resolvable source) never match."),
+    ] = None,
 ) -> str:
     """List durable-knowledge doc proposals (MS6d). Read-only.
 
     WHEN TO USE:
     - Use to see what's waiting for review, or to check the outcome of a past proposal.
     - Use before review_doc_proposal/apply_doc_proposal, to find the proposal_id.
+    - Call list_review_conversations() first, then pass one of its conversation_ids here, to review a
+      batch conversation-by-conversation instead of as one long flat list.
 
     EXAMPLES OF USER INTENT:
     - 'What doc proposals are still pending?'
     - 'Show me all the proposals I've approved but not yet applied.'
+    - 'What doc proposals came out of that conversation?'
 
     DISTINCTIONS:
-    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale.
+    - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale. Different from
+      list_review_conversations, which lists the conversations themselves with pending counts.
     """
     try:
-        proposals = list_proposals(status=status)
+        proposals = list_proposals(status=status, conversation_id=conversation_id)
         return format_proposal_list(proposals)
     except Exception as e:
         logger.error(f"Error listing doc proposals: {e}")
@@ -1150,6 +1160,65 @@ async def promote_auto_accepted_memories(
 
 
 @app.tool(
+    title="List Conversations Pending Review",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def list_review_conversations(
+    harness: Annotated[
+        Optional[str],
+        Field(description="Filter to one harness (e.g. 'claude_code', 'chatgpt', 'gemini', 'claude'). Strongly recommended over listing unfiltered — the unfiltered corpus-wide view is hundreds of conversations, mostly old tier-2-only leftovers."),
+    ] = None,
+    policy_name: Annotated[
+        Optional[str],
+        Field(description="Filter episodes to one extraction policy (e.g. 'extract', 'reasoning-episode', 'cowork_live_v1'). Doc proposals have no policy_name and are unaffected by this filter — combine with `harness` to scope both together."),
+    ] = None,
+    include_tier2_only: Annotated[
+        bool,
+        Field(description="If true, also list conversations whose only pending items are tier-2 episodes (out of review scope) — default false hides these as exhausted-backlog noise."),
+    ] = False,
+) -> str:
+    """List conversations/sessions that have staged episodes or doc proposals awaiting review, with
+    per-conversation pending counts. Read-only.
+
+    WHEN TO USE:
+    - Use as the first step of a conversation-by-conversation review pass over a batch that came from one
+      source (e.g. an offline consolidation run over many Claude Code sessions) — pick a conversation_id
+      from here, then call list_episode_proposals(conversation_id=...) / list_doc_proposals(conversation_id=...)
+      to review just that conversation's items as one coherent unit, instead of one long undifferentiated list.
+    - Sorted busiest-first (tier-1 episodes + doc proposals), so working top-to-bottom clears the largest
+      chunks of the backlog soonest.
+    - Filter to a specific batch with `harness`/`policy_name` — e.g. `harness="claude_code", policy_name="extract"`
+      for an ExtractPolicyV1 consolidation run's own output. Unfiltered spans the whole corpus's backlog,
+      which is rarely what you want (see the `harness` field description).
+
+    EXAMPLES OF USER INTENT:
+    - 'I want to review these by conversation, not as one big list.'
+    - 'Which sessions still have pending episodes or doc proposals?'
+    - 'Show me just the conversations from that Claude Code batch.'
+
+    DISTINCTIONS:
+    - Read-only. Lists conversations, not the items inside them — list_episode_proposals/list_doc_proposals
+      still do that, now with an optional conversation_id filter. Tier-2 episode counts are shown for
+      context only; they are not in review scope and are not part of the "review-scope" total.
+    - An item with no resolvable source conversation (written before this existed, or an unlinkable doc
+      proposal) is not represented in any bucket here — it still shows up in the unfiltered listings.
+    """
+    try:
+        conversations = get_review_conversations(
+            harness=harness, policy_name=policy_name, include_tier2_only=include_tier2_only
+        )
+        return format_review_conversations(conversations)
+    except Exception as e:
+        logger.error(f"Error listing review conversations: {e}")
+        return f"Error listing review conversations: {e}"
+
+
+@app.tool(
     title="List Staged Episodes",
     annotations=types.ToolAnnotations(
         read_only_hint=True,
@@ -1167,6 +1236,10 @@ async def list_episode_proposals(
         Optional[str],
         Field(description="Filter by status: 'queued_for_review', 'auto_accepted', 'approved', or 'rejected'. Omit to list all."),
     ] = None,
+    conversation_id: Annotated[
+        Optional[str],
+        Field(description="Filter to episodes sourced from one conversation/session, as returned by list_review_conversations(). Omit to list across all conversations."),
+    ] = None,
 ) -> str:
     """List staged reasoning episodes awaiting or past review. Read-only.
 
@@ -1174,17 +1247,23 @@ async def list_episode_proposals(
     - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's
       live capture — both stage through the same queue and both are listed here.
     - Use before review_episode, to find the memory_id.
+    - Call list_review_conversations() first, then pass one of its conversation_ids here, to review a
+      batch conversation-by-conversation instead of as one long flat list — the recommended flow for a
+      large backlog from a single source (e.g. an offline consolidation run over many sessions).
 
     EXAMPLES OF USER INTENT:
     - 'What episodes are still queued for review?'
     - 'Show me the tier1 decisions waiting to be reviewed.'
+    - 'Show me what came out of that one conversation.'
 
     DISTINCTIONS:
     - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from
-      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates.
+      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates. Different
+      from list_review_conversations, which lists the conversations themselves with pending counts, not
+      the episodes inside one.
     """
     try:
-        items = list_episode_mirrors(tier=tier, approval_state=approval_state)
+        items = list_episode_mirrors(tier=tier, approval_state=approval_state, conversation_id=conversation_id)
         return format_episode_mirror_list(items)
     except Exception as e:
         logger.error(f"Error listing episode proposals: {e}")
