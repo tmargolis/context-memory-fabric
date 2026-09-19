@@ -20,7 +20,7 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server.corpus import ExtractionStatus, get_corpus_root
+from server.providers.wiki.corpus import ExtractionStatus, get_corpus_root
 from server.context import get_context
 from server.mcp import (
     app,
@@ -31,7 +31,7 @@ from server.mcp import (
     search_wiki as mcp_search_wiki,
 )
 from server.memory import close_graphiti, remember
-from server.wiki import WikiCorpusManager, format_search_results_for_mcp, search_corpus, search_wiki
+from server.providers.wiki.scanner import WikiCorpusManager, format_search_results_for_mcp, search_corpus, search_wiki
 
 
 class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):

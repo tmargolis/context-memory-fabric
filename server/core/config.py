@@ -1,6 +1,6 @@
 """Centralized configuration and capability discovery (Milestone 1).
 
-Existing modules (server.corpus.get_corpus_root, server.memory's Graphiti
+Existing modules (server.providers.wiki.corpus.get_corpus_root, server.memory's Graphiti
 setup, server.proposals) each read their own environment variables directly
 and remain the source of truth for their own validated values — this module
 does not replace that validation. What it adds is a single, cheap place to
@@ -108,7 +108,7 @@ class CMFConfig:
         """True if a local-file knowledge provider is configured at all.
 
         Does not validate the path exists/is readable — that check runs
-        lazily on first real access (server.corpus.get_corpus_root), exactly
+        lazily on first real access (server.providers.wiki.corpus.get_corpus_root), exactly
         as it did before Milestone 1. This property only answers "should
         server.mcp register search_wiki/propose_doc_update", which must be
         cheap and side-effect-free since it runs at every server startup.
@@ -198,7 +198,7 @@ def load_config() -> CMFConfig:
 
     Calls load_dotenv() itself rather than depending on some other module
     having already loaded .env as an import-time side effect (see
-    server.providers.knowledge_files.FileKnowledgeProvider.is_configured
+    server.providers.wiki.provider.FileKnowledgeProvider.is_configured
     for why that dependency is fragile).
     """
     load_dotenv()

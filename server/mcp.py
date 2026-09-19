@@ -61,7 +61,7 @@ from server.proposals import (
 )
 from server.review.actions import apply_verdicts, approve_episode, defer_episode, reject_episode
 from server.review.store import ReviewStore
-from server.wiki import invalidate_corpus_cache, search_wiki as query_wiki
+from server.providers.wiki.scanner import invalidate_corpus_cache, search_wiki as query_wiki
 
 logger = logging.getLogger(__name__)
 

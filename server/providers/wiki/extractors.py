@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from pypdf import PdfReader
 
-from server.corpus import CorpusAsset, ExtractionStatus
+from server.providers.wiki.corpus import CorpusAsset, ExtractionStatus
 
 logger = logging.getLogger(__name__)
 

@@ -20,7 +20,7 @@ import unittest
 
 from server.context import get_context
 from server.core.protocols import KnowledgeProvider, MemoryProvider
-from server.providers.knowledge_files import FileKnowledgeProvider
+from server.providers.wiki.provider import FileKnowledgeProvider
 from server.providers.memory_graphiti import GraphitiMemoryProvider
 from tests.fakes.fake_knowledge_provider import FakeDocument, FakeKnowledgeProvider
 from tests.fakes.fake_memory_provider import FakeMemoryProvider

@@ -283,7 +283,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
     something else happened to force a rescan)."""
 
     def test_invalidate_corpus_cache_clears_engine_and_assets(self):
-        from server.wiki import _GLOBAL_CORPUS_MANAGER, invalidate_corpus_cache
+        from server.providers.wiki.scanner import _GLOBAL_CORPUS_MANAGER, invalidate_corpus_cache
 
         _GLOBAL_CORPUS_MANAGER._engine = object()
         _GLOBAL_CORPUS_MANAGER._assets = [object()]

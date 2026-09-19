@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 from typing import Literal, Optional, overload
 
-from server.corpus import (
+from server.providers.wiki.corpus import (
     IGNORED_DIR_NAMES,
     CorpusAsset,
     ExtractionStatus,
@@ -22,7 +22,7 @@ from server.corpus import (
     guess_media_type,
     is_excluded_path,
 )
-from server.extractors import DEFAULT_REGISTRY, ExtractorRegistry
+from server.providers.wiki.extractors import DEFAULT_REGISTRY, ExtractorRegistry
 
 logger = logging.getLogger(__name__)
 

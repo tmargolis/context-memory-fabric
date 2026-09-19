@@ -13,8 +13,8 @@ import sys
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server.corpus import ExtractionStatus, MatchBasis, get_corpus_root
-from server.wiki import CorpusScanner, CorpusSearchEngine, scan_corpus
+from server.providers.wiki.corpus import ExtractionStatus, MatchBasis, get_corpus_root
+from server.providers.wiki.scanner import CorpusScanner, CorpusSearchEngine, scan_corpus
 
 
 def run_acceptance():

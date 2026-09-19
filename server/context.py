@@ -4,7 +4,7 @@ Orchestrates concurrent retrieval across durable knowledge (LLM_Wiki) and episod
 memory (Graphiti/FalkorDB), preserving distinct provenance, timestamps, and conflict awareness.
 
 Consumes server.core.protocols.KnowledgeProvider / MemoryProvider (Milestone 1;
-see docs/adr/0002-provider-boundaries.md) rather than importing server.wiki
+see docs/adr/0002-provider-boundaries.md) rather than importing server.providers.wiki.scanner
 and server.memory concretely, so a configured-but-unavailable knowledge
 provider degrades this section gracefully instead of raising — the one
 observable behavior change in this milestone, and only in a configuration
@@ -14,7 +14,7 @@ observable behavior change in this milestone, and only in a configuration
 from typing import Any, Optional
 
 from server.core.protocols import KnowledgeProvider, MemoryProvider
-from server.corpus import ExtractionStatus
+from server.providers.wiki.corpus import ExtractionStatus
 from server.providers import get_default_knowledge_provider, get_default_memory_provider
 
 # Default providers for the current single-deployment configuration. A

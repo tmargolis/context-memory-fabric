@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from server.context import get_context
-from server.corpus import CorpusAsset, ExtractionStatus
+from server.providers.wiki.corpus import CorpusAsset, ExtractionStatus
 from server.mcp import app, get_context as mcp_get_context, propose_doc_update as mcp_propose_doc_update, recall_mem as mcp_recall, remember as mcp_remember, search_wiki as mcp_search_wiki
 from server.memory import close_graphiti
 from server.proposals import (
@@ -34,7 +34,7 @@ from server.proposals import (
     list_proposals,
     validate_target_path,
 )
-from server.wiki import CorpusScanner, CorpusSearchEngine, search_corpus
+from server.providers.wiki.scanner import CorpusScanner, CorpusSearchEngine, search_corpus
 
 
 class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):

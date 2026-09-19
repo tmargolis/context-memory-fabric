@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 import uuid
 
-from server.corpus import (
+from server.providers.wiki.corpus import (
     IGNORED_DIR_NAMES,
     get_corpus_root,
     is_excluded_path,

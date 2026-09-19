@@ -23,14 +23,14 @@ from unittest.mock import patch
 
 from pypdf import PdfWriter
 
-from server.corpus import (
+from server.providers.wiki.corpus import (
     CorpusAsset,
     ExtractionStatus,
     MatchBasis,
     SearchResult,
     get_corpus_root,
 )
-from server.wiki import CorpusScanner, CorpusSearchEngine, scan_corpus, search_corpus
+from server.providers.wiki.scanner import CorpusScanner, CorpusSearchEngine, scan_corpus, search_corpus
 
 
 def create_minimal_pdf_with_text(text: str) -> bytes:
@@ -86,20 +86,20 @@ class TestCorpusPathValidation(unittest.TestCase):
     """Tests for LLM_WIKI_PATH configuration and validation."""
 
     def test_missing_env_variable(self):
-        with patch.dict(os.environ, {"LLM_WIKI_PATH": ""}), patch("server.corpus.load_dotenv"):
+        with patch.dict(os.environ, {"LLM_WIKI_PATH": ""}), patch("server.providers.wiki.corpus.load_dotenv"):
             with self.assertRaises(RuntimeError) as ctx:
                 get_corpus_root()
             self.assertIn("LLM_WIKI_PATH is not set", str(ctx.exception))
 
     def test_nonexistent_directory(self):
-        with patch.dict(os.environ, {"LLM_WIKI_PATH": "/path/to/nonexistent/directory/12345"}), patch("server.corpus.load_dotenv"):
+        with patch.dict(os.environ, {"LLM_WIKI_PATH": "/path/to/nonexistent/directory/12345"}), patch("server.providers.wiki.corpus.load_dotenv"):
             with self.assertRaises(RuntimeError) as ctx:
                 get_corpus_root()
             self.assertIn("does not exist", str(ctx.exception))
 
     def test_file_instead_of_directory(self):
         with tempfile.NamedTemporaryFile() as tmp_file:
-            with patch.dict(os.environ, {"LLM_WIKI_PATH": tmp_file.name}), patch("server.corpus.load_dotenv"):
+            with patch.dict(os.environ, {"LLM_WIKI_PATH": tmp_file.name}), patch("server.providers.wiki.corpus.load_dotenv"):
                 with self.assertRaises(RuntimeError) as ctx:
                     get_corpus_root()
                 self.assertIn("is not a directory", str(ctx.exception))
@@ -319,7 +319,7 @@ class TestSyntheticCorpus(unittest.TestCase):
 
     def test_extraction_result_strips_control_chars(self):
         """ExtractionResult.__post_init__ removes NUL / C0 controls (kept \t \n \r)."""
-        from server.extractors import ExtractionResult
+        from server.providers.wiki.extractors import ExtractionResult
 
         r = ExtractionResult(extracted_text="a\x00b\x07c\td\ne\rf\x1bg")
         self.assertEqual(r.extracted_text, "abc\td\ne\rfg")
