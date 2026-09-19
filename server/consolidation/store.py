@@ -285,6 +285,8 @@ class ConsolidationStore:
         policy_version: str,
         approval_state: str,
         supersedes: Optional[str],
+        conversation_id: Optional[str] = None,
+        harness: Optional[str] = None,
     ) -> None:
         """Write one windowed reasoning episode (MS3.5) as a derived_memories
         row and mark its job succeeded, in one transaction — same
@@ -364,6 +366,8 @@ class ConsolidationStore:
                 driving_question=episode.driving_question,
                 rationale=episode.rationale,
                 thread_key=episode.thread_key,
+                conversation_id=conversation_id,
+                harness=harness,
                 base_dir=self._episode_proposals_dir,
             )
         except OSError:

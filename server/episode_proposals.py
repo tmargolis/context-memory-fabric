@@ -105,12 +105,22 @@ def write_episode_mirror(
     driving_question: Optional[str] = None,
     rationale: Optional[str] = None,
     thread_key: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    harness: Optional[str] = None,
     base_dir: Optional[Path] = None,
 ) -> Path:
     """Write one staged episode's mirror file at its tier root. Called from
     ConsolidationStore.record_reasoning_episode() right after the real
     derived_memories row is written -- read-only projection, not a second
     write path.
+
+    `conversation_id`/`harness` (found 2026-09-19, "review by conversation")
+    let an agent group pending items by source conversation without a DB
+    join -- the caller already knows both (the windower groups by
+    conversation before a policy ever runs), so this is free to pass
+    through. Optional/backward compatible: a caller that omits them (or an
+    older mirror written before this field existed) just has no grouping
+    key, not a missing/broken file.
     """
     root = get_episode_proposals_dir(base_dir)
     tier = tier_for_reasoning_kind(reasoning_kind)
@@ -129,6 +139,8 @@ def write_episode_mirror(
         "rationale": rationale,
         "thread_key": thread_key,
         "evidence_event_ids": evidence_event_ids,
+        "conversation_id": conversation_id,
+        "harness": harness,
         "approval_state": approval_state,
         "written_at": datetime.now(timezone.utc).isoformat(),
         "_note": "Read-only projection of a derived_memories row. Review via "

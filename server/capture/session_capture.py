@@ -194,6 +194,8 @@ def _capture_episode_item(
         policy_version=POLICY_VERSION,
         approval_state=approval_state,
         supersedes=None,
+        conversation_id=event.source.conversation_id,
+        harness=event.source.harness,
     )
 
     return SessionItemResult(
@@ -204,7 +206,7 @@ def _capture_episode_item(
 
 
 def _capture_doc_item(
-    item: dict[str, Any], wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None
+    item: dict[str, Any], session: Any = None, wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None
 ) -> SessionItemResult:
     target_path = (item.get("target_path") or "").strip()
     proposed_content = item.get("proposed_content") or ""
@@ -217,12 +219,15 @@ def _capture_doc_item(
     if not rationale:
         return SessionItemResult("doc_proposal", False, "", error="'doc_rationale' is required for destination='doc_proposal'.")
 
+    client_info = _client_info_for(session)
     try:
         proposal = create_doc_proposal(
             target_path=target_path,
             proposed_content=proposed_content,
             rationale=rationale,
             source_context=item.get("evidence_text"),
+            source_conversation_id=identity.resolve_session_id(session) if session is not None else None,
+            source_harness=identity.resolve_harness(client_info) if session is not None else None,
             wiki_root=wiki_root,
             proposals_dir=proposals_dir,
         )
@@ -266,7 +271,7 @@ def capture_session(
                         item, project, source_description, session, request_id, consolidation_store, db_path=db_path
                     )
                 elif destination == "doc_proposal":
-                    result = _capture_doc_item(item, wiki_root=wiki_root, proposals_dir=proposals_dir)
+                    result = _capture_doc_item(item, session=session, wiki_root=wiki_root, proposals_dir=proposals_dir)
                 else:
                     result = SessionItemResult(
                         destination or "(missing)", False, "",
