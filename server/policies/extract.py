@@ -3,7 +3,7 @@ ReasoningEpisodePolicyV1's window, in one model call.
 
 A NEW policy, not a modification of ReasoningEpisodePolicyV1 (Todd,
 2026-09-19, docs/plan-active.md "Wiki→doc rename and doc-proposal
-extraction"): reasoning_episode_v1.py stays exactly as-is, so the 1,689+
+extraction"): reasoning_episode.py stays exactly as-is, so the 1,689+
 existing `reasoning-episode`-policy rows keep their identity untouched.
 This subclass gets its own policy identity (`name="extract"`,
 `version="1.0"`) -- a distinct `policy_name` in derived_memories, not a
@@ -25,14 +25,16 @@ ReasoningEpisodePolicyV1's own separation of "extract" from "write".
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
+import re
 from typing import Optional
 
 from server.core.models import DatePrecision, SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
-from server.policies.reasoning_episode_v1 import (
+from server.policies.reasoning_episode import (
     GenerateFn,
     ReasoningEpisodePolicyV1,
     _MAX_TURN_CHARS,
@@ -43,7 +45,25 @@ from server.policies.reasoning_episode_v1 import (
 
 logger = logging.getLogger(__name__)
 
-EXTRACT_POLICY_VERSION = "1.0"
+# 1.1 (2026-09-19, "review by conversation" follow-up): inherits
+# ReasoningEpisodePolicyV1's 0.4 prompt (driving_question/rationale now
+# described and required), plus this policy's own doc-duplicate-avoidance
+# context (open_doc_pages) so a second window covering the same durable
+# topic reuses the earlier target_path instead of inventing a new page.
+#
+# 1.2 (same day): 1.1 measured 0/25 rows with driving_question/rationale
+# populated -- see REASONING_POLICY_VERSION 0.5's note. _EXTRACT_SCHEMA's
+# copy of the episode shape gets the same non-nullable, required fix.
+#
+# 1.3 (2026-09-19, doc-path IA follow-up): 1.2's first two applied doc
+# proposals landed at LLM_WIKI_PATH/projects/falkordb/ -- outside the real
+# WIKI/projects/<Project>/ content tree entirely, with no frontmatter and no
+# attempt to reuse the existing "Context-Memory-Fabric" folder. Added
+# existing_project_folders context (best-effort routing hint) plus
+# deterministic _normalize_target_path/_ensure_frontmatter backstops in
+# _to_doc_candidate that guarantee the WIKI/projects/ prefix and a
+# frontmatter block regardless of model compliance.
+EXTRACT_POLICY_VERSION = "1.3"
 
 _RESPONSE_FORMAT_MARKER = "Respond with JSON only:"
 assert _RESPONSE_FORMAT_MARKER in _SYSTEM, (
@@ -63,13 +83,37 @@ status update, or anything that belongs in the episodes list instead. Most windo
 ZERO doc proposals -- only propose one when the window's content is genuinely reference-shaped,
 not just because something was decided or done.
 
+AVOID DUPLICATE PAGES. If this window continues a topic already proposed earlier in this same
+conversation (see ALREADY PROPOSED DOCS below), do NOT invent a new, differently-named page for
+it -- reuse that EXACT "target_path" and write "proposed_content" as the complete page including
+both the earlier material and this window's addition. Only propose a new target_path when the
+content is genuinely a different topic.
+
+USE THE EXISTING FOLDER STRUCTURE. Every durable page lives under "WIKI/projects/<Project-Name>/"
+(Title-Case-Hyphenated project folder, e.g. "WIKI/projects/Context-Memory-Fabric/"). If EXISTING
+PROJECT FOLDERS is listed below, check whether this content's subject belongs under one of those
+folders (e.g. content about FalkorDB, a component of Context Memory Fabric's own infrastructure,
+belongs under the existing "Context-Memory-Fabric" folder, not a new "FalkorDB" one) before
+inventing a new folder name. Only propose a new project folder when the topic is genuinely
+unrelated to every existing one.
+
 For each doc proposal, return:
-- "target_path": relative path within the durable knowledge corpus this content belongs at
-  (e.g. "projects/some-project/some-topic.md") -- infer the most relevant existing page from
-  context if one plausibly exists, else propose a new page path.
+- "target_path": path within the durable knowledge corpus, ALWAYS starting with
+  "WIKI/projects/<Project-Name>/" followed by a Title-Case-Hyphenated filename
+  (e.g. "WIKI/projects/Context-Memory-Fabric/FalkorDB-Data-Persistence.md").
 - "proposed_content": the COMPLETE desired file content in Markdown, not a diff and not just
   the new material -- if this augments an existing page, write the whole page as you believe
-  it should read, not only what changed.
+  it should read, not only what changed. MUST begin with a YAML frontmatter block exactly like:
+  ---
+  title: <Title Case With Spaces>
+  date: <today's date, YYYY-MM-DD>
+  status: active
+  source: <the harness this came from, e.g. claude_code>
+  tags:
+    - <matching project folder name>
+    - <2-4 more relevant topic tags>
+  ---
+  followed by the page body starting with a "# <Title>" heading.
 - "rationale": why this belongs in durable knowledge rather than an episode.
 - "statement": a one-sentence summary of what the proposal covers.
 - "turn_numbers": the turns this proposal rests on, same convention as episodes.
@@ -80,14 +124,14 @@ _EXTRACT_SYSTEM = (
     + "\n"
     + _DOC_INSTRUCTIONS
     + '\nRespond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...,\n'
-    '"driving_question": ... | null, "rationale": ... | null, "alternatives": ... | null,\n'
+    '"driving_question": ..., "rationale": ..., "alternatives": ... | null,\n'
     '"status": "open" | "resolved" | null, "thread_key": ... | null, "thread_title": ... | null,\n'
     '"confidence": 0.0, "turn_numbers": [1], "substance_in_assistant_turns": false } ],\n'
     '"doc_proposals": [ { "target_path": ..., "proposed_content": ..., "rationale": ...,\n'
     '"statement": ..., "turn_numbers": [1] } ] }'
 )
 
-# Mirrors reasoning_episode_v1._EPISODES_SCHEMA's episode item shape exactly
+# Mirrors reasoning_episode._EPISODES_SCHEMA's episode item shape exactly
 # (kept as a literal copy rather than importing and mutating it -- the two
 # policies' schemas are allowed to drift independently once either prompt
 # changes, and a shared mutable dict invited exactly that kind of accidental
@@ -105,8 +149,12 @@ _EXTRACT_SCHEMA = {
                 "properties": {
                     "reasoning_kind": {"type": "string"},
                     "statement": {"type": "string"},
-                    "driving_question": {"type": ["string", "null"]},
-                    "rationale": {"type": ["string", "null"]},
+                    # Non-nullable + required: mirrors reasoning_episode's
+                    # _EPISODES_SCHEMA fix (2026-09-19) -- constrained local
+                    # decoding reliably returns null for a merely-described,
+                    # nullable field regardless of prompt wording.
+                    "driving_question": {"type": "string"},
+                    "rationale": {"type": "string"},
                     "alternatives": {"type": ["string", "null"]},
                     "status": {"type": ["string", "null"]},
                     "thread_key": {"type": "string"},
@@ -115,7 +163,10 @@ _EXTRACT_SCHEMA = {
                     "turn_numbers": {"type": "array", "items": {"type": "integer"}},
                     "substance_in_assistant_turns": {"type": "boolean"},
                 },
-                "required": ["reasoning_kind", "statement", "confidence", "turn_numbers", "thread_key"],
+                "required": [
+                    "reasoning_kind", "statement", "driving_question", "rationale",
+                    "confidence", "turn_numbers", "thread_key",
+                ],
             },
         },
         "doc_proposals": {
@@ -139,7 +190,7 @@ _EXTRACT_SCHEMA = {
 
 def _parse_reply(raw: str) -> dict:
     """Tolerant parse of the model's JSON reply -- same salvage strategy as
-    reasoning_episode_v1._parse_episodes, but returns the whole decoded
+    reasoning_episode._parse_episodes, but returns the whole decoded
     object (not just one key) since this policy reads two top-level keys.
     """
     raw = (raw or "").strip()
@@ -161,6 +212,59 @@ def _parse_reply(raw: str) -> dict:
             logger.warning("ExtractPolicyV1: unparseable model reply after salvage")
             return {}
     return data if isinstance(data, dict) else {}
+
+
+_WIKI_PROJECTS_PREFIX = ("wiki", "projects")
+
+
+def _normalize_target_path(raw: str) -> str:
+    """Deterministically force a doc proposal's target_path under
+    WIKI/projects/, regardless of prompt compliance (2026-09-19, doc-path IA
+    follow-up -- the model invented a bare "projects/falkordb/..." path
+    outside WIKI/ entirely on its first try, same lesson as
+    reasoning_episode.py's driving_question/rationale fix: a prompt-only ask
+    is not enough to trust, so the deterministic backstop lives in code, not
+    just in the instructions above).
+
+    Strips any leading "wiki"/"projects" path segments the model already
+    included (in either order, any case) and rebuilds the canonical prefix,
+    so "projects/x/y.md", "WIKI/x/y.md", and "WIKI/projects/x/y.md" all
+    normalize to the same "WIKI/projects/x/y.md".
+    """
+    parts = [p for p in raw.strip().strip("/").split("/") if p]
+    while parts and parts[0].lower() in _WIKI_PROJECTS_PREFIX:
+        parts.pop(0)
+    if not parts:
+        parts = ["untitled.md"]
+    return "WIKI/projects/" + "/".join(parts)
+
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
+
+
+def _ensure_frontmatter(content: str, target_path: str, harness: str) -> str:
+    """Guarantee a YAML frontmatter block, matching the vault's existing
+    convention (see e.g. WIKI/projects/Context-Memory-Fabric/Context-Layers-
+    as-the-Next-Frontier.md), regardless of whether the model followed the
+    prompt's formatting instructions -- same deterministic-backstop
+    reasoning as _normalize_target_path above.
+
+    A no-op if `content` already opens with a `---`-delimited block --
+    trusts the model's own frontmatter (title wording, tags) rather than
+    duplicating or overwriting it.
+    """
+    if _FRONTMATTER_RE.match(content.lstrip("\n")):
+        return content
+
+    stem = target_path.rsplit("/", 1)[-1].removesuffix(".md")
+    title = stem.replace("-", " ")
+    project_folder = target_path.split("/")[2] if target_path.count("/") >= 2 else "misc"
+    date_str = datetime.now(timezone.utc).date().isoformat()
+    frontmatter = (
+        f"---\ntitle: {title}\ndate: {date_str}\nstatus: active\nsource: {harness}\n"
+        f"tags:\n  - {project_folder}\n---\n\n"
+    )
+    return frontmatter + content.lstrip("\n")
 
 
 class ExtractPolicyV1(ReasoningEpisodePolicyV1):
@@ -244,6 +348,20 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             for t in threads[:20]:
                 d = t.to_context_dict() if hasattr(t, "to_context_dict") else dict(t)
                 lines.append(json.dumps(d, default=str))
+
+        doc_pages = context.open_doc_pages or []
+        if doc_pages:
+            lines.append("")
+            lines.append("--- ALREADY PROPOSED DOCS THIS CONVERSATION (reuse target_path if this window continues one) ---")
+            for p in doc_pages[:20]:
+                snippet = (p.get("proposed_content") or "")[:1500]
+                lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement"), "current_content": snippet}, default=str))
+
+        folders = context.existing_project_folders or []
+        if folders:
+            lines.append("")
+            lines.append("--- EXISTING PROJECT FOLDERS (route a doc proposal into one of these when the topic matches) ---")
+            lines.append(json.dumps(folders))
         return "\n".join(lines)
 
     def _to_doc_candidate(self, spec: dict, ordered: list[SourceEvent]) -> Optional[ReasoningEpisode]:
@@ -266,6 +384,10 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
 
         cited = [e for e in ordered if e.event_id in evidence_ids] or ordered
         first_user = next((e for e in cited if e.actor_type == "user"), cited[0])
+
+        harness = ordered[0].source.harness if ordered else "unknown"
+        target_path = _normalize_target_path(target_path)
+        proposed_content = _ensure_frontmatter(proposed_content, target_path=target_path, harness=harness)
 
         return ReasoningEpisode(
             category=ExtractionCategory.DURABLE_CANDIDATE,

@@ -20,9 +20,9 @@ from server.consolidation.threads import ThreadIndex
 from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 from server.journal.identity import compute_content_hash
 from server.journal.store import SqliteEventStore
-from server.policies.extract_v1 import EXTRACT_POLICY_VERSION, ExtractPolicyV1
+from server.policies.extract import EXTRACT_POLICY_VERSION, ExtractPolicyV1, _ensure_frontmatter, _normalize_target_path
 from server.policies.protocols import ExtractionCategory, PolicyContext
-from server.policies.reasoning_episode_v1 import ReasoningEpisodePolicyV1
+from server.policies.reasoning_episode import ReasoningEpisodePolicyV1
 from server.proposals import list_proposals
 
 BASE = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
@@ -156,7 +156,7 @@ class TestExtractPolicyV1Unit(unittest.TestCase):
         self.assertEqual(len(out), 1)
         candidate = out[0]
         self.assertEqual(candidate.category, ExtractionCategory.DURABLE_CANDIDATE)
-        self.assertEqual(candidate.target_path, "projects/cmf/extract-policy.md")
+        self.assertEqual(candidate.target_path, "WIKI/projects/cmf/extract-policy.md")
         self.assertIn("ExtractPolicyV1", candidate.proposed_content)
         self.assertTrue(candidate.rationale)
         self.assertEqual(self.policy.doc_proposals_total, 1)
@@ -173,7 +173,7 @@ class TestExtractPolicyV1Unit(unittest.TestCase):
         out = self.policy.evaluate_window(self._window("MALFORMED-DOC-MARKER"), PolicyContext())
         # the empty-fields spec is dropped; the well-formed one survives
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0].target_path, "projects/cmf/valid.md")
+        self.assertEqual(out[0].target_path, "WIKI/projects/cmf/valid.md")
 
     def test_prompt_includes_doc_instructions(self):
         self.policy.evaluate_window(self._window("EPISODE-ONLY-MARKER"), PolicyContext())
@@ -225,7 +225,7 @@ class TestExtractPolicyV1Pipeline(unittest.TestCase):
 
         proposals = list_proposals(proposals_dir=self.proposals_dir)
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(proposals[0].target_path, "projects/cmf/extract-policy.md")
+        self.assertEqual(proposals[0].target_path, "WIKI/projects/cmf/extract-policy.md")
         self.assertEqual(proposals[0].operation, "create")
 
         with ConsolidationStore(self.cons_path) as c:
@@ -277,6 +277,51 @@ class TestExtractPolicyV1Pipeline(unittest.TestCase):
         # "episodes" -- doc_proposals_created must stay 0 regardless.
         self.assertEqual(stats["doc_proposals_created"], 0)
         self.assertEqual(list_proposals(proposals_dir=self.proposals_dir), [])
+
+
+class TestTargetPathNormalization(unittest.TestCase):
+    """_normalize_target_path is the deterministic backstop for a model that
+    ignores the prompt's WIKI/projects/ instruction -- 2026-09-19, the doc-
+    path IA follow-up (the first two real doc proposals landed at
+    LLM_WIKI_PATH/projects/falkordb/, outside WIKI/ entirely)."""
+
+    def test_bare_path_gets_full_prefix(self):
+        self.assertEqual(_normalize_target_path("projects/falkordb/setup.md"), "WIKI/projects/falkordb/setup.md")
+
+    def test_missing_projects_segment_gets_full_prefix(self):
+        self.assertEqual(_normalize_target_path("WIKI/falkordb/setup.md"), "WIKI/projects/falkordb/setup.md")
+
+    def test_already_correct_path_is_unchanged(self):
+        self.assertEqual(
+            _normalize_target_path("WIKI/projects/Context-Memory-Fabric/Setup.md"),
+            "WIKI/projects/Context-Memory-Fabric/Setup.md",
+        )
+
+    def test_no_folder_at_all_still_lands_under_wiki_projects(self):
+        self.assertEqual(_normalize_target_path("setup.md"), "WIKI/projects/setup.md")
+
+    def test_case_insensitive_prefix_stripping(self):
+        self.assertEqual(_normalize_target_path("Wiki/Projects/x/y.md"), "WIKI/projects/x/y.md")
+
+
+class TestFrontmatterBackstop(unittest.TestCase):
+    """_ensure_frontmatter guarantees every applied doc has the vault's
+    expected YAML block, regardless of model compliance."""
+
+    def test_missing_frontmatter_is_injected(self):
+        out = _ensure_frontmatter(
+            "# My Page\n\nBody text.", target_path="WIKI/projects/Context-Memory-Fabric/My-Page.md", harness="claude_code"
+        )
+        self.assertTrue(out.startswith("---\n"))
+        self.assertIn("title: My Page", out)
+        self.assertIn("source: claude_code", out)
+        self.assertIn("- Context-Memory-Fabric", out)
+        self.assertIn("# My Page\n\nBody text.", out)
+
+    def test_existing_frontmatter_is_left_alone(self):
+        content = "---\ntitle: Custom\ndate: 2020-01-01\n---\n\n# Custom\n"
+        out = _ensure_frontmatter(content, target_path="WIKI/projects/x/y.md", harness="claude_code")
+        self.assertEqual(out, content)
 
 
 if __name__ == "__main__":

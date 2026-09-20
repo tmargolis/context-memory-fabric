@@ -26,7 +26,7 @@ from server.consolidation.store import ConsolidationStore
 from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 from server.journal.identity import compute_content_hash
 from server.journal.store import SqliteEventStore
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
 from server.review import actions, projects
 from server.review.explain import explain, parse_reason, resolve_evidence

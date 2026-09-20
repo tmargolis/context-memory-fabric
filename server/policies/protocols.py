@@ -64,6 +64,26 @@ class PolicyContext:
     # in the same thread (ADR 0004 decision 3, carried forward).
     topical_window: Optional[list[SourceEvent]] = None
     open_threads: Optional[list[Any]] = None
+    # "review by conversation" follow-up (2026-09-19) -- ExtractPolicyV1-only.
+    # Doc proposals already created earlier IN THIS SAME RUN, for the same
+    # conversation: [{"target_path": ..., "statement": ..., "rationale": ...}].
+    # Each window is one independent model call, so without this a second
+    # window covering the same topic has no way to know a proposal already
+    # exists and reliably invents a second, differently-named page for the
+    # same content (found reviewing e2ea026a's falkordb-persistence pair).
+    # Scoped to this run, not the whole corpus -- a real fix would also check
+    # already-applied/pending pages project-wide, left for later.
+    open_doc_pages: Optional[list[dict[str, str]]] = None
+    # ExtractPolicyV1-only (2026-09-19, doc-path IA follow-up). The existing
+    # top-level folder names under WIKI/projects/ in the real wiki, so the
+    # model can route a proposal into an existing project (e.g. FalkorDB
+    # content belongs under the existing "Context-Memory-Fabric" folder, not
+    # a new "falkordb" one it would otherwise invent) instead of guessing a
+    # path with no visibility into the corpus's actual structure. Best-effort
+    # signal only -- see _normalize_target_path in extract.py for the
+    # deterministic backstop that guarantees the WIKI/projects/ prefix
+    # regardless of whether the model uses this list.
+    existing_project_folders: Optional[list[str]] = None
 
 
 @dataclass(frozen=True)
@@ -128,7 +148,7 @@ class ReasoningEpisode:
       property, never a fifth category. `evidence_event_ids` is the subset
       of the window's events this episode actually rests on.
     - `category=DURABLE_CANDIDATE` (added for `ExtractPolicyV1`,
-      server/policies/extract_v1.py): `target_path`/`proposed_content`
+      server/policies/extract.py): `target_path`/`proposed_content`
       carry a proposed doc's relative path and full file content;
       `rationale` carries why it belongs in durable knowledge rather than
       an episode; `statement` is still populated, as a one-line summary.

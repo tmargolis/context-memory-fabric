@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from server.consolidation.store import ConsolidationStore
-from server.consolidation.threads import ThreadIndex
+from server.consolidation.threads import ThreadIndex, normalize_key
 from server.consolidation.triage import assess_window
 from server.consolidation.windowing import Windower, default_windower, group_by_conversation
 from server.core.models import SourceEvent
@@ -57,7 +57,9 @@ from server.policies.protocols import (
     ReasoningEpisode,
     WindowedExtractionPolicy,
 )
-from server.proposals import create_doc_proposal
+from server.proposals import create_doc_proposal, review_proposal
+from server.review.actions import reject_episode
+from server.review.store import ReviewStore
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +233,8 @@ def run_reasoning_consolidation(
     max_windows: Optional[int] = None,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
+    review_store: Optional[ReviewStore] = None,
+    merge_threads: bool = True,
 ) -> dict[str, Any]:
     """Segment matching journal events into topical windows and derive
     reasoning episodes (and, for a policy that also emits them --
@@ -257,12 +261,39 @@ def run_reasoning_consolidation(
     in server.policies.protocols for the two shapes evaluate_window() can
     return). ReasoningEpisodePolicyV1 never emits that category, so these
     params are inert no-ops for it.
+
+    `merge_threads` (default True, "review by conversation" follow-up,
+    2026-09-19): after all of a conversation's windows are processed, tier-1
+    episodes sharing a normalized `thread_key` are collapsed into one
+    consolidated episode (see `_merge_tier1_by_thread`) so the review queue
+    surfaces one item per thread rather than one per window's restatement of
+    it. The originals are rejected (reviewer="pipeline-thread-merge") via the
+    same `reject_episode` chokepoint a human reviewer uses, not a side door.
+    Similarly, a DURABLE_CANDIDATE whose `target_path` repeats one already
+    proposed earlier in the same conversation's run supersedes the earlier
+    pending proposal instead of coexisting with it as a near-duplicate page.
     """
     windower = windower or default_windower()
     thread_index = thread_index or ThreadIndex(consolidation_store.db_path)
+    review_store = review_store or ReviewStore(consolidation_store.db_path)
 
     events = journal_store.query(harness=harness, conversation_id=conversation_id, since=since)
     by_conv = group_by_conversation(events)
+
+    # Best-effort, computed once per run (not per-window/conversation --
+    # stable enough, and this is a hint not a hard constraint). Missing/
+    # misconfigured wiki root must not fail a run that only needs it for
+    # ExtractPolicyV1's doc-proposal routing -- ReasoningEpisodePolicyV1
+    # never reads this field, and a run with no doc proposals at all is
+    # unaffected either way.
+    existing_project_folders: list[str] = []
+    try:
+        from server.providers.wiki.corpus import get_corpus_root
+        projects_dir = (wiki_root if wiki_root is not None else get_corpus_root()) / "WIKI" / "projects"
+        if projects_dir.is_dir():
+            existing_project_folders = sorted(p.name for p in projects_dir.iterdir() if p.is_dir())
+    except Exception:  # noqa: BLE001 -- see comment above; this is a hint, not a requirement
+        logger.debug("Could not enumerate existing WIKI/projects/ folders for doc-routing context", exc_info=True)
 
     stats: dict[str, Any] = {
         "conversations_seen": len(by_conv),
@@ -274,6 +305,9 @@ def run_reasoning_consolidation(
         "episodes_created": 0,
         "doc_proposals_created": 0,
         "doc_proposals_failed": 0,
+        "doc_proposals_superseded_in_run": 0,
+        "threads_merged": 0,
+        "episodes_merged_away": 0,
         "by_reasoning_kind": defaultdict(int),
         "by_approval_state": defaultdict(int),
         "quota_exhausted": False,
@@ -282,6 +316,15 @@ def run_reasoning_consolidation(
 
     for conv_key in sorted(by_conv):
         conv_events = by_conv[conv_key]
+        # Reset per-conversation: doc pages proposed so far this run (for
+        # dedup/context) and tier-1 episodes written so far this run (for the
+        # end-of-conversation thread merge). Neither persists across
+        # conversations -- a merge or supersession only ever happens within
+        # one conversation's own output.
+        doc_pages_this_conv: dict[str, dict[str, str]] = {}
+        tier1_this_conv: list[tuple[str, ReasoningEpisode]] = []
+        harness_slug_for_conv: Optional[str] = None
+
         for window in windower.windows(conv_events):
             if not window.events:
                 continue
@@ -314,6 +357,8 @@ def run_reasoning_consolidation(
             context = PolicyContext(
                 topical_window=list(window.events),
                 open_threads=thread_index.open_threads(),
+                open_doc_pages=list(doc_pages_this_conv.values()),
+                existing_project_folders=existing_project_folders,
                 conversation_title=window.events[0].metadata.get("conversation_title"),
             )
             consolidation_store.mark_running(job_id, primary, policy.name, policy.version)
@@ -335,11 +380,13 @@ def run_reasoning_consolidation(
                 continue
 
             harness_slug = window.events[0].source.harness
+            harness_slug_for_conv = harness_slug_for_conv or harness_slug
             for idx, episode in enumerate(episodes):
                 if episode.category == ExtractionCategory.DURABLE_CANDIDATE:
+                    target_path = episode.target_path or ""
                     try:
-                        create_doc_proposal(
-                            target_path=episode.target_path or "",
+                        proposal = create_doc_proposal(
+                            target_path=target_path,
                             proposed_content=episode.proposed_content or "",
                             rationale=episode.rationale or "",
                             source_context=episode.statement,
@@ -349,6 +396,34 @@ def run_reasoning_consolidation(
                             proposals_dir=proposals_dir,
                         )
                         stats["doc_proposals_created"] += 1
+
+                        # Same target_path already proposed earlier THIS RUN
+                        # (the model was told about it via open_doc_pages but
+                        # invented a fresh page anyway, or ignored the hint) --
+                        # supersede the earlier one rather than leave two
+                        # pending proposals for the same page competing for
+                        # review. The new one already carries the fuller,
+                        # more recent content.
+                        prior_here = doc_pages_this_conv.get(proposal.target_path)
+                        if prior_here is not None and prior_here["proposal_id"] != proposal.proposal_id:
+                            try:
+                                review_proposal(
+                                    prior_here["proposal_id"],
+                                    verdict="rejected",
+                                    reviewer="pipeline-doc-merge",
+                                    notes=f"superseded within this run by {proposal.proposal_id}",
+                                    proposals_dir=proposals_dir,
+                                )
+                                stats["doc_proposals_superseded_in_run"] += 1
+                            except ValueError as exc:
+                                logger.warning("Could not supersede prior doc proposal %s: %s", prior_here["proposal_id"], exc)
+
+                        doc_pages_this_conv[proposal.target_path] = {
+                            "proposal_id": proposal.proposal_id,
+                            "target_path": proposal.target_path,
+                            "statement": episode.statement,
+                            "proposed_content": proposal.proposed_content,
+                        }
                     except (ValueError, RuntimeError) as exc:
                         # A malformed target_path or an unconfigured knowledge
                         # provider must not lose the window's episodes or abort
@@ -389,8 +464,137 @@ def run_reasoning_consolidation(
                         status=episode.status,
                     )
 
+                if approval == "queued_for_review" and episode.thread_key:
+                    tier1_this_conv.append((memory_id, episode))
+
+        if merge_threads and len(tier1_this_conv) > 1:
+            merge_stats = _merge_tier1_by_thread(
+                consolidation_store=consolidation_store,
+                review_store=review_store,
+                conv_key=conv_key,
+                harness=harness_slug_for_conv or "",
+                policy_name=policy.name,
+                policy_version=policy.version,
+                episodes=tier1_this_conv,
+            )
+            stats["threads_merged"] += merge_stats["threads_merged"]
+            stats["episodes_merged_away"] += merge_stats["episodes_merged_away"]
+
     _finalize(stats)
     return stats
+
+
+def _merge_tier1_by_thread(
+    consolidation_store: ConsolidationStore,
+    review_store: ReviewStore,
+    conv_key: str,
+    harness: str,
+    policy_name: str,
+    policy_version: str,
+    episodes: list[tuple[str, ReasoningEpisode]],
+) -> dict[str, int]:
+    """Collapse this conversation's tier-1 episodes into one per thread.
+
+    "review by conversation" follow-up (2026-09-19): reviewing e2ea026a
+    surfaced 3 separate `plan`/`decision` episodes in the
+    `cmf-graph-rebuild-monitoring` thread that were really one restated
+    plan, and a reviewer wants to approve/reject a thread's worth of
+    decisions once, not once per window's restatement. This does NOT
+    replace `server.review.actions`' deliberate choice not to build
+    `approve_thread`/`reject_thread` (most threads are singletons corpus-
+    wide, so a review-time batch action is a solved problem not worth a new
+    verb) -- it runs upstream, at extraction time, on a group that is
+    already known to be non-trivial (>1 episode), and produces one *episode*
+    a reviewer then approves or rejects normally.
+
+    A group of exactly one is left alone (already the common case). A group
+    of >1 is merged into a single new episode: statement becomes a numbered
+    list of the originals (nothing lost, just consolidated), evidence is the
+    ordered union, confidence is the minimum across the group (conservative
+    -- a merged claim is only as strong as its weakest part), and
+    driving_question/rationale/alternatives are the union of whatever
+    distinct non-null values the group carries. `reasoning_kind` picks the
+    most review-relevant kind present via a fixed priority order.
+    """
+    by_thread: dict[str, list[tuple[str, ReasoningEpisode]]] = defaultdict(list)
+    for memory_id, episode in episodes:
+        by_thread[normalize_key(episode.thread_key or "")].append((memory_id, episode))
+
+    threads_merged = 0
+    episodes_merged_away = 0
+    kind_priority = [
+        "decision", "plan", "rejected_alternative", "retrospective",
+        "finding", "experiment", "hypothesis", "investigation",
+    ]
+
+    for norm_key, group in by_thread.items():
+        if len(group) < 2:
+            continue
+
+        merge_job_id = f"job:reason:threadmerge:{conv_key}:{norm_key}::{policy_name}@{policy_version}"
+        if consolidation_store.get_job(merge_job_id) is not None:
+            continue  # already merged on a prior run of this exact policy version
+
+        group.sort(key=lambda pair: pair[1].event_date.isoformat() if pair[1].event_date else "")
+        kinds_present = {ep.reasoning_kind for _, ep in group}
+        merged_kind = next((k for k in kind_priority if k in kinds_present), group[0][1].reasoning_kind)
+
+        statement = "; ".join(f"({i}) {ep.statement}" for i, (_, ep) in enumerate(group, start=1))
+        evidence: list[str] = []
+        for _, ep in group:
+            for eid in ep.evidence_event_ids:
+                if eid not in evidence:
+                    evidence.append(eid)
+
+        def _union_field(name: str) -> Optional[str]:
+            seen, out = set(), []
+            for _, ep in group:
+                val = getattr(ep, name)
+                if val and val not in seen:
+                    seen.add(val)
+                    out.append(val)
+            return "; ".join(out) if out else None
+
+        merged_episode = ReasoningEpisode(
+            category=ExtractionCategory.EPISODIC,
+            reasoning_kind=merged_kind,
+            statement=statement,
+            confidence=min(ep.confidence for _, ep in group),
+            evidence_event_ids=evidence,
+            driving_question=_union_field("driving_question"),
+            rationale=_union_field("rationale"),
+            alternatives=_union_field("alternatives"),
+            status=group[-1][1].status,
+            thread_key=group[0][1].thread_key,
+            event_date=group[0][1].event_date,
+            date_precision=group[0][1].date_precision,
+        )
+
+        merged_memory_id = f"reason:threadmerge:{conv_key}:{norm_key}::{policy_name}@{policy_version}"
+        consolidation_store.mark_running(merge_job_id, evidence[0] if evidence else "", policy_name, policy_version)
+        consolidation_store.record_reasoning_episode(
+            job_id=merge_job_id,
+            memory_id=merged_memory_id,
+            episode=merged_episode,
+            policy_name=policy_name,
+            policy_version=policy_version,
+            approval_state="queued_for_review",
+            supersedes=None,
+            conversation_id=conv_key,
+            harness=harness,
+        )
+
+        for memory_id, _ in group:
+            reject_episode(
+                review_store,
+                memory_id,
+                reviewer="pipeline-thread-merge",
+                reason=f"merged into {merged_memory_id}",
+            )
+        threads_merged += 1
+        episodes_merged_away += len(group)
+
+    return {"threads_merged": threads_merged, "episodes_merged_away": episodes_merged_away}
 
 
 def _finalize(stats: dict[str, Any]) -> None:
