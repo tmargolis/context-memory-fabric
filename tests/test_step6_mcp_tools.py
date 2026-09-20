@@ -64,6 +64,8 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "list_episode_proposals", "get_episode_proposal", "review_episode", "bulk_review_episodes",
             # Conversation-grouped review (found 2026-09-19)
             "list_review_conversations",
+            # Promotion for the queued_for_review -> approved review path (found 2026-09-20)
+            "promote_approved_episodes",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

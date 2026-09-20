@@ -59,7 +59,7 @@ from server.proposals import (
     list_proposals,
     review_proposal,
 )
-from server.review.actions import apply_verdicts, approve_episode, defer_episode, reject_episode
+from server.review.actions import apply_verdicts, approve_episode, defer_episode, promote_approved, reject_episode
 from server.review.conversations import format_review_conversations
 from server.review.conversations import list_review_conversations as get_review_conversations
 from server.review.store import ReviewStore
@@ -1157,6 +1157,77 @@ async def promote_auto_accepted_memories(
         consolidation_store.close()
         journal_store.close()
         promotion_store.close()
+
+
+@app.tool(
+    title="Promote Approved Episodes",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def promote_approved_episodes(
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="If true (default), previews which review-approved episodes would be promoted without writing to Graphiti."
+        ),
+    ] = True,
+    limit: Annotated[
+        Optional[int],
+        Field(
+            description="Maximum number of episodes to promote in this call (omit for no cap). A full run is a real, minutes-long operation — start with a small limit."
+        ),
+    ] = None,
+) -> str:
+    """Promote episodes with a recorded 'approved' review verdict into episodic memory (Graphiti/FalkorDB).
+
+    WHEN TO USE:
+    - Use to close the gap between `review_episode`/`bulk_review_episodes` (which only record a verdict in
+      the `reviews` table, per their own CRITICAL SAFETY CONTRACT) and actual episodic memory. This is the
+      counterpart to `promote_auto_accepted_memories` for the queued_for_review → approved review path — the
+      one that tool's docstring points to as "the review CLI's own promotion step", now available here too.
+    - Only episodes with `review_state='approved'` and not already promoted are eligible. Rejected, deferred,
+      and still-queued episodes are untouched. An episode whose `derived_memories.approval_state` has since
+      moved to rejected/superseded is also excluded, even if an old 'approved' verdict is still on record —
+      this is what stopped a real production bug where a corrected memory's stale approval silently
+      re-created the pre-correction content in the graph.
+
+    DISTINCTIONS:
+    - Different from `promote_auto_accepted_memories`, which only promotes the separate `auto_accepted`
+      consolidation lane (never touches anything that went through human review).
+    - Different from `remember`, which writes one explicit statement directly with no idempotency ledger,
+      episode-naming scheme, or rate-limit handling.
+    - Idempotent: an episode already promoted in a prior call (or via `python -m server.review.cli promote`)
+      is skipped, never promoted twice — both share the same `PromotionStore` ledger.
+
+    SIDE EFFECTS:
+    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter, or none at all
+      when CMF_LLM_PROVIDER=local) for each eligible episode and records the outcome in the same ledger the
+      CLI's `promote` command uses. A rate-limiter exhaustion stops the run early without losing or
+      double-processing any episode — safe to re-run later.
+    """
+    consolidation_store = ConsolidationStore()
+    journal_store = SqliteEventStore()
+    promotion_store = PromotionStore()
+    with ReviewStore() as review_store:
+        try:
+            result = await promote_approved(
+                consolidation_store=consolidation_store,
+                journal_store=journal_store,
+                promotion_store=promotion_store,
+                review_store=review_store,
+                remember_fn=remember_memory,
+                dry_run=dry_run,
+                limit=limit,
+            )
+            return format_promotion_report(result)
+        finally:
+            consolidation_store.close()
+            journal_store.close()
+            promotion_store.close()
 
 
 @app.tool(

@@ -824,6 +824,56 @@
     },
     "title": "List Conversations Pending Review"
   },
+  "promote_approved_episodes": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Promote episodes with a recorded 'approved' review verdict into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between `review_episode`/`bulk_review_episodes` (which only record a verdict in\n      the `reviews` table, per their own CRITICAL SAFETY CONTRACT) and actual episodic memory. This is the\n      counterpart to `promote_auto_accepted_memories` for the queued_for_review \u2192 approved review path \u2014 the\n      one that tool's docstring points to as \"the review CLI's own promotion step\", now available here too.\n    - Only episodes with `review_state='approved'` and not already promoted are eligible. Rejected, deferred,\n      and still-queued episodes are untouched. An episode whose `derived_memories.approval_state` has since\n      moved to rejected/superseded is also excluded, even if an old 'approved' verdict is still on record \u2014\n      this is what stopped a real production bug where a corrected memory's stale approval silently\n      re-created the pre-correction content in the graph.\n\n    DISTINCTIONS:\n    - Different from `promote_auto_accepted_memories`, which only promotes the separate `auto_accepted`\n      consolidation lane (never touches anything that went through human review).\n    - Different from `remember`, which writes one explicit statement directly with no idempotency ledger,\n      episode-naming scheme, or rate-limit handling.\n    - Idempotent: an episode already promoted in a prior call (or via `python -m server.review.cli promote`)\n      is skipped, never promoted twice \u2014 both share the same `PromotionStore` ledger.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter, or none at all\n      when CMF_LLM_PROVIDER=local) for each eligible episode and records the outcome in the same ledger the\n      CLI's `promote` command uses. A rate-limiter exhaustion stops the run early without losing or\n      double-processing any episode \u2014 safe to re-run later.\n    ",
+    "input_schema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "description": "If true (default), previews which review-approved episodes would be promoted without writing to Graphiti.",
+          "title": "Dry Run",
+          "type": "boolean"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum number of episodes to promote in this call (omit for no cap). A full run is a real, minutes-long operation \u2014 start with a small limit.",
+          "title": "Limit"
+        }
+      },
+      "title": "promote_approved_episodesArguments",
+      "type": "object"
+    },
+    "name": "promote_approved_episodes",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "promote_approved_episodesOutput",
+      "type": "object"
+    },
+    "title": "Promote Approved Episodes"
+  },
   "promote_auto_accepted_memories": {
     "annotations": {
       "destructive_hint": false,

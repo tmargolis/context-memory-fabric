@@ -304,30 +304,36 @@ def _slug(value: Optional[str]) -> str:
     return s or "misc"
 
 
-def _harness_of(memory_id: str) -> str:
-    """Originating harness from a reasoning-episode memory_id
-    (`reason:<conv>:<harness>:...`; gemini ids are `reason:<hex>:gemini:apps:...`)."""
-    parts = memory_id.split(":")
-    return _slug(parts[2]) if len(parts) > 2 else "unknown"
-
-
 def _semantic_episode_name(
     memory_id: str,
+    harness: Optional[str],
     project: Optional[str],
     promotion_store: "PromotionStore",
     graph_name: Optional[str],
 ) -> str:
     """`<harness>-<project>-NNN`, e.g. `chatgpt-astrophotography-001`.
 
+    `harness` must be the caller's already-resolved value (from the source
+    event, or `_reasoning_source_description`'s own lookup) -- NOT derived by
+    splitting `memory_id`. That used to be this function's job via a
+    `_harness_of(memory_id)` helper assuming a `reason:<conv>:<harness>:...`
+    shape, which silently breaks for thread-merged ids
+    (`reason:threadmerge:<conv_id>:<thread_key>::<policy>`): position 2 there
+    is the conversation UUID, not the harness, so every merged episode's name
+    got a UUID prefix instead of e.g. `claude_code` (found 2026-09-20
+    reviewing conversation b23f6f7d's promotion output). The harness the
+    caller already resolved for `source_description` is correct for merged
+    ids too (it comes from the evidence event, not the memory_id string), so
+    reusing it here fixes both without a second, fragile derivation.
+
     NNN is the next free sequence for that bucket in the target graph's
     ledger — stable across runs, sequential within a run (each
     `record_success` lands before the next name is built). Falls back to
     `_episode_name_for` if the pieces are missing.
     """
-    harness = _harness_of(memory_id)
-    if harness == "unknown":
+    if not harness or harness == "unknown":
         return _episode_name_for(memory_id, None)
-    prefix = f"{harness}-{_slug(project)}"
+    prefix = f"{_slug(harness)}-{_slug(project)}"
     return f"{prefix}-{promotion_store.max_semantic_seq(prefix, graph_name) + 1:03d}"
 
 
@@ -625,7 +631,7 @@ async def promote_reviewed(
         source_event = journal_store.get(row["source_event_id"])
         harness = source_event.source.harness if source_event else "unknown"
         episode_name = _semantic_episode_name(
-            memory_id, row["project"], promotion_store, graph_name
+            memory_id, harness, row["project"], promotion_store, graph_name
         )
         reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
 

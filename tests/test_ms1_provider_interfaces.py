@@ -131,8 +131,10 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # and unreachable by any retrieval path -- see plan-active.md) +
         # 4 episode-proposals review tools (list/get/review/bulk_review,
         # found missing 2026-09-18 -- parity with the wiki proposal loop) +
-        # list_review_conversations (found 2026-09-19, "review by conversation").
-        self.assertEqual(len(names), 22)
+        # list_review_conversations (found 2026-09-19, "review by conversation") +
+        # promote_approved_episodes (found 2026-09-20, the queued_for_review ->
+        # approved review path had no MCP promotion tool of its own).
+        self.assertEqual(len(names), 23)
 
 
 if __name__ == "__main__":

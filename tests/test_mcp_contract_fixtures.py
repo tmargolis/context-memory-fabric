@@ -83,7 +83,11 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 22 as of list_review_conversations (found 2026-09-19, "review by
         # conversation" -- the conversation-bucket-picking step ahead of
         # list_episode_proposals/list_doc_proposals's new conversation_id filter).
-        self.assertEqual(len(self.expected), 22)
+        # 23 as of promote_approved_episodes (found 2026-09-20 reviewing
+        # conversation b23f6f7d -- the queued_for_review -> approved review
+        # path had no MCP promotion tool, only promote_auto_accepted_memories
+        # for the separate auto_accepted lane).
+        self.assertEqual(len(self.expected), 23)
 
 
 if __name__ == "__main__":

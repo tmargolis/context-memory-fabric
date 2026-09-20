@@ -376,8 +376,9 @@ class TestCoverageAutoResolve(MS36Base):
 
 class TestSemanticEpisodeNames(MS36Base):
     async def test_harness_project_sequence_names(self):
-        for i in range(3):
-            self.journal.append(ev(f"e{i}"))
+        self.journal.append(ev("e0", harness="chatgpt"))
+        self.journal.append(ev("e1", harness="chatgpt"))
+        self.journal.append(ev("e2", harness="claude"))
         # two chatgpt/astrophotography, one claude/condo
         self._reason_row("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", episode(evidence=["e0"]))
         self._reason_row("reason:c1:chatgpt:x:y:1::reasoning-episode@0.2", episode(kind="plan", evidence=["e1"]))
@@ -403,7 +404,7 @@ class TestSemanticEpisodeNames(MS36Base):
         )
 
     async def test_sequence_continues_across_runs(self):
-        self.journal.append(ev("e0")); self.journal.append(ev("e1"))
+        self.journal.append(ev("e0", harness="chatgpt")); self.journal.append(ev("e1", harness="chatgpt"))
         self._reason_row("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", episode(evidence=["e0"]))
         self._reason_row("reason:c1:chatgpt:x:y:1::reasoning-episode@0.2", episode(kind="plan", evidence=["e1"]))
         for mid in ("reason:c1:chatgpt:x:y:0::reasoning-episode@0.2", "reason:c1:chatgpt:x:y:1::reasoning-episode@0.2"):
@@ -418,8 +419,22 @@ class TestSemanticEpisodeNames(MS36Base):
                          ["chatgpt-obsidian-001", "chatgpt-obsidian-002"])
 
     def test_missing_project_falls_back_to_misc(self):
-        name = _semantic_episode_name("reason:c1:gemini:apps:x:y:0::reasoning-episode@0.2", None, self.prom, "g")
+        name = _semantic_episode_name("reason:c1:gemini:apps:x:y:0::reasoning-episode@0.2", "gemini", None, self.prom, "g")
         self.assertEqual(name, "gemini-misc-001")
+
+    def test_threadmerge_memory_id_uses_passed_harness_not_conversation_uuid(self):
+        # Regression: a thread-merged memory_id's own position 2 is the conversation
+        # UUID, not a harness -- _semantic_episode_name must use the caller-supplied
+        # harness (resolved from the source event) rather than parsing the id.
+        name = _semantic_episode_name(
+            "reason:threadmerge:b23f6f7d-d9ac-41a6-86e7-d0daf45b814b:some-thread::extract@1.3",
+            "claude_code", "misc", self.prom, "g",
+        )
+        self.assertEqual(name, "claude-code-misc-001")
+
+    def test_unknown_harness_falls_back_to_hash_name(self):
+        name = _semantic_episode_name("reason:c1:x:y:0::reasoning-episode@0.2", None, "misc", self.prom, "g")
+        self.assertTrue(name.startswith("promoted_"))
 
 
 if __name__ == "__main__":
