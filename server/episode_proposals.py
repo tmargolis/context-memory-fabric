@@ -280,8 +280,7 @@ def format_episode_mirror_list(items: list[dict[str, Any]]) -> str:
         return "No staged episodes found."
     lines = ["| Memory ID | Tier | Kind | Confidence | Status |", "|---|---|---|---|---|"]
     for d in items:
-        short_id = d["memory_id"] if len(d["memory_id"]) <= 60 else d["memory_id"][:57] + "..."
-        lines.append(f"| `{short_id}` | {d['tier']} | {d['reasoning_kind']} | {d['confidence']} | {d['approval_state']} |")
+        lines.append(f"| `{d['memory_id']}` | {d['tier']} | {d['reasoning_kind']} | {d['confidence']} | {d['approval_state']} |")
     return "\n".join(lines)
 
 

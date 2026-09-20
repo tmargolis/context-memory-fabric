@@ -21,7 +21,7 @@ from server.consolidation.promotion import PromotionStore, enriched_episode_cont
 from server.consolidation.store import ConsolidationStore
 from server.core.models import DatePrecision
 from server.journal.store import SqliteEventStore
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
 
 BASE = datetime(2026, 5, 1, tzinfo=timezone.utc)
@@ -90,7 +90,7 @@ class TestEnrichedEpisodeContent(unittest.TestCase):
         self.assertEqual(enriched_episode_content(row), "Just a statement.")
 
     def test_unfamiliar_reason_shape_falls_back_gracefully(self):
-        """heuristic_v1's ExtractionResult.reason has no Q:/why: structure
+        """heuristic's ExtractionResult.reason has no Q:/why: structure
         at all (see record_consolidation) -- must not raise, must not
         fabricate a driving question or rationale from unrelated text."""
         row = _row(reason="x")
@@ -159,7 +159,7 @@ class TestPromoteReviewedSendsEnrichedContent(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("sync script bug", content)  # alternatives excluded
 
     async def test_heuristic_row_without_qa_shape_still_promotes_statement(self):
-        """promote_auto_accepted's rows (heuristic_v1) don't carry the
+        """promote_auto_accepted's rows (heuristic) don't carry the
         Q:/why: reason shape; enriched_episode_content must degrade to the
         statement rather than raise, on that path too."""
         from server.consolidation.promotion import promote_auto_accepted

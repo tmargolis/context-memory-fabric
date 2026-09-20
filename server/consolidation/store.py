@@ -36,7 +36,7 @@ from typing import Any, Optional
 from server.episode_proposals import write_episode_mirror
 from server.journal.store import DEFAULT_JOURNAL_PATH
 from server.policies.protocols import ExtractionCategory, ExtractionResult, ReasoningEpisode
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 
 logger = logging.getLogger(__name__)
 

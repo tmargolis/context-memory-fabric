@@ -93,6 +93,16 @@ CONFIDENCE in [0,1] — reflect genuine uncertainty, do not default high:
 
 OTHER FIELDS:
 - "statement": a concise synthesis in your own words (1-3 sentences), NOT a quote.
+- "driving_question": the question or problem the user was actually facing
+  (e.g. "How do we stop losing session state on every container restart?").
+  ALWAYS REQUIRED, never empty. For investigation/hypothesis/experiment/
+  finding kinds where there is no distinct question beyond the statement,
+  restate the statement as a question rather than leaving this thin.
+- "rationale": why the user reasoned or decided the way they did -- the "why"
+  behind the statement, in their own logic (e.g. "renaming would break
+  hardcoded script references"). ALWAYS REQUIRED, never empty. For a kind
+  with no separate justification, state what the statement's conclusion
+  rests on.
 - "thread_key": a short lowercase hyphenated topic slug, stable across different
   chats about the same undertaking (e.g. "openclaw-gateway-connection").
 - "alternatives": a single string; if several, separate with "; ". Not a list.
@@ -100,7 +110,7 @@ OTHER FIELDS:
   "resolved" if it reached a conclusion, else null.
 
 Respond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...,
-"driving_question": ... | null, "rationale": ... | null, "alternatives": ... | null,
+"driving_question": ..., "rationale": ..., "alternatives": ... | null,
 "status": "open" | "resolved" | null, "thread_key": ... | null, "thread_title": ... | null,
 "confidence": 0.0, "turn_numbers": [1], "substance_in_assistant_turns": false } ] }"""
 
@@ -115,7 +125,19 @@ Respond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...
 # share a version bucket, or the Phase 7 quality comparison has nothing to
 # compare. Nothing is re-extracted by the bump itself -- existing rows stay at
 # their own version and remain reviewable via --policy-version.
-REASONING_POLICY_VERSION = "0.3"
+#
+# 0.4 (2026-09-19, "review by conversation" follow-up): _SYSTEM's OTHER FIELDS
+# section now explains and requires driving_question/rationale for
+# decision/plan/rejected_alternative/retrospective kinds -- prior rows were
+# extracted under a prompt that never described those fields, hence the high
+# null rate found reviewing by conversation. Existing 0.3 rows are untouched.
+#
+# 0.5 (2026-09-19, same day): 0.4 shipped as a prompt-only fix and measured
+# 0/25 rows with either field populated under local constrained decoding --
+# same failure mode already documented on thread_key below. Made both fields
+# non-nullable and `required` in _EPISODES_SCHEMA, matching thread_key's
+# fix, rather than relying on prompt wording the grammar is free to ignore.
+REASONING_POLICY_VERSION = "0.5"
 
 
 def _is_retryable_capacity_error(exc: Exception) -> bool:
@@ -165,11 +187,16 @@ def _default_generate(model: str, prompt: str) -> str:
     raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
 
 
-# JSON Schema for the reply, used only in json_schema mode. Mirrors the shape
-# the prompt already describes and _to_episode already reads; kept permissive
-# (every field nullable, nothing beyond `episodes` required) because the
-# grammar's job here is to guarantee *parseable* output, not to second-guess
-# the prompt's own instructions about when a field should be null.
+# JSON Schema for the reply, used only in json_schema mode. Mostly permissive
+# (nullable, nothing beyond `episodes` required) because the grammar's job
+# here is to guarantee *parseable* output, not to second-guess the prompt's
+# own instructions about when a field should be null -- EXCEPT for fields
+# found load-bearing enough that a nullable slot is a silent regression
+# rather than a harmless omission (see thread_key's own note below, and
+# driving_question/rationale's, added for the same reason 2026-09-19: 0 of 25
+# rows in a "review by conversation" pass had either populated, confirming a
+# prompt-only description is not enough under constrained local decoding --
+# the model reliably reaches for null whenever the grammar permits it).
 _EPISODES_SCHEMA = {
     "type": "object",
     "properties": {
@@ -180,8 +207,15 @@ _EPISODES_SCHEMA = {
                 "properties": {
                     "reasoning_kind": {"type": "string"},
                     "statement": {"type": "string"},
-                    "driving_question": {"type": ["string", "null"]},
-                    "rationale": {"type": ["string", "null"]},
+                    # Required and non-nullable (2026-09-19) -- see module
+                    # comment above. A reviewer approving/rejecting a
+                    # decision/plan/rejected_alternative/retrospective needs
+                    # to see what problem it answers and why, not just the
+                    # answer; for the remaining kinds the prompt says to
+                    # restate the statement's own question/logic rather than
+                    # leave it empty, which is still more useful than null.
+                    "driving_question": {"type": "string"},
+                    "rationale": {"type": "string"},
                     "alternatives": {"type": ["string", "null"]},
                     "status": {"type": ["string", "null"]},
                     # Required and non-nullable, unlike the prompt's "or null".
@@ -201,6 +235,8 @@ _EPISODES_SCHEMA = {
                 "required": [
                     "reasoning_kind",
                     "statement",
+                    "driving_question",
+                    "rationale",
                     "confidence",
                     "turn_numbers",
                     "thread_key",
@@ -223,7 +259,7 @@ def _local_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, sc
     constrained-decoding call.
 
     `schema`/`schema_name` default to this module's own episode-only shape
-    but are overridable -- ExtractPolicyV1 (server/policies/extract_v1.py)
+    but are overridable -- ExtractPolicyV1 (server/policies/extract.py)
     binds its own wider schema via functools.partial rather than duplicating
     this whole function, since constrained decoding needs the schema to
     literally include every top-level key the model may emit (an unlisted

@@ -21,7 +21,7 @@ from server.core.models import REASONING_KINDS, DatePrecision, SourceEvent, Sour
 from server.journal.identity import compute_content_hash
 from server.journal.store import SqliteEventStore
 from server.policies.protocols import ExtractionCategory
-from server.policies.reasoning_episode_v1 import ReasoningEpisodePolicyV1
+from server.policies.reasoning_episode import ReasoningEpisodePolicyV1
 
 BASE = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
 

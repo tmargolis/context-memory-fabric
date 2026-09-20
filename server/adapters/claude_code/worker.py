@@ -36,7 +36,7 @@ from server.adapters.claude_code.transcript_reader import (
 from server.consolidation.pipeline import run_reasoning_consolidation
 from server.consolidation.store import ConsolidationStore
 from server.journal.store import SqliteEventStore
-from server.policies.reasoning_episode_v1 import ReasoningEpisodePolicyV1
+from server.policies.reasoning_episode import ReasoningEpisodePolicyV1
 
 
 @dataclass

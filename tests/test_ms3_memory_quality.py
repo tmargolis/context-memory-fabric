@@ -48,7 +48,7 @@ from pathlib import Path
 import unittest
 
 from server.journal.store import DEFAULT_JOURNAL_PATH, SqliteEventStore
-from server.policies.heuristic_v1 import HeuristicPatternPolicyV1
+from server.policies.heuristic import HeuristicPatternPolicyV1
 from server.policies.protocols import PolicyContext
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "memory_quality" / "labeled_events.json"

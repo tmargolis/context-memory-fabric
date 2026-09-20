@@ -25,7 +25,7 @@ from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 from server.core.rate_limiter import GeminiQuotaExhaustedError
 from server.journal.identity import compute_content_hash
 from server.journal.store import SqliteEventStore
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.policies.protocols import ExtractionCategory, ReasoningEpisode
 
 BASE = datetime(2026, 5, 1, tzinfo=timezone.utc)

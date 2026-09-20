@@ -166,7 +166,7 @@ def _call_gemini(rate_limiter, prompt_user: str, max_tokens: int, retries: int =
     why that workaround exists only for LM Studio's reasoning models) --
     response_mime_type=application/json is requested directly, matching
     the existing Gemini-calling precedent in
-    server/policies/reasoning_episode_v1.py's _default_generate.
+    server/policies/reasoning_episode.py's _default_generate.
     """
     from dotenv import load_dotenv
     from google import genai

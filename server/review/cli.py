@@ -38,7 +38,7 @@ from server.consolidation.store import ConsolidationStore
 from server.journal.store import SqliteEventStore
 from server.review import actions, projects
 from server.review.explain import explain
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.review.queue import review_queue
 from server.review.store import ReviewStore
 

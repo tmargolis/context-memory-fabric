@@ -16,7 +16,7 @@ from server.consolidation.pipeline import run_consolidation
 from server.consolidation.store import ConsolidationStore
 from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 from server.journal.store import SqliteEventStore
-from server.policies.heuristic_v1 import HeuristicPatternPolicyV1
+from server.policies.heuristic import HeuristicPatternPolicyV1
 from server.policies.protocols import ExtractionCategory, ExtractionResult, PolicyContext
 
 

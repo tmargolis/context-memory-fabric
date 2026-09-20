@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from server.policies.reasoning_episode_v1 import (
+from server.policies.reasoning_episode import (
     REASONING_POLICY_VERSION,
     ReasoningEpisodePolicyV1,
     _default_generate,
@@ -91,7 +91,7 @@ def test_version_bumped_for_the_model_change():
     """A different extraction model is a different policy: Gemini-derived and
     GLM-derived episodes must not share a version bucket, or the Phase 7
     quality comparison has nothing to compare."""
-    assert REASONING_POLICY_VERSION == "0.3"
+    assert REASONING_POLICY_VERSION == "0.5"
     assert ReasoningEpisodePolicyV1.version == REASONING_POLICY_VERSION
 
 
@@ -211,10 +211,16 @@ def test_schema_requires_thread_key():
 
 def test_genuinely_optional_fields_stay_nullable():
     """Requiring everything would push the model to invent values. Only
-    thread_key earned promotion, on the evidence of the real corpus."""
+    fields with corpus evidence of a real null-rate problem get promoted:
+    thread_key (2026-09-08, Gemini 1242/1243 vs. GLM null-whenever-permitted),
+    then driving_question/rationale (2026-09-19, 0/25 populated under a
+    prompt-only ask -- see REASONING_POLICY_VERSION 0.5's note). status,
+    alternatives, and thread_title have no such evidence and stay optional."""
     props = _EPISODES_SCHEMA["properties"]["episodes"]["items"]["properties"]
-    for field in ("status", "rationale", "alternatives", "driving_question", "thread_title"):
+    for field in ("status", "alternatives", "thread_title"):
         assert "null" in props[field]["type"], f"{field} should remain optional"
+    for field in ("driving_question", "rationale"):
+        assert props[field]["type"] == "string", f"{field} should be required non-nullable (promoted 2026-09-19)"
 
 
 # --- CLI wiring -----------------------------------------------------------

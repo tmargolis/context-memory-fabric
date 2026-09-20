@@ -24,7 +24,7 @@ import sqlite3
 from typing import Any, Optional
 
 from server.consolidation.promotion import PromotionStore, default_tier
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.review.explain import parse_reason, resolve_evidence
 from server.review.store import PENDING, ReviewStore
 

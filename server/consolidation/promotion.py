@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from server.consolidation.store import ConsolidationStore
-from server.policies.reasoning_episode_v1 import REASONING_POLICY_VERSION
+from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     GeminiRateLimiter,
@@ -503,7 +503,7 @@ def enriched_episode_content(row: sqlite3.Row) -> str:
     the discarded option it was.
 
     Rows from a policy that doesn't write this Q:/why: shape (e.g.
-    heuristic_v1's ExtractionResult.reason, used by promote_auto_accepted)
+    heuristic's ExtractionResult.reason, used by promote_auto_accepted)
     simply match neither pattern and fall back to the statement alone --
     this never raises on an unfamiliar `reason` format.
     """
