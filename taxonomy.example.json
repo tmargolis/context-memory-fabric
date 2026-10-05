@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "Example project taxonomy for the MS6 review queue.",
+    "Copy to taxonomy.local.json (gitignored) and replace with your own projects.",
+    "Ordered: FIRST MATCH WINS — put specific buckets above general ones.",
+    "Each alternative sits inside \\b...\\b, so a prefix token needs an explicit \\w*.",
+    "With no taxonomy file present, every episode classifies as 'misc'."
+  ],
+  "rules": [
+    ["infrastructure", "\\b(server|backup|storage|network|deploy\\w*)\\b"],
+    ["writing", "\\b(draft|essay|article|blog|newsletter)\\b"],
+    ["finance", "\\b(tax|invoice|billing|receipt|payment)\\b"]
+  ]
+}

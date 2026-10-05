@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/tmargolis/context-memory-fabric/docs/schemas/source-event-1.0.json",
+  "title": "Context Memory Fabric Source Event",
+  "description": "A source event records what a user, agent, tool, or import produced, without claiming the content is true or that any interpretation of it is correct. See docs/adr/0001-four-layer-model.md and ROADMAP.md's canonical data model, which this schema versions and finalizes for Milestone 2.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "source",
+    "observed_at",
+    "content",
+    "content_hash",
+    "date_precision"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version this event was written against. Bump on any breaking field change; add a migration rather than silently reinterpreting old rows."
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable, deterministic identifier. Preferred form when a harness provides native stable IDs: '<harness>:<conversation_id>:<turn_id>'. When no native ID exists (e.g. a markdown-summary import with no per-item identifier), falls back to '<harness>:<content_hash>'. See server/journal/identity.py:compute_event_id. This is the sole idempotency key — the same real-world event, journaled twice, must resolve to the same event_id."
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What kind of thing this event records, e.g. 'turn.completed', 'project.snapshot', 'memory_summary.section'. Not an enum in 1.0 — new event types are added by adapters/importers without a schema bump, since this field is descriptive metadata rather than a field that changes the envelope's shape."
+    },
+    "source": {
+      "type": "object",
+      "required": ["harness"],
+      "additionalProperties": false,
+      "properties": {
+        "harness": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Origin AI system or import path, e.g. 'chatgpt', 'claude', 'gemini', 'claude-code', 'openclaw'. Lowercase, stable slug — this is what MS4 adapters and MS2 importers key on."
+        },
+        "account_scope": {
+          "type": ["string", "null"],
+          "description": "Account/workspace identifier when the harness has more than one and it matters (e.g. a Claude Team seat). Null when there is exactly one account or the harness has no concept of one."
+        },
+        "conversation_id": {"type": ["string", "null"]},
+        "session_id": {"type": ["string", "null"]},
+        "turn_id": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]}
+      }
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": ["user", "assistant", "tool", "system"],
+      "default": "user",
+      "description": "Who/what produced this event's content. Per ROADMAP.md principle 9, only actor_type='user' content may, on its own, establish a personal fact during later consolidation (Milestone 3) — assistant-authored content is contextual evidence, not corroborated fact."
+    },
+    "actor_id": {
+      "type": ["string", "null"],
+      "description": "Stable identifier for the actor when the harness distinguishes multiple (e.g. an OpenClaw agent name: 'max', 'vault'). Null for a single undifferentiated user/assistant."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this event was captured/received by CMF (or, for a backfilled/imported event, the best available proxy for that — see date_precision and metadata.provenance_reconstructed). Always present, always a full timestamp. Distinct from event_date: observed_at answers 'when did CMF learn this', event_date answers 'when did this happen in the world', and they are frequently different (a 2023 decision imported in 2026 has observed_at=2026, event_date=2023)."
+    },
+    "event_date": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "When the event actually occurred in the world, if determinable and distinct from observed_at. Null when the content has no discoverable real-world occurrence time (e.g. a durable preference statement with no date attached) — null here means 'unknown', not 'now'. Never fabricate this value; see docs/adr/0003-graph-and-state-topology.md's validity/expiration-date regression for what happens when a mentioned date is wrongly treated as the occurrence date."
+    },
+    "date_precision": {
+      "type": "string",
+      "enum": ["exact", "day", "month", "year", "none"],
+      "description": "Precision of event_date. 'none' means event_date is null (no reliable date found) — 'none' and a non-null event_date must not both be true."
+    },
+    "content": {
+      "type": "object",
+      "description": "The evidence itself, structured per event_type. Content shape is intentionally not fixed by this schema (event_type-specific), since normalizing every harness's message/turn shape into one universal content schema would either lose real structure or force lossy flattening — exactly the outcome this journal exists to avoid. Retention policy (server/journal/retention.py) may replace this with a redacted or summarized form, or omit it entirely (retention_class='excluded'), before the row is written."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 of a canonical (sort_keys=True, NFC-normalized, whitespace-trimmed) JSON serialization of the content actually hashed for identity purposes (see server/journal/identity.py:compute_content_hash). Used to derive event_id when no native ID exists, and retained as its own column for integrity/debugging even when a native ID is present — it is not, by itself, the deduplication key (event_id is)."
+    },
+    "parent_event_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "event_id(s) this event causally/structurally follows, e.g. the previous turn in a branching conversation tree (Claude and ChatGPT exports both encode a parent-message pointer). Empty for a root/standalone event."
+    },
+    "attachment_refs": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "References to attached files/images/artifacts. A reference, not embedded content — attachment storage is out of scope for schema 1.0."
+    },
+    "privacy": {
+      "type": "object",
+      "default": {},
+      "description": "Privacy/sensitivity metadata attached by the retention policy, e.g. {\"content_class\": \"medical\", \"retention_class\": \"redacted\"}. Empty object when no policy classification has run."
+    },
+    "metadata": {
+      "type": "object",
+      "default": {},
+      "description": "Importer/adapter-specific extras that don't belong in the fixed envelope above, e.g. {\"provenance_reconstructed\": true} for backfilled events (see Milestone 2's backfill task), or {\"is_starter_project\": true} for a Claude default project. Never load-bearing for identity or retention — those live in the typed fields above."
+    }
+  }
+}

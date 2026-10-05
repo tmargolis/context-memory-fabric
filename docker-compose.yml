@@ -1,0 +1,51 @@
+services:
+  falkordb:
+    image: falkordb/falkordb@sha256:adbddd418916c25618564ff8597a919b08bc76452ebeb74eb985c38d7281df62
+    container_name: context-memory-fabric-falkordb
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - falkordb_data:/data
+    environment:
+      # The image's run.sh starts redis with `--dir "$FALKORDB_DATA_PATH"`,
+      # which defaults to /var/lib/falkordb/data — inside the container's
+      # writable layer, NOT the mounted volume. Left at the default, every
+      # graph lives only in the container and is destroyed by any recreate.
+      # Point it at the mount so the RDB actually lands in falkordb_data.
+      - FALKORDB_DATA_PATH=/data
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # Image default is `TIMEOUT 1000` (ms) — fine for small graphs, but
+      # Graphiti's own internal RELATES_TO fulltext dedup search during
+      # add_episode() started timing out once mem-fabric-local-restore-20260912
+      # passed ~1000 nodes (2026-09-12 rebuild: 10/465 episodes failed this
+      # way, rate climbing with graph size). Raised here so a future
+      # container recreate doesn't silently revert the live
+      # `GRAPH.CONFIG SET TIMEOUT` fix back to 1000.
+      - FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT 30000 RESULTSET_SIZE 10000
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  spark-llm-proxy:
+    # FalkorDB Browser's chat only accepts a localhost/127.0.0.1 LLM URL, and
+    # it fetches server-side, so "localhost" means the falkordb container.
+    # Sharing falkordb's network namespace, this forwards the container's
+    # localhost:12345 to the Mac's Spark SSH tunnel (com.cmf.spark-tunnel,
+    # 12345 -> Spark LM Studio :1234). Browser setting: Local LLM → LM Studio,
+    # URL http://localhost:12345/v1. It still needs that tunnel running.
+    # Tied to the falkordb container: after recreating falkordb, run
+    # `docker compose up -d` for both services, not just falkordb.
+    image: alpine/socat@sha256:5ffbd6ae916cbad86a58fabe0d6d5a6fd5c2b47ddf031e82996baac9300e732f
+    container_name: context-memory-fabric-spark-llm-proxy
+    network_mode: "service:falkordb"
+    command: TCP-LISTEN:12345,fork,reuseaddr,bind=127.0.0.1 TCP:host.docker.internal:12345
+    depends_on:
+      - falkordb
+    restart: unless-stopped
+
+volumes:
+  falkordb_data:

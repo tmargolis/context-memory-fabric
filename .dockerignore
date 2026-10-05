@@ -1,0 +1,36 @@
+# Git and documentation/metadata
+.git
+.github
+docs/
+scratch/
+starter-wiki/
+
+# Virtual environments and caches
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Environment variables and credentials
+.env*
+*.pem
+*.key
+secrets.*
+*.secret
+
+# Runtime data and state
+data/
+doc-proposals/
+episode-proposals/
+imports/
+*.db
+*.sqlite*
+*.log
+taxonomy.local.json
+
+# Test fixtures and tests (not needed inside runtime server image)
+tests/

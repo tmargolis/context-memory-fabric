@@ -1,0 +1,28 @@
+{
+  "_about": "MS4e entity-quality gold lists (2026-09-28). keep and drop_prompt are curated examples from reviewing jspace's entities in mem-fabric-local. drop_prompt names are quoted in SELECTIVE_INSTRUCTIONS, so scoring them flatters the new profiles; drop_heldout comes from the same jspace single-mention list but is NOT in any prompt, and is the one acceptance test 3 is judged on. Matching is case- and punctuation-insensitive exact-name.",
+  "keep": [
+    "gemini-2.5", "flash-lite variants", "Google account", "gemini-2.5-flash", "Mac Pro", "NAS",
+    "NVIDIA Spark", "J-Space", "open-source language model", "Alex", "nanospark", "Spark",
+    "Google Docs", "labeling tool", "Claude"
+  ],
+  "drop_prompt": [
+    "layer 29-40", "base64 data URIs", "defaultK", "'Depends'", "asterisk", "build_traces20.py",
+    "space-packing limit", "teacher-forcing", "place() function", "head_idx", "layer 40",
+    "cloud token position", "arrowhead size", "answers.json", "sys.path", "ModuleNotFoundError",
+    "system Python", "Phase 7", "3x call limit multiplier", "qa_dump.json", "Option C", "scores",
+    "structure", "step-0", "run_qa_local"
+  ],
+  "drop_heldout": [
+    "jspace20.js", "opinion20.js", "top_probs", "top_ids", "top1_p", "topk=32", "eff_k20",
+    "PID 77867", "PID 12955", "LAN IP 172.16.10.61", "0.0.0.0", "localhost:8000", "~13 minutes",
+    "~25s", "2 minutes 14 seconds", "1.67GB", "517MB", "tab-1", "index 0", "L10", "L17",
+    "L20", "L30", "layer 24", "layer 25", "21 layers", "p=36.5", "p=37.0", "full_layer_steps=1",
+    "key_to_ref", "read_layers()", "extract() function", "drawSegment function", "json.dumps",
+    "ensure_ascii", "probe_uncertainty.py", "study_fulldepth.py", "server.py", "CLOUD_PER_LAYER",
+    "MAX_CONCEPTS", "EAGER_MODEL", "MODEL_DISABLED", "ThrottleInterval", "SuccessfulExit",
+    "bottombar", "promptbar", "blue rows", "opacity=entropy", "opacity=rank", "size=entropy",
+    "size=rank", "while read loop", "status code", "'There'", "'Depending'", "rank_gen", "rank_truth",
+    "said keys", "answer rows", "normalized ones", "surviving files", "concept", "domain", "trace",
+    "frontend", "playback", "replacement", "interpretation"
+  ]
+}

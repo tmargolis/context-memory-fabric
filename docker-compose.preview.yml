@@ -1,0 +1,83 @@
+# Context Memory Fabric - Standalone Public Preview Deployment
+#
+# This Compose setup runs an isolated CMF stack:
+# 1. FalkorDB graph database (with persistent storage & timeout guards)
+# 2. CMF MCP Server (serving Streamable HTTP on port 8000)
+# 3. Mounted starter LLM Wiki (or your own custom wiki folder)
+# 4. Isolated state storage for SQLite journals and document proposals
+#
+# Usage:
+#   1. Copy .env.preview.example to .env
+#   2. Add your GEMINI_API_KEY (or configure local provider endpoints)
+#   3. Run: docker compose -f docker-compose.preview.yml up -d
+#
+# Connect your MCP client (Claude Desktop, Cursor, etc.) to:
+#   http://localhost:8000/mcp
+
+services:
+  falkordb:
+    image: falkordb/falkordb@sha256:adbddd418916c25618564ff8597a919b08bc76452ebeb74eb985c38d7281df62
+    container_name: cmf-preview-falkordb
+    ports:
+      # Defaults to 6380/3002 to avoid conflicting with any operational FalkorDB instance on 6379/3001
+      - "127.0.0.1:${PREVIEW_FALKORDB_PORT:-6380}:6379"
+      - "127.0.0.1:${PREVIEW_BROWSER_PORT:-3002}:3000"
+    volumes:
+      - cmf_preview_falkordb_data:/data
+    environment:
+      - FALKORDB_DATA_PATH=/data
+      - FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT 30000 RESULTSET_SIZE 10000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  cmf-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: context-memory-fabric:preview
+    container_name: cmf-preview-server
+    ports:
+      - "127.0.0.1:${CMF_MCP_PORT:-8000}:8000"
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      # Network connection to internal FalkorDB service
+      - FALKORDB_HOST=falkordb
+      - FALKORDB_PORT=6379
+      - FALKORDB_DATABASE=${FALKORDB_DATABASE:-preview_db}
+
+      # Durable knowledge path (mounted container path)
+      - LLM_WIKI_PATH=/wiki
+
+      # State directory for SQLite journals and document proposals
+      - CMF_STATE_DIR=/data/cmf
+
+      # Model Provider configuration
+      - CMF_LLM_PROVIDER=${CMF_LLM_PROVIDER:-gemini}
+      - CMF_EMBED_PROVIDER=${CMF_EMBED_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1024}
+
+      # Optional local provider settings (if using Ollama / vLLM / LM Studio instead of Gemini)
+      - CMF_LOCAL_BASE_URL=${CMF_LOCAL_BASE_URL:-http://host.docker.internal:12345/v1}
+      - CMF_LOCAL_API_KEY=${CMF_LOCAL_API_KEY:-lm-studio}
+      - CMF_LOCAL_LLM_MODEL=${CMF_LOCAL_LLM_MODEL:-}
+      - CMF_LOCAL_EMBED_MODEL=${CMF_LOCAL_EMBED_MODEL:-}
+
+      # Optional MCP authentication token
+      - CMF_MCP_AUTH_TOKEN=${CMF_MCP_AUTH_TOKEN:-}
+    volumes:
+      # Mount the starter wiki (or replace with your own local wiki path in .env)
+      - ${LLM_WIKI_PATH:-./starter-wiki}:/wiki:ro
+      # Persistent volume for journals and doc proposals
+      - cmf_preview_state:/data/cmf
+    restart: unless-stopped
+
+volumes:
+  cmf_preview_falkordb_data:
+  cmf_preview_state:

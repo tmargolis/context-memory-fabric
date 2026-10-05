@@ -1,0 +1,138 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments and package managers (uv / venv / pipenv / poetry)
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Testing, type checking, and linting
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+.cursor/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.preview.example
+.envrc
+*.pem
+*.key
+secrets.*
+*.secret
+
+# Local database, cache, and runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.rdb
+*.aof
+dump.rdb
+data/
+falkordb/
+falkordb_data/
+*.log
+
+# Context Memory Fabric runtime state and proposals
+doc-proposals/
+episode-proposals/
+imports/
+
+# Memory-quality label fixtures — reference real personal content, keep local only
+tests/fixtures/memory_quality/
+
+# MS7 evaluation query set — real personal queries + gold answers, keep local only.
+# answer_eval.py is code only (no data) and stays tracked.
+tests/fixtures/ms7_eval/*
+!tests/fixtures/ms7_eval/answer_eval.py
+
+# MS6 review — personal project taxonomy, never published
+taxonomy.local.json
+
+# Personal test examples referenced by test_ms6_review.py / test_step8_edit_memory.py —
+# real historical examples, kept local only. tests/fixtures/local/__init__.py (the loader) stays tracked.
+tests/fixtures/local/*.local.json
+
+# Codex transcript samples fixture — keep local only
+tests/fixtures/codex/
+
+# Local-only working notes (e.g. docs/REVIEW-SESSION-NOTES.local.md) — cross-session/cross-harness
+# knowledge cache for agents, not for publication.
+docs/*.local.md
+
+# Local-only: ad-hoc diagnostics, and the MS9 Phase 5 grader (embeds eval gold answers)
+scratch/
+scripts/grade_cross_harness_ms9.py
+scripts/grade_cross_harness_ms9_v2.py
+scripts/grade_cross_harness_controls.py
+tests/fixtures/ms9_eval/*
+docs/eval-results/
+
+# Publication Drafts
+docs/preview-drafts/
+
+# Private plans and logs
+docs/CLAUDE-HARNESS-PROVENANCE-PLAN.md
+docs/CODEX-CAPTURE-PLAN.md
+docs/FIX-GRAPH-PLAN.md
+docs/SPARK-MIGRATION-PLAN.md
+docs/spark-ms7-episode-vector-spike.md
+docs/spark-phase7-ab-log.md
+docs/*.local.md
+docs/*-log.md
+docs/*-spike.md
+docs/PUBLIC-PREVIEW-PLAN.md
+docs/adr/0005-reasoning-episode-capture.md
+scripts/dedupe_entities_report.py
+scripts/import_claude_history_prompts.py
+scripts/tag_projects.py

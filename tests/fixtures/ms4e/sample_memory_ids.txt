@@ -1,0 +1,62 @@
+# MS4e Phase 3 A/B sample (2026-09-28): 20 jspace episodes spanning 0.4K-23.6K chars,
+# plus 10 control episodes from other projects. One memory_id per line; '#' lines are labels.
+# chatgpt-jspace-001 (jspace, 832 chars)
+reason:6a6f67fb-6abc-83ea-922f-12697ec8b20f:chatgpt:6a6f67fb-6abc-83ea-922f-12697ec8b20f:bbb21090-d20c-4c81-98e4-0d1fec3bfec0:chatgpt:6a6f67fb-6abc-83ea-922f-12697ec8b20f:4ddfdb85-f9f3-4b02-b1ce-f3bc4db4bef1:0::reasoning-episode@0.2
+# claude-code-jspace-001 (jspace, 719 chars)
+reason:70410eab-6d18-4db2-8bc1-e6f0307b0060:claude_code:70410eab-6d18-4db2-8bc1-e6f0307b0060:76207919-11f1-4694-99e5-f7e6f9b09685:claude_code:70410eab-6d18-4db2-8bc1-e6f0307b0060:a63d82c1-208f-461a-a035-730737aa081f:0::extract@1.3
+# claude-code-jspace-003 (jspace, 1630 chars)
+reason:threadmerge:70410eab-6d18-4db2-8bc1-e6f0307b0060:jspace-trace-schema-investigation::extract@1.3
+# claude-code-jspace-004 (jspace, 1817 chars)
+reason:threadmerge:70410eab-6d18-4db2-8bc1-e6f0307b0060:j-space-animation-mobile-access::extract@1.3
+# claude-code-jspace-006 (jspace, 3412 chars)
+reason:threadmerge:70410eab-6d18-4db2-8bc1-e6f0307b0060:cmf-documentation-formatting::extract@1.3
+# claude-code-jspace-007 (jspace, 3117 chars)
+reason:threadmerge:70410eab-6d18-4db2-8bc1-e6f0307b0060:qa-dump-artwork-substrate-evaluation::extract@1.3
+# claude-code-jspace-008 (jspace, 5988 chars)
+reason:threadmerge:70410eab-6d18-4db2-8bc1-e6f0307b0060:cmf-episode-proposals-mirror-doc-part1::extract@1.3
+# claude-code-jspace-012 (jspace, 522 chars)
+reason:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:claude_code:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:7a6f008e-55c0-420a-b8bb-bf084c824c92:claude_code:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:5fb3f248-684a-48ed-b1e5-6b6ce85a15ca:0::extract@1.3
+# claude-code-jspace-017 (jspace, 1517 chars)
+reason:threadmerge:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:cmf-live-study-server-crash::extract@1.3
+# claude-code-jspace-020 (jspace, 2144 chars)
+reason:threadmerge:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:cmf-live-study-server-memory-leak::extract@1.3
+# claude-code-jspace-022 (jspace, 471 chars)
+reason:08569eec-0004-4e7d-9867-d9e99ce1cd08:claude_code:08569eec-0004-4e7d-9867-d9e99ce1cd08:1bcf095f-be73-4c37-a636-d6ce6c85a429:claude_code:08569eec-0004-4e7d-9867-d9e99ce1cd08:0a4c6b81-e081-4a3d-b559-a97fbce7a70c:0::extract@1.3
+# claude-code-jspace-025 (jspace, 985 chars)
+reason:threadmerge:08569eec-0004-4e7d-9867-d9e99ce1cd08:j-space-lens-layer-coverage::extract@1.3
+# claude-code-jspace-026 (jspace, 2712 chars)
+reason:threadmerge:08569eec-0004-4e7d-9867-d9e99ce1cd08:j-space-data-inventory-documentation::extract@1.3
+# claude-code-jspace-027 (jspace, 1472 chars)
+reason:threadmerge:08569eec-0004-4e7d-9867-d9e99ce1cd08:j-space-visualization-bugs::extract@1.3
+# claude-code-jspace-030 (jspace, 1216 chars)
+reason:threadmerge:985e397d-479f-480b-909e-fa7c36e6717f:jspace-token-influence-visualization::extract@1.3
+# claude-code-jspace-033 (jspace, 699 chars)
+reason:b957251e-33aa-4e01-941e-63437738bd63:claude_code:b957251e-33aa-4e01-941e-63437738bd63:25aad6ea-96dc-4a06-8efc-84a1eee5e50a:claude_code:b957251e-33aa-4e01-941e-63437738bd63:6be26459-bf1d-430c-80d7-b67556414856:0::extract@1.3
+# claude-code-jspace-035 (jspace, 1441 chars)
+reason:threadmerge:b957251e-33aa-4e01-941e-63437738bd63:opinion-prompt-batch-execution::extract@1.3
+# claude-code-jspace-042 (jspace, 3931 chars)
+reason:threadmerge:01d7023d-3e5e-4cd9-b4a3-bcb6f8920bf1:cmf-graph-rebuild-monitoring::extract@1.3
+# claude-code-jspace-047 (jspace, 6754 chars)
+reason:threadmerge:08569eec-0004-4e7d-9867-d9e99ce1cd08:cmf-episode-proposals-mirror-doc::extract@1.3
+# claude-code-jspace-048 (jspace, 23606 chars)
+reason:threadmerge:985e397d-479f-480b-909e-fa7c36e6717f:cmf-graph-rebuild-monitoring::extract@1.3
+# chatgpt-condo-003 (condo, 773 chars)
+reason:6a501f69-d614-83ea-ac4d-69d8555dce3a:chatgpt:6a501f69-d614-83ea-ac4d-69d8555dce3a:2711220c-c292-4b66-aeb4-a01df2383182:chatgpt:6a501f69-d614-83ea-ac4d-69d8555dce3a:e00802a6-576d-4304-8bf2-1e3b38de63ce:0::reasoning-episode@0.2
+# chatgpt-context-memory-fabric-005 (context-memory-fabric, 593 chars)
+reason:69e9416f-0930-83ea-a5db-fdec307f4ad1:chatgpt:69e9416f-0930-83ea-a5db-fdec307f4ad1:97ef1967-2a6b-40d8-8cab-d89cbb0f4ac1:chatgpt:69e9416f-0930-83ea-a5db-fdec307f4ad1:de4ba485-099f-4097-973f-11d8399c24c8:0::reasoning-episode@0.2
+# chatgpt-ev-charging-003 (ev-charging, 618 chars)
+reason:69e260cb-07d8-83ea-bae1-aea7aa8a2f52:chatgpt:69e260cb-07d8-83ea-bae1-aea7aa8a2f52:e6953e47-7bcd-4825-95c6-487033d31c28:chatgpt:69e260cb-07d8-83ea-bae1-aea7aa8a2f52:2684cda8-81db-471a-9214-35e864510916:1::reasoning-episode@0.2
+# chatgpt-mac-infra-003 (mac-infra, 530 chars)
+reason:69c461bb-9c14-832f-864f-24b7e593c2a3:chatgpt:69c461bb-9c14-832f-864f-24b7e593c2a3:9331a821-ad9c-4d9f-a2a1-d10795be2558:chatgpt:69c461bb-9c14-832f-864f-24b7e593c2a3:10e68a5f-50cf-4b8a-a281-6fe4a607bdf7:0::reasoning-episode@0.2
+# chatgpt-obsidian-003 (obsidian, 587 chars)
+reason:69e91eca-0160-83ea-9c70-5dc4e8991163:chatgpt:69e91eca-0160-83ea-9c70-5dc4e8991163:a1baea32-8b77-42cc-9aa9-9017e1ba96b4:chatgpt:69e91eca-0160-83ea-9c70-5dc4e8991163:3f41d53f-211e-43b7-9f30-24f92ab3dac8:0::reasoning-episode@0.2
+# chatgpt-openclaw-003 (openclaw, 589 chars)
+reason:69b36df4-aacc-8333-a1bd-000039e25282:chatgpt:69b36df4-aacc-8333-a1bd-000039e25282:bbb21291-1532-430f-826a-03d6d73d2e12:chatgpt:69b36df4-aacc-8333-a1bd-000039e25282:96e0be0c-f9a0-4484-93f4-76c6ceee48f8:2::reasoning-episode@0.2
+# chatgpt-photo-003 (photo, 668 chars)
+reason:69eceaa8-f4c8-83ea-a925-e1d3262ebf9b:chatgpt:69eceaa8-f4c8-83ea-a925-e1d3262ebf9b:dfef7bbe-ef74-4a9f-8635-42d0a1b289f6:chatgpt:69eceaa8-f4c8-83ea-a925-e1d3262ebf9b:29c63cba-3e41-4b7e-aaa8-0b818eac5356:0::reasoning-episode@0.2
+# claude-3d-003 (3d, 696 chars)
+reason:705ec207-5b72-4643-83e6-766013b1e506:claude:705ec207-5b72-4643-83e6-766013b1e506:019bdd4f-5fb9-76ec-b9c2-6e8b28140570:claude:705ec207-5b72-4643-83e6-766013b1e506:019bdd62-6e68-72cc-83f3-5f53d17e3dc3:0::reasoning-episode@0.2
+# claude-career-navigator-dev-003 (career-navigator-dev, 852 chars)
+reason:ef762ac2-3627-4c95-a033-58ff86cd3ccd:claude:ef762ac2-3627-4c95-a033-58ff86cd3ccd:019c910b-8fb4-7229-a912-b7adcac4ae5f:claude:ef762ac2-3627-4c95-a033-58ff86cd3ccd:019c9133-8f64-73d8-866b-6837c0cd5e1b:0::reasoning-episode@0.2
+# claude-code-context-memory-fabric-034 (context-memory-fabric, 420 chars)
+reason:4214264a-db90-443f-a154-0a08a575436a:claude_code:4214264a-db90-443f-a154-0a08a575436a:bc24dece-7d45-4730-9b55-7b10fa65b078:claude_code:4214264a-db90-443f-a154-0a08a575436a:20d26a13-0e97-4470-bdaf-5918cfe50e78:0::extract@1.2
