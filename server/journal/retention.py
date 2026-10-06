@@ -38,7 +38,7 @@ DEFAULT_POLICY: dict[str, RetentionClass] = {
 # argument containing an API-key-shaped string never reaches the journal",
 # which this same redactor will back once capture middleware exists).
 _SECRET_PATTERNS = [
-    re.compile(r"\bAQ\.[A-Za-z0-9_\-]{20,}\b"),  # Gemini-style API keys (e.g. AQ.Ab8...)
+    re.compile(r"\bAQ\.[A-Za-z0-9_\-]{20,}\b"),  # Gemini-style API keys (e.g. AQ.xxxx...)
     re.compile(r"\bAIza[A-Za-z0-9_\-]{35}\b"),  # Google API keys
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),  # OpenAI-style secret keys
 ]

@@ -199,7 +199,7 @@ class TestRetentionPolicy(unittest.TestCase):
 
     def test_excluded_content_class_returns_none(self):
         policy = RetentionPolicy(rules={"default": RetentionClass.RAW, "secret": RetentionClass.EXCLUDED})
-        result = policy.apply({"text": "api key AQ.Ab8RN6JrFrlpMEM6hHz30EhrDxtHwTtOQgEGGy-8zq0jBilkzg_FAKE_EXAMPLE"}, content_class="secret")
+        result = policy.apply({"text": "api key AQ.TESTONLY_not_a_real_key_0000000000000000"}, content_class="secret")
         self.assertIsNone(result)
 
     def test_excluded_event_never_reaches_the_store(self):
@@ -213,9 +213,9 @@ class TestRetentionPolicy(unittest.TestCase):
 
     def test_redacted_content_class_scrubs_secret_shaped_strings(self):
         policy = RetentionPolicy(rules={"default": RetentionClass.RAW, "sensitive": RetentionClass.REDACTED})
-        content = {"text": "Here is my key: AQ.Ab8RN6JrFrlpMEM6hHz30EhrDxtHwTtOQgEGGy-8zq0jBilkzg_FAKE_EXAMPLE"}
+        content = {"text": "Here is my key: AQ.TESTONLY_not_a_real_key_0000000000000000"}
         result = policy.apply(content, content_class="sensitive")
-        self.assertNotIn("AQ.Ab8RN6JrFrlpMEM6hHz30EhrDxtHwTtOQgEGGy-8zq0jBilkzg_FAKE_EXAMPLE", result["text"])
+        self.assertNotIn("AQ.TESTONLY_not_a_real_key_0000000000000000", result["text"])
         self.assertIn("[REDACTED]", result["text"])
 
     def test_redacted_form_is_what_gets_stored(self):
