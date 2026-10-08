@@ -57,15 +57,26 @@ services:
       # State directory for SQLite journals and document proposals
       - CMF_STATE_DIR=/data/cmf
 
-      # Model Provider configuration
+      # Model providers (see "Model providers" in .env.example). LLM: anthropic,
+      # openai, gemini or local; embeddings: openai, gemini or local.
       - CMF_LLM_PROVIDER=${CMF_LLM_PROVIDER:-gemini}
       - CMF_EMBED_PROVIDER=${CMF_EMBED_PROVIDER:-gemini}
+      - CMF_CAPTURE_LLM_PROVIDER=${CMF_CAPTURE_LLM_PROVIDER:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - CMF_ANTHROPIC_MODEL=${CMF_ANTHROPIC_MODEL:-}
+      - CMF_ANTHROPIC_EFFORT=${CMF_ANTHROPIC_EFFORT:-}
+      - CMF_OPENAI_MODEL=${CMF_OPENAI_MODEL:-}
+      - CMF_OPENAI_EMBED_MODEL=${CMF_OPENAI_EMBED_MODEL:-}
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1024}
 
-      # Optional local provider settings (if using Ollama / vLLM / LM Studio instead of Gemini)
+      # Optional local provider settings (Ollama / vLLM / LM Studio on the host).
+      # Inside the container the host is host.docker.internal, not 127.0.0.1.
       - CMF_LOCAL_BASE_URL=${CMF_LOCAL_BASE_URL:-http://host.docker.internal:12345/v1}
       - CMF_LOCAL_API_KEY=${CMF_LOCAL_API_KEY:-lm-studio}
+      - CMF_LOCAL_LLM_BASE_URL=${CMF_LOCAL_LLM_BASE_URL:-}
+      - CMF_LOCAL_EMBED_BASE_URL=${CMF_LOCAL_EMBED_BASE_URL:-}
       - CMF_LOCAL_LLM_MODEL=${CMF_LOCAL_LLM_MODEL:-}
       - CMF_LOCAL_EMBED_MODEL=${CMF_LOCAL_EMBED_MODEL:-}
 

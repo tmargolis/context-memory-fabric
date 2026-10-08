@@ -161,9 +161,11 @@ def test_subagent_prompt_labels_parent_agent_and_tool_results(tmp_path):
     assert {e.actor_type for e in events} == {"user", "assistant"}
 
 
-def test_ordinary_prompt_is_unchanged(tmp_path):
+def test_ordinary_prompt_is_unchanged(tmp_path, monkeypatch):
     from server.policies.extract import _EXTRACT_SYSTEM, ExtractPolicyV1
     from server.policies.protocols import PolicyContext
+
+    monkeypatch.setenv("LLM_WIKI_PATH", str(tmp_path))
 
     events = sorted(_events(tmp_path, subagent=False), key=lambda e: e.observed_at)
     prompt = ExtractPolicyV1(generate_fn=lambda m, p: "{}")._build_prompt(events, PolicyContext())
@@ -174,3 +176,16 @@ def test_ordinary_prompt_is_unchanged(tmp_path):
     ])
     assert prompt.startswith(expected_head)
     assert "SUBAGENT" not in prompt
+
+
+def test_no_wiki_prompt_asks_for_no_doc_proposals(tmp_path, monkeypatch):
+    from server.policies.extract import _DOC_INSTRUCTIONS, ExtractPolicyV1
+    from server.policies.protocols import PolicyContext
+
+    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("LLM_WIKI_PATH", "")
+    events = sorted(_events(tmp_path, subagent=False), key=lambda e: e.observed_at)
+    prompt = ExtractPolicyV1(generate_fn=lambda m, p: "{}")._build_prompt(events, PolicyContext())
+    assert _DOC_INSTRUCTIONS not in prompt
+    assert 'always return\n"doc_proposals": []' in prompt
+    assert '"doc_proposals": [ { "target_path"' in prompt  # response format unchanged

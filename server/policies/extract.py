@@ -170,17 +170,27 @@ For each doc proposal, return:
 - "turn_numbers": the turns this proposal rests on, same convention as episodes.
 """
 
-_EXTRACT_SYSTEM = (
-    _EPISODE_INSTRUCTIONS
-    + "\n"
-    + _DOC_INSTRUCTIONS
-    + '\nRespond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...,\n'
+_RESPONSE_FORMAT = (
+    '\nRespond with JSON only: {"episodes": [ { "reasoning_kind": ..., "statement": ...,\n'
     '"driving_question": ..., "rationale": ..., "alternatives": ... | null,\n'
     '"status": "open" | "resolved" | null, "thread_key": ... | null, "thread_title": ... | null,\n'
     '"confidence": 0.0, "turn_numbers": [1], "substance_in_assistant_turns": false } ],\n'
     '"doc_proposals": [ { "target_path": ..., "proposed_content": ..., "rationale": ...,\n'
     '"statement": ..., "turn_numbers": [1] } ] }'
 )
+
+_EXTRACT_SYSTEM = _EPISODE_INSTRUCTIONS + "\n" + _DOC_INSTRUCTIONS + _RESPONSE_FORMAT
+
+# With no durable knowledge corpus configured (LLM_WIKI_PATH unset, MS10a),
+# a doc proposal has nowhere to go and was dropped after the model wrote it.
+# Such deployments get this instead of _DOC_INSTRUCTIONS; with a corpus the
+# prompt is unchanged.
+_NO_DOCS_INSTRUCTIONS = """
+This deployment has no durable document corpus, so do not propose documents: always return
+"doc_proposals": [] and put everything worth keeping in "episodes".
+"""
+
+_EXTRACT_SYSTEM_NO_DOCS = _EPISODE_INSTRUCTIONS + "\n" + _NO_DOCS_INSTRUCTIONS + _RESPONSE_FORMAT
 
 # Mirrors reasoning_episode._EPISODES_SCHEMA's episode item shape exactly
 # (kept as a literal copy rather than importing and mutating it -- the two
@@ -447,6 +457,9 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             rate_limiter=rate_limiter,
         )
         self.doc_proposals_total = 0
+        from server.core.config import load_config
+
+        self._system = _EXTRACT_SYSTEM if load_config().knowledge_enabled else _EXTRACT_SYSTEM_NO_DOCS
 
     def evaluate_window(self, window: list[SourceEvent], context: PolicyContext) -> list[ReasoningEpisode]:
         ordered = sorted(window, key=lambda e: e.observed_at)
@@ -498,7 +511,7 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         return out
 
     def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
-        lines = [_EXTRACT_SYSTEM, ""]
+        lines = [self._system, ""]
         if is_subagent_window(ordered):
             lines += [SUBAGENT_NOTE, ""]
         lines.append("--- CONVERSATION WINDOW ---")

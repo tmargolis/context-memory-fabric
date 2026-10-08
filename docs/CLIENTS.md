@@ -268,7 +268,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 **What this captures:** every tool call routed through this server, with harness provenance, redacted arguments, and a truncated result summary.
 
-**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. There is no architecture here that captures a Claude Desktop conversation CMF's tools were never invoked during. Mitigations:
+**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. For clients that write transcripts to disk, the transcript pollers close that gap: Claude Code (CLI and the desktop Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity are captured in full ([docs/SETUP.md, Background Capture](SETUP.md#background-capture); install with [`deploy/pollers/`](../deploy/pollers/README.md)). For a chat with no transcript on disk (Claude Desktop chat, cloud Cowork sessions, ChatGPT, Gemini), these mitigations remain:
 
 - At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call `capture_session` — it stages real episodic memory or a Wiki proposal per item, reviewable via the same path offline reasoning-episode extraction uses. Still interaction-triggered, not continuous — Cowork has no session-end signal this can hook into (Milestone 4a2, 2026-09-18).
 - `get_context` at session start pulls in durable/recent state proactively.
@@ -286,8 +286,9 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 | Client | Transport (typical) | Session identity | Notes |
 |---|---|---|---|
-| Claude Desktop (Cowork) | stdio | Synthesized (no native session id) | Primary MS4a target. No local transcript exists for CMF to backfill from — Milestone 4a2's `capture_session` is the mitigation, not a transcript adapter. |
-| Claude Desktop (Code tab) | stdio (via this server, if configured as an MCP tool) | Synthesized — **not reliably distinguishable from Cowork today**, both can bucket under the same `claude_desktop` harness string (a real finding from MS6c, contradicting an earlier assumption this table used to state) | Writes a JSONL transcript to `~/.claude/projects/<slug>/<uuid>.jsonl`, same format the standalone CLI uses — Milestone 4b (parked, fully designed) reads that file directly rather than depending on MCP-layer identity at all. |
+| Claude Desktop (Cowork, local sessions) | stdio | Synthesized (no native session id) | Connects as `local-agent-mode-<server>` and resolves to `claude_cowork`. Its transcripts on disk are also captured by the Cowork poller. |
+| Claude Desktop (Cowork, cloud sessions) | via the Claude Code runtime | Synthesized | Cowork has run sessions in the cloud since 2026 (remote sessions from July, the combined Claude experience from September). Their tool calls resolve to `claude_code` and no transcript reaches the disk, so `capture_session` checkpoints are the main capture. |
+| Claude Desktop (Code tab) and Claude Code CLI | stdio | Synthesized | Both connect as `claude-code`, so their MCP-boundary events stay `claude_code`. Their transcripts (`~/.claude/projects/<slug>/<uuid>.jsonl`) are captured in full by the Claude Code poller, which labels them `claude_desktop_code` / `claude_code` from each line's `entrypoint`. |
 | Cursor / other stdio clients | stdio | Synthesized | Same limitation as Claude Desktop. |
 | Remote/HTTP clients (streamable-http, SSE) | HTTP | Native transport session id, prefixed `native:` | More stable across reconnects than a synthesized id. |
 

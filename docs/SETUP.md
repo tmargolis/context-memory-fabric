@@ -31,11 +31,18 @@ cd context-memory-fabric
 cp .env.example .env
 ```
 
-Edit `.env` to supply your **Google Gemini API Key**:
+Edit `.env` to choose your [model providers](#model-providers) and supply their keys. The template's default is Gemini for both jobs, which works on Gemini's free tier:
 ```bash
 GEMINI_API_KEY=AIzaSy...
 ```
-*(By default, this points `LLM_WIKI_PATH` to the included fictional `starter-wiki/` and uses graph `CMF-local` on non-conflicting host ports.)*
+Or, with Anthropic and OpenAI keys:
+```bash
+CMF_LLM_PROVIDER=anthropic
+CMF_EMBED_PROVIDER=openai
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+*(By default, this points `LLM_WIKI_PATH` to the included fictional `starter-wiki/` and uses graph `CMF-local` on non-conflicting host ports. The preview always mounts a wiki, so it can't run without one; for a wiki-less setup use the local source installation below.)*
 
 ### 2. Launch the Stack
 
@@ -51,6 +58,47 @@ This starts:
 ### 3. Connect Your AI Client
 
 See [Connecting Your MCP Client](#connecting-your-mcp-client) below to wire Claude Desktop, Cursor, or other tools to `http://localhost:8000/mcp`.
+
+---
+
+## Model Providers
+
+CMF uses a model for two separate jobs, and each can come from a different provider:
+
+- **LLM (extraction):** turns conversations into episodes, and episodes into graph entities and facts. Set by `CMF_LLM_PROVIDER`, and for the background transcript pollers by `CMF_CAPTURE_LLM_PROVIDER`.
+- **Embeddings:** turn text into vectors for search. Set by `CMF_EMBED_PROVIDER`.
+
+| Provider | LLM | Embeddings | Needs |
+|---|---|---|---|
+| `anthropic` | ✅ | ❌ (Anthropic has no embeddings API) | `ANTHROPIC_API_KEY` |
+| `openai` | ✅ | ✅ | `OPENAI_API_KEY` |
+| `gemini` | ✅ | ✅ | `GEMINI_API_KEY` (the free tier works) |
+| `local` | ✅ | ✅ | An OpenAI-compatible server: LM Studio, Ollama or vLLM (`CMF_LOCAL_LLM_BASE_URL` / `CMF_LOCAL_EMBED_BASE_URL`) |
+
+Common setups:
+
+| LLM | Embeddings | Notes |
+|---|---|---|
+| `anthropic` | `openai` | Claude for extraction (default model `claude-sonnet-5-5`), OpenAI `text-embedding-3-small` vectors |
+| `openai` | `openai` | One key for both (default model `gpt-5.5`) |
+| `gemini` | `gemini` | No cost on the free tier; CMF paces itself to the free-tier limits |
+| any | `local` | A small embedder on your own machine; see [Run a Small Local Embedder](#optional-run-a-small-local-embedder-ollama) |
+
+API keys are separate from a ChatGPT or Claude subscription: create them at [platform.claude.com](https://platform.claude.com) (Settings → API Keys) or [platform.openai.com](https://platform.openai.com) (API keys) and add prepaid credit. An unfunded key fails with the provider's own "add credits" message. Model and cost settings (`CMF_ANTHROPIC_MODEL`, `CMF_ANTHROPIC_EFFORT`, `CMF_OPENAI_MODEL`) are in the [configuration reference](#configuration-reference).
+
+**Pick the embedder before your graph has data.** A graph's vectors are built at one width (`EMBEDDING_DIM`: 1024 for Gemini or OpenAI, 768 for nomic). Changing embedders later means a new `FALKORDB_DATABASE`.
+
+---
+
+## Setting Up on Your Own Machine (checklist)
+
+The path from a fresh clone to captured, reviewed and recalled memory, with your own keys and no code changes:
+
+1. **Install and start FalkorDB** (local source installation, steps 1–3 below).
+2. **Configure `.env`** (step 4): providers and keys from [Model Providers](#model-providers); `FALKORDB_DATABASE`; `LLM_WIKI_PATH` pointing at your notes, or empty to run without a wiki; on Linux or Windows, `CMF_PROJECT_ROOTS` naming the folders your projects live in.
+3. **Run the server and connect your clients** (step 5 and [Connecting Your MCP Client](#connecting-your-mcp-client)).
+4. **Turn on background capture** of your Claude Code and Codex sessions ([Background Capture](#background-capture)).
+5. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)). Nothing reaches memory or your wiki until you approve it.
 
 ---
 
@@ -90,14 +138,18 @@ cp .env.example .env
 
 Set the required variables:
 ```bash
-# Model provider key
-GEMINI_API_KEY=AIzaSy...
+# Model providers and their keys (see Model Providers above)
+CMF_LLM_PROVIDER=anthropic
+CMF_EMBED_PROVIDER=openai
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 
 # Target FalkorDB graph (always name this explicitly!)
 FALKORDB_DATABASE=memory-fabric
 
-# Optional: Durable knowledge corpus (if omitted, wiki tools are disabled gracefully)
-LLM_WIKI_PATH=./starter-wiki
+# Optional: durable knowledge corpus. Leave it empty to run without a wiki:
+# the wiki tools are then not offered and extraction proposes episodes only.
+LLM_WIKI_PATH=/absolute/path/to/your/notes
 ```
 
 #### Optional: Run a Small Local Embedder (Ollama)
@@ -200,22 +252,45 @@ In Cursor Settings → Features → MCP:
 
 ---
 
+## Background Capture
+
+CMF can capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
+
+Before turning them on:
+- **Set `CMF_CAPTURE_LLM_PROVIDER`.** The pollers extract with it, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it to the provider whose key you have. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
+- **On Linux and Windows, set `CMF_PROJECT_ROOTS`** (e.g. `~/code,~/work`), so sessions are tagged with their project rather than `other`.
+
+Cloud Cowork sessions leave no transcript on your computer; only their calls to CMF's tools are captured.
+
+## Reviewing What Was Captured
+
+Captured sessions become **episodes** (things decided, planned or found) and, when a wiki is configured, **doc proposals** (reference knowledge for a wiki page). Both wait for review. From any connected client:
+
+1. `list_review_conversations` shows which conversations have items waiting.
+2. `list_episode_proposals` / `list_doc_proposals` (filter by `conversation_id` or `project`) show the items; `get_doc_proposal` shows a doc's diff.
+3. `bulk_review_episodes` / `review_doc_proposal` record approve or reject, with a reason.
+4. `promote_approved_episodes` writes an approved episode into memory (one per call); `apply_doc_proposal` writes an approved doc into the wiki (dry run first; each apply is committed in the wiki's git repo when it has one).
+
+From a terminal, `uv run python -m server.review.cli queue --tier 1` lists the queue and `uv run python -m server.review.cli promote --apply` promotes every approved episode.
+
+---
+
 ## Configuration Reference
 
 Configuration can be supplied via `.env`, environment variables, or CLI flags.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GEMINI_API_KEY` | Conditional | — | Required when using Gemini extraction/embeddings (`CMF_LLM_PROVIDER=gemini`). |
+| `GEMINI_API_KEY` | Conditional | — | Required when any provider setting is `gemini` (the template's default). |
 | `ANTHROPIC_API_KEY` | Conditional | — | Required when any provider setting is `anthropic`. |
 | `OPENAI_API_KEY` | Conditional | — | Required when any provider setting is `openai`. |
 | `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
-| `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset, knowledge tools (`search_wiki`, `propose_doc_update`) are gracefully omitted. |
+| `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset or empty, the wiki tools (`search_wiki`, `propose_doc_update`, ...) are not offered and extraction proposes episodes only. |
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
-| `CMF_STATE_DIR` | No | `./wiki-proposals` | Staging directory for generated document update proposals and local state. |
-| `CMF_LLM_PROVIDER` | No | `gemini` | Extractor LLM provider: `anthropic`, `openai`, `gemini` or `local`. |
-| `CMF_EMBED_PROVIDER` | No | `gemini` | Embedder provider: `openai`, `gemini` or `local` (Anthropic has no embeddings API). |
+| `CMF_STATE_DIR` | No | repo root | Where `doc-proposals/` and `episode-proposals/` are kept. |
+| `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
+| `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
 | `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
 | `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |
 | `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |
@@ -226,6 +301,10 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_LOCAL_EMBED_MODEL` | No | `text-embedding-nomic-embed-text-v1.5` | Local embedding model id as your server names it (Ollama: `nomic-embed-text`). |
 | `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini or OpenAI; 768 for nomic local embedder). Fixed per graph. |
 | `CMF_EXTRACTION_PROFILE` | No | `typed-recall` | Entity extraction prompt. `legacy` (the pre-2026-09-28 prompt) is opt-in, for reproducing old extraction. |
+| `CMF_PROJECT_ROOTS` | No | macOS `~/Dev`, `~/Documents` | Folders whose subfolders are projects (comma-separated). Set it on Linux and Windows. |
+| `CMF_PROJECT_FOLDER_MAP` / `CMF_PROJECT_ALIASES` | No | — | Map a folder to a project, or fold one project name into another (`path=project,...` / `old=new,...`). |
+| `CMF_REVIEWER` | No | OS login name | Name recorded on review verdicts. |
+| `CMF_EXTRACTION_WORKSTREAMS` / `_HARDWARE` / `_TOPICS` / `_PERSON` / `_DEBRIS_FILES` | No | generic examples | Names from your own work shown to the extraction model as examples (comma-separated). |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 
 ---
