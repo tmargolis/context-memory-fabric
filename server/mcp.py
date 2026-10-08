@@ -6,6 +6,7 @@ with rich routing metadata, clear tool annotations, and server-level instruction
 """
 
 import argparse
+import json
 import asyncio
 import logging
 import os
@@ -1624,6 +1625,180 @@ async def bulk_review_episodes(
         lines.append("**Errors:**")
         for err in result["errors"]:
             lines.append(f"- `{err['memory_id']}`: {err['error']}")
+    return "\n".join(lines)
+
+
+# --- Nightly auto-review (2026-10-08): recommend, then the user confirms ----------
+
+
+def _wiki_root_or_none():
+    if not load_config().knowledge_enabled:
+        return None
+    from server.providers.wiki.corpus import get_corpus_root
+
+    try:
+        return get_corpus_root()
+    except Exception:  # an unreadable wiki only hides the overwrite check
+        return None
+
+
+@app.tool(
+    title="Get Review Batch",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def get_review_batch(
+    max_items: Annotated[int, Field(description="At most this many items (cap 50).")] = 50,
+) -> str:
+    """Start a nightly review run: the review rules plus the staged items no earlier run has covered.
+
+    WHEN TO USE:
+    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with
+      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1…)
+      and doc proposals (DOC1…), oldest first. A doc update carries `trips_overwrite_check` when it
+      would rewrite more than 30% of its live page — compare, don't auto-reject.
+    - Then judge every item and call record_review_recommendations with the same `run_id`.
+
+    DISTINCTIONS:
+    - Changes nothing in the review queue. It only registers the run, so the next run skips
+      these items.
+    - Empty `items` means nothing new to review; say so and stop.
+    """
+    from server.review.recommendations import RecommendationStore, build_batch
+
+    with RecommendationStore() as store:
+        batch = build_batch(store, max_items=max_items, wiki_root=_wiki_root_or_none())
+    return json.dumps(batch, indent=1, default=str)
+
+
+@app.tool(
+    title="Record Review Recommendations",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def record_review_recommendations(
+    run_id: Annotated[str, Field(description="The run_id from get_review_batch.")],
+    recommendations: Annotated[
+        list[dict],
+        Field(
+            description="One entry per item: {'label': 'EP3' or 'DOC1', 'verdict': 'approve'|'reject'|'flag', "
+            "'reason': str, optional 'summary': a shorter statement for the table, optional "
+            "'rebuild_proposal_id': a pending proposal you drafted with propose_doc_update as the additive "
+            "rebuild of this doc}."
+        ),
+    ],
+) -> str:
+    """Store a review run's recommendations and return the summary for the user.
+
+    WHEN TO USE:
+    - Last step of the scheduled nightly review. Show the user the returned summary unchanged: it
+      is what they read in the morning (EP and DOC tables, flagged items first, how to confirm).
+
+    CRITICAL SAFETY CONTRACT:
+    - Recommendations change nothing: no review verdict, memory or wiki write. Only
+      confirm_review_recommendations, at the user's request, records verdicts.
+    """
+    from server.review.recommendations import RecommendationStore, record
+
+    try:
+        with RecommendationStore() as store:
+            result = record(store, run_id, recommendations)
+    except ValueError as e:
+        return f"Could not record recommendations: {e}"
+    lines = [result["summary"]]
+    if result["errors"]:
+        lines += ["", "**Not recorded:**"] + [f"- {e}" for e in result["errors"]]
+    if result["not_recommended"]:
+        lines += ["", f"**No recommendation given for:** {', '.join(result['not_recommended'])} (they stay in the queue)."]
+    return "\n".join(lines)
+
+
+@app.tool(
+    title="List Review Recommendations",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def list_review_recommendations(
+    run_id: Annotated[Optional[str], Field(description="A run_id; omit for the latest unconfirmed run.")] = None,
+) -> str:
+    """Show a nightly review run's recommendations (the same summary the run produced). Read-only.
+
+    WHEN TO USE:
+    - 'What did last night's review recommend?' from any chat or harness, or to see a run again
+      before confirming it. The scheduled task itself doesn't need this: record_review_recommendations
+      already returns the summary.
+    """
+    from server.review.recommendations import RecommendationStore, format_summary
+
+    with RecommendationStore() as store:
+        run_id = run_id or store.latest_unconfirmed_run()
+        if run_id is None:
+            return "No review run is waiting for confirmation."
+        others = [r for r in store.unconfirmed_runs() if r != run_id]
+        text = format_summary(store, run_id)
+    if others:
+        text += f"\n\nAlso unconfirmed: {', '.join(f'`{r}`' for r in others)}."
+    return text
+
+
+@app.tool(
+    title="Confirm Review Recommendations",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def confirm_review_recommendations(
+    run_id: Annotated[Optional[str], Field(description="The run to confirm; omit for the latest unconfirmed run.")] = None,
+    overrides: Annotated[
+        Optional[dict[str, str]],
+        Field(description="Change a verdict: {'EP3': 'reject', 'DOC1': 'approve'}. Also how a flagged item gets a verdict."),
+    ] = None,
+    skip: Annotated[Optional[list[str]], Field(description="Labels to leave in the queue untouched, e.g. ['EP7'].")] = None,
+    reviewer: Annotated[
+        Optional[str],
+        Field(description="Who is confirming. Defaults to CMF_REVIEWER, else the OS login name."),
+    ] = None,
+) -> str:
+    """Record the user's verdicts for a nightly review run: its recommendations, with their changes.
+
+    WHEN TO USE:
+    - Only when the user says to confirm a run ("confirm", "confirm but EP3 approve and skip DOC1").
+      Never on your own initiative.
+
+    CRITICAL SAFETY CONTRACT:
+    - Records review verdicts only, through the same functions a person uses. It never promotes an
+      episode or writes the wiki: promote_approved_episodes and apply_doc_proposal stay separate.
+    - Flagged items without an override, and skipped items, stay in the queue.
+    - For a doc with a drafted rebuild, approve approves the rebuild and rejects the original.
+    """
+    from server.review.recommendations import RecommendationStore, confirm
+
+    try:
+        with RecommendationStore() as store:
+            result = confirm(store, run_id, overrides=overrides, skip=skip, reviewer=reviewer)
+    except ValueError as e:
+        return f"Could not confirm: {e}"
+    lines = [f"Confirmed run `{result['run_id']}`."]
+    for key, title in (("approved", "Approved"), ("rejected", "Rejected"), ("left_in_queue", "Left in the queue"),
+                       ("already_decided", "Already decided earlier"), ("errors", "Errors")):
+        if result[key]:
+            lines.append(f"- **{title}:** {', '.join(result[key])}")
+    lines.append("Next: promote approved episodes (promote_approved_episodes) and apply approved docs (apply_doc_proposal) when you're ready.")
     return "\n".join(lines)
 
 
