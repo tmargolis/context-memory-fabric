@@ -98,7 +98,8 @@ The path from a fresh clone to captured, reviewed and recalled memory, with your
 2. **Configure `.env`** (step 4): providers and keys from [Model Providers](#model-providers); `FALKORDB_DATABASE`; `LLM_WIKI_PATH` pointing at your notes, or empty to run without a wiki; on Linux or Windows, `CMF_PROJECT_ROOTS` naming the folders your projects live in.
 3. **Run the server and connect your clients** (step 5 and [Connecting Your MCP Client](#connecting-your-mcp-client)).
 4. **Turn on background capture** of your Claude Code and Codex sessions ([Background Capture](#background-capture)).
-5. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)). Nothing reaches memory or your wiki until you approve it.
+5. **Tell your AI assistants how to use CMF:** paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into each app's custom instructions.
+6. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
 
 ---
 
@@ -273,6 +274,8 @@ Captured sessions become **episodes** (things decided, planned or found) and, wh
 
 From a terminal, `uv run python -m server.review.cli queue --tier 1` lists the queue and `uv run python -m server.review.cli promote --apply` promotes every approved episode.
 
+**Nightly review.** A scheduled task in your AI app can do the first pass every night at 11:11 PM: it recommends approve, reject or flag for each new item and leaves you a summary to confirm in the morning. Set it up by pasting one block into the app: see [NIGHTLY-REVIEW.md](NIGHTLY-REVIEW.md).
+
 ---
 
 ## Configuration Reference
@@ -304,6 +307,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_PROJECT_ROOTS` | No | macOS `~/Dev`, `~/Documents` | Folders whose subfolders are projects (comma-separated). Set it on Linux and Windows. |
 | `CMF_PROJECT_FOLDER_MAP` / `CMF_PROJECT_ALIASES` | No | — | Map a folder to a project, or fold one project name into another (`path=project,...` / `old=new,...`). |
 | `CMF_REVIEWER` | No | OS login name | Name recorded on review verdicts. |
+| `CMF_REVIEW_RULES_PATH` | No | — | A Markdown file of your own review rules, appended to the generic ones the [nightly review](NIGHTLY-REVIEW.md) follows. |
 | `CMF_EXTRACTION_WORKSTREAMS` / `_HARDWARE` / `_TOPICS` / `_PERSON` / `_DEBRIS_FILES` | No | generic examples | Names from your own work shown to the extraction model as examples (comma-separated). |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 
@@ -312,7 +316,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 ## Start Building Context Now
 
 ### 1. Day-to-Day Use
-Once connected, your AI assistant will automatically use CMF tools:
+Once connected, and instructed with [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md), your AI assistant uses CMF's tools:
 - **`get_context(topic)`**: Synthesizes relevant durable wiki notes and recent episodic decisions.
 - **`remember(content)`**: Explicitly stores decisions, state changes, and preferences into the temporal memory graph.
 - **`capture_session(items)`**: Checkpoints multiple facts from a conversation into reviewable proposals and episodes.

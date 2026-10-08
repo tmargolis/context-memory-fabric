@@ -68,6 +68,9 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "promote_approved_episodes",
             "search_knowledge",
             "propose_knowledge_change",
+            # Nightly auto-review (2026-10-08)
+            "get_review_batch", "record_review_recommendations",
+            "list_review_recommendations", "confirm_review_recommendations",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

@@ -1523,5 +1523,224 @@
       "idempotent_hint": false,
       "open_world_hint": false
     }
+  },
+  "get_review_batch": {
+    "name": "get_review_batch",
+    "title": "Get Review Batch",
+    "description": "Start a nightly review run: the review rules plus the staged items no earlier run has covered.\n\n    WHEN TO USE:\n    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with\n      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1\u2026)\n      and doc proposals (DOC1\u2026), oldest first. A doc update carries `trips_overwrite_check` when it\n      would rewrite more than 30% of its live page \u2014 compare, don't auto-reject.\n    - Then judge every item and call record_review_recommendations with the same `run_id`.\n\n    DISTINCTIONS:\n    - Changes nothing in the review queue. It only registers the run, so the next run skips\n      these items.\n    - Empty `items` means nothing new to review; say so and stop.\n    ",
+    "input_schema": {
+      "properties": {
+        "max_items": {
+          "default": 50,
+          "description": "At most this many items (cap 50).",
+          "title": "Max Items",
+          "type": "integer"
+        }
+      },
+      "title": "get_review_batchArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "get_review_batchOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
+  },
+  "record_review_recommendations": {
+    "name": "record_review_recommendations",
+    "title": "Record Review Recommendations",
+    "description": "Store a review run's recommendations and return the summary for the user.\n\n    WHEN TO USE:\n    - Last step of the scheduled nightly review. Show the user the returned summary unchanged: it\n      is what they read in the morning (EP and DOC tables, flagged items first, how to confirm).\n\n    CRITICAL SAFETY CONTRACT:\n    - Recommendations change nothing: no review verdict, memory or wiki write. Only\n      confirm_review_recommendations, at the user's request, records verdicts.\n    ",
+    "input_schema": {
+      "properties": {
+        "run_id": {
+          "description": "The run_id from get_review_batch.",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "recommendations": {
+          "description": "One entry per item: {'label': 'EP3' or 'DOC1', 'verdict': 'approve'|'reject'|'flag', 'reason': str, optional 'summary': a shorter statement for the table, optional 'rebuild_proposal_id': a pending proposal you drafted with propose_doc_update as the additive rebuild of this doc}.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Recommendations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id",
+        "recommendations"
+      ],
+      "title": "record_review_recommendationsArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "record_review_recommendationsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  "list_review_recommendations": {
+    "name": "list_review_recommendations",
+    "title": "List Review Recommendations",
+    "description": "Show a nightly review run's recommendations (the same summary the run produced). Read-only.\n\n    WHEN TO USE:\n    - 'What did last night's review recommend?' from any chat or harness, or to see a run again\n      before confirming it. The scheduled task itself doesn't need this: record_review_recommendations\n      already returns the summary.\n    ",
+    "input_schema": {
+      "properties": {
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A run_id; omit for the latest unconfirmed run.",
+          "title": "Run Id"
+        }
+      },
+      "title": "list_review_recommendationsArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_review_recommendationsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": true,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false
+    }
+  },
+  "confirm_review_recommendations": {
+    "name": "confirm_review_recommendations",
+    "title": "Confirm Review Recommendations",
+    "description": "Record the user's verdicts for a nightly review run: its recommendations, with their changes.\n\n    WHEN TO USE:\n    - Only when the user says to confirm a run (\"confirm\", \"confirm but EP3 approve and skip DOC1\").\n      Never on your own initiative.\n\n    CRITICAL SAFETY CONTRACT:\n    - Records review verdicts only, through the same functions a person uses. It never promotes an\n      episode or writes the wiki: promote_approved_episodes and apply_doc_proposal stay separate.\n    - Flagged items without an override, and skipped items, stay in the queue.\n    - For a doc with a drafted rebuild, approve approves the rebuild and rejects the original.\n    ",
+    "input_schema": {
+      "properties": {
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The run to confirm; omit for the latest unconfirmed run.",
+          "title": "Run Id"
+        },
+        "overrides": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Change a verdict: {'EP3': 'reject', 'DOC1': 'approve'}. Also how a flagged item gets a verdict.",
+          "title": "Overrides"
+        },
+        "skip": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Labels to leave in the queue untouched, e.g. ['EP7'].",
+          "title": "Skip"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who is confirming. Defaults to CMF_REVIEWER, else the OS login name.",
+          "title": "Reviewer"
+        }
+      },
+      "title": "confirm_review_recommendationsArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "confirm_review_recommendationsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
   }
 }

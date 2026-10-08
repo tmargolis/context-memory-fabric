@@ -192,15 +192,14 @@ A soft boost for results in the query's inferred project(s), or a per-project ca
 
 ### Nightly auto-review of poller output (User, 2026-10-08)
 
-The pollers stage episodes and doc proposals around the clock; today every one waits for a hand review. A nightly pass could do the first cut and leave only the final call to the user.
+**Built 2026-10-08.** A scheduled task in the harness of the user's choice (Claude, ChatGPT, Gemini Spark, Antigravity) runs nightly at 11:11 PM, reviews what the pollers staged, records recommended verdicts, and leaves an EP/DOC summary in its own chat; the user confirms there in the morning. Setup is one copy-paste block: [docs/NIGHTLY-REVIEW.md](NIGHTLY-REVIEW.md). Generic agent instructions for using CMF at all: [docs/INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md).
 
-- [ ] **A scheduled task, nightly after the pollers,** reviews what they staged since its last run, in batches of at most 50, using the calibrated rules:
-  - reject process narration, duplicates and stale snapshots;
-  - for a doc update that trips the 30% check, compare it with the live page and rebuild it additively rather than reject (see the extract@1.7 item);
-  - flag rather than decide: project-slug questions, new wiki folders, legal/financial/personal facts that conflict, deletions of substantive content.
-- [ ] **Recommend, never apply.** It records proposed verdicts (approve / reject / flag, with reasons) without changing any episode, doc proposal, wiki page or graph node.
-- [ ] **Then message the user** with the batch: EP and DOC tables with inline reasoning, flagged items first. The user confirms or changes the verdicts; only then are they recorded, docs applied and episodes promoted.
-- **Open:** where it runs (a Cowork scheduled task, a launchd job driving a headless Claude session, or an LLM call inside CMF); which model and what it costs; how proposed verdicts are stored (a `recommended` review state or a sidecar file); how the message is sent (push notification, email draft, or an artifact with approve/reject controls) and how the reply comes back.
+- [x] **CMF side:** `server/review/recommendations.py` (tables `review_runs`, `review_recommendations` in the journal) and 4 MCP tools: `get_review_batch` (rules + up to 50 unreviewed tier-1 EPs and DOCs, with the overwrite check per doc update), `record_review_recommendations` (stores approve / reject / flag and returns the morning summary, so the task needs no extra call), `list_review_recommendations`, `confirm_review_recommendations` (the only step that records verdicts; overrides and skips; a drafted doc rebuild is approved and its original rejected together). Never promotes or applies.
+- [x] **Rules:** generic `server/review/review_rules.md`, plus `CMF_REVIEW_RULES_PATH` for the operator's own (this deployment: `~/.config/cmf/review-rules.md`, from User's calibrated review rulings).
+- [x] **Doc rebuilds (User: draft them too):** for an update that trips the 30% check, the task compares it with the live page and either rejects it as covered or files an additive rebuild with `propose_doc_update` and recommends that.
+- [x] **Dry run on the real queue (2026-10-08):** run `rr_20261008_231202_e091fe`, 23 EP + 7 DOC: 6 approve, 21 reject, 3 flag; waiting for User's confirmation.
+- [ ] **Create the scheduled task** in User's harness by pasting the block from NIGHTLY-REVIEW.md, after the MCP server restarts with the new tools.
+- [ ] **Open:** per-harness behaviour is from each vendor's docs as of 2026-10-08, untested except Claude; ChatGPT Plus/Pro may not allow a custom connector's write tools.
 
 ### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
 

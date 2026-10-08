@@ -135,8 +135,10 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # promote_approved_episodes (found 2026-09-20, the queued_for_review ->
         # approved review path had no MCP promotion tool of its own) +
         # search_knowledge and propose_knowledge_change (MS5; registered
-        # regardless of LLM_WIKI_PATH, since other providers may be configured).
-        self.assertEqual(len(names), 25)
+        # regardless of LLM_WIKI_PATH, since other providers may be configured) +
+        # 4 nightly-review tools (2026-10-08: get_review_batch,
+        # record/list/confirm_review_recommendations).
+        self.assertEqual(len(names), 29)
 
 
 if __name__ == "__main__":

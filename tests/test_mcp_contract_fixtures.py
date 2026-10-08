@@ -89,7 +89,9 @@ class TestMCPContractFixtures(unittest.TestCase):
         # for the separate auto_accepted lane).
         # 25 as of MS5 (added search_knowledge and propose_knowledge_change,
         # the provider-neutral knowledge tools).
-        self.assertEqual(len(self.expected), 25)
+        # 29 as of the nightly auto-review (2026-10-08: get_review_batch,
+        # record/list/confirm_review_recommendations).
+        self.assertEqual(len(self.expected), 29)
 
 
 if __name__ == "__main__":
