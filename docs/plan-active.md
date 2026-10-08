@@ -51,7 +51,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ## MS10a — Second-user readiness
 
-**Status:** ⚪ planned 2026-10-08, not started.
+**Status:** 🟡 in progress (started 2026-10-08). Order: 1 → 5 → 6b → 6 → 2 → 3 → 4 → 7.
 
 **Goal:** A second person can run CMF on their own machine with their own data. Their setup: Claude Code (CLI and the desktop app's Code tab) as the main harness, Codex CLI alongside it, and a custom agent team running in both. They have no Spark and no LM Studio, and they prefer Claude or OpenAI models to Gemini or local ones. Operating system unknown. This is MS10's goal, scoped down to one real user. What it finds feeds MS10.
 
@@ -63,8 +63,8 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ### Tasks
 
-- [ ] **0. Commit the 2026-10-08 env cleanup** on its own: `.env.example` merged with the removed `.env.preview.example`, the `CMF-local` default graph, and doc references updated.
-- [ ] **1. Background-capture provider as a setting.** The four workers force `CMF_LLM_PROVIDER=local` during unattended extraction (`claude_code`, `codex`, `antigravity`; `claude_cowork` imports the `claude_code` copy). Replace the four `_forced_local_llm_provider` copies with one helper driven by a new `CMF_CAPTURE_LLM_PROVIDER`. Default `local`, so this deployment's Spark safeguard is unchanged.
+- [x] **0. Commit the 2026-10-08 env cleanup** on its own (done in `f37d3f2`): `.env.example` merged with the removed `.env.preview.example`, the `CMF-local` default graph, and doc references updated.
+- [x] **1. Background-capture provider as a setting.** *Done 2026-10-08: `server/adapters/capture_provider.capture_llm_provider()`, read by `config.capture_llm_provider_from_env()` with the same strict validation as the other provider switches; tests in `tests/test_capture_provider.py`.* The four workers force `CMF_LLM_PROVIDER=local` during unattended extraction (`claude_code`, `codex`, `antigravity`; `claude_cowork` imports the `claude_code` copy). Replace the four `_forced_local_llm_provider` copies with one helper driven by a new `CMF_CAPTURE_LLM_PROVIDER`. Default `local`, so this deployment's Spark safeguard is unchanged.
 - [ ] **2. `anthropic` and `openai` providers** for `CMF_LLM_PROVIDER` / `CMF_EMBED_PROVIDER` / `CMF_CAPTURE_LLM_PROVIDER`:
   - Config: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, per-provider model settings, and a `memory_enabled` credential check per selected provider.
   - Promotion: Graphiti 0.29.3's `AnthropicClient` / `OpenAIClient`; add the `anthropic` SDK dependency (`openai` is already installed).
@@ -73,7 +73,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
   - Reranker: passthrough on the `anthropic` path (Graphiti's reranker needs logprobs); `OpenAIRerankerClient` on `openai`.
   - Retries on 429/529. The Gemini rate limiter does not apply.
   - **Frontier LLM + local embedder as a supported pairing.** Today one `CMF_LOCAL_BASE_URL` / `CMF_LOCAL_API_KEY` serves both local roles. That makes Gemini + Ollama embeddings work only by accident: nothing else reads the URL. Split it into **`CMF_LOCAL_LLM_BASE_URL`** and **`CMF_LOCAL_EMBED_BASE_URL`** (each with its own `_API_KEY`), each falling back to `CMF_LOCAL_BASE_URL` when unset so existing `.env` files keep working. Then any frontier LLM (`anthropic` / `openai` / `gemini`) can pair with a laptop embedder (Ollama `nomic-embed-text`, 768). An LM Studio LLM and an Ollama embedder can also run on different hosts or ports. The `memory_enabled` credential check reads whichever URL each selected role uses. Update the SETUP.md "Run a Small Local Embedder" section and the `.env.example` Ollama block, both written 2026-10-08, to drop their "not yet built" caveats.
-- [ ] **3. Capture Claude subagent transcripts.** Discovery in `claude_code/transcript_reader.py` only globs `<project>/*.jsonl`, so `<project>/<session>/subagents/agent-*.jsonl` is never read. A subagent becomes its own conversation (`<session>:agent-<agentId>`) with its parent session as `parent_conversation_id`, matching the Codex adapter's `parent_thread_id` handling. The agent type and description come from the sibling `.meta.json`. Codex already captures subagents and forks; no change there. **Open:** backfill this deployment's 21 existing subagent transcripts (2026-09-07 → 09-28, nearly all CMF build exploration), or mark them read and capture forward only. Recommendation: forward only.
+- [ ] **3. Capture Claude subagent transcripts.** Discovery in `claude_code/transcript_reader.py` only globs `<project>/*.jsonl`, so `<project>/<session>/subagents/agent-*.jsonl` is never read. A subagent becomes its own conversation (`<session>:agent-<agentId>`) with its parent session as `parent_conversation_id`, matching the Codex adapter's `parent_thread_id` handling. The agent type and description come from the sibling `.meta.json`. Codex already captures subagents and forks; no change there. **Decided (User, 2026-10-08): forward only.** This deployment's 21 existing subagent transcripts (2026-09-07 → 09-28, nearly all CMF build exploration) are marked read, not backfilled.
 - [ ] **4. Cross-platform poller templates** in `deploy/pollers/`:
   - macOS: launchd `.plist` templates for the MCP server and the Claude Code and Codex pollers.
   - Linux: systemd `--user` `.service` + `.timer`.
@@ -335,7 +335,7 @@ Found while repairing Phase 2b. These four memories were promoted twice, once on
 - [ ] **Lost transcripts (provenance steps 6a/6b).** Claude Code's 30-day cleanup deleted 56 CLI and 39 Code-tab transcripts before capture (`cleanupPeriodDays` is now 36500). No local copy exists; the typed prompts of the 56 CLI sessions are journaled as partial `user_prompt.history` events. Searching further needs Full Disk Access (Time Machine depth), the NAS shares mounted, and User's answer on whether "Todds-Air" was another machine. Manifest: `imports/source/claude-restore/manifest.json` (local).
 - [ ] **Cloud-session transcripts (deferred, User 2026-10-02).** At least 8 Code sessions ran in the cloud, and 6 Cowork sessions were handed off to it after starting locally; none of that is on disk.
 - [ ] **Recurring Cowork scheduled tasks (decided 2026-10-03: journal-only).** `project-epsilon-daily-schedule`, `daily-research-sweep`, `project-epsilon-dashboard-refresh` and `social-media-analytics` (~470 sessions, ~7 Spark-hours) stay unextracted; the 8 other channels were extracted. Open option: add `weekly-status-brief` to `CMF_COWORK_EXTRACT_SCHEDULED_TASKS` in the Cowork poller's plist so new briefs are extracted as they land.
-- [ ] **The 6 pre-existing `remember`-path test failures** (`test_mcp_contract_fixtures`, `test_ms4e_extraction_profile`), present since `6fa4056`'s naming automation; the same change family as the Phase 2b naming collisions.
+- [x] **The 6 pre-existing `remember`-path test failures** (`test_mcp_contract_fixtures`, `test_ms4e_extraction_profile`), present since `6fa4056`'s naming automation. *No longer failing as of 2026-10-08 (full non-live suite: 898 passed, 0 failed), after MS9's close-out test repairs.*
 - **Relates to:** [MS9](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07) (Phase 5 finding; the Phase 2b repair) and [Double-promoted memories](#double-promoted-memories-in-mem-fabric-local-found-2026-10-02-provenance-step-5a).
 
 ### extract@1.7: scoped thread candidates (approved 2026-10-03, build after the extract@1.6 review)

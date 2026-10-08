@@ -170,7 +170,7 @@ def _resolve_state_dir() -> Path:
     return project_root / "doc-proposals"
 
 
-def _provider(env_var: str) -> str:
+def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:
     """Read a provider switch, rejecting anything not recognised.
 
     Failing loudly matters more here than tolerating a typo: silently
@@ -180,7 +180,7 @@ def _provider(env_var: str) -> str:
     """
     raw = os.getenv(env_var)
     if raw is None or not raw.strip():
-        return GEMINI_PROVIDER
+        return default
     value = raw.strip().lower()
     if value not in VALID_PROVIDERS:
         raise ValueError(
@@ -188,6 +188,17 @@ def _provider(env_var: str) -> str:
             f"Valid values are {', '.join(VALID_PROVIDERS)}."
         )
     return value
+
+
+def capture_llm_provider_from_env() -> str:
+    """Read CMF_CAPTURE_LLM_PROVIDER: the LLM provider unattended background
+    capture workers extract with, independent of CMF_LLM_PROVIDER.
+
+    Defaults to "local": a poller runs with no human review gate in front of
+    it, and one long transcript is dozens of extraction calls, so it must
+    never fall through to a metered API unless the operator opts in.
+    """
+    return _provider("CMF_CAPTURE_LLM_PROVIDER", default=LOCAL_PROVIDER)
 
 
 def extraction_profile_from_env() -> str:

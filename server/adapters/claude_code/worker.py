@@ -11,10 +11,11 @@ see docs/plan-active.md). hooks.py's Stop-hook accelerant, if built and
 wired, simply calls process_pending() sooner; the poller is the reliable
 default either way.
 
-CMF_LLM_PROVIDER is forced to "local" for this worker's own reasoning-
-episode extraction, independent of whatever the interactive server /
-.env has configured (docs/plan-active.md MS4b: one 8MB/595-turn session
-is already ~30 extraction calls, which would blow through Gemini's
+CMF_LLM_PROVIDER is switched to CMF_CAPTURE_LLM_PROVIDER (default "local",
+server.adapters.capture_provider) for this worker's own reasoning-episode
+extraction, independent of the interactive server's CMF_LLM_PROVIDER
+(docs/plan-active.md MS4b: one 8MB/595-turn session is already ~30
+extraction calls, which would blow through Gemini's
 free-tier daily quota in a single unattended run with no human review gate
 in front of it, unlike promotion). This worker never touches the live
 interactive process's os.environ permanently -- it patches, runs, restores.
@@ -26,8 +27,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import contextlib
-import os
 
 from server.adapters.claude_code.parser import ParseStats, parse_line
 from server.adapters.claude_code.transcript_reader import (
@@ -35,6 +34,7 @@ from server.adapters.claude_code.transcript_reader import (
     discover_transcript_files,
     read_new_lines,
 )
+from server.adapters.capture_provider import capture_llm_provider
 from server.adapters.spark_lock import spark_slot
 from server.consolidation.pipeline import run_reasoning_consolidation
 from server.consolidation.store import ConsolidationStore
@@ -61,24 +61,6 @@ class WorkerStats:
     conversation_harnesses: dict = field(default_factory=dict)
     consolidation_runs: list = field(default_factory=list)
     errors: list = field(default_factory=list)
-
-
-@contextlib.contextmanager
-def _forced_local_llm_provider():
-    """Force CMF_LLM_PROVIDER=local for the duration of the block, then
-    restore whatever was there before -- never leaks into the caller's
-    process-wide state.
-    """
-    previous = os.environ.get("CMF_LLM_PROVIDER")
-    os.environ["CMF_LLM_PROVIDER"] = "local"
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("CMF_LLM_PROVIDER", None)
-        else:
-            os.environ["CMF_LLM_PROVIDER"] = previous
-
 
 
 def process_pending(journal_store: SqliteEventStore, *args: Any, **kwargs: Any) -> WorkerStats:
@@ -192,7 +174,7 @@ def _process_pending_unlocked(
             store = consolidation_store or ConsolidationStore(None)
             if consolidation_store is None:
                 owned_store = store
-            with _forced_local_llm_provider():
+            with capture_llm_provider():
                 policy = ExtractPolicyV1()
                 for conversation_id in sorted(stats.conversations_touched):
                     for harness in sorted(stats.conversation_harnesses.get(conversation_id) or {"claude_code"}):

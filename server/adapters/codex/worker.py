@@ -14,17 +14,15 @@ Key invariants from docs/CODEX-CAPTURE-PLAN.md:
 3. Mutual exclusion: WorkerLock guards against overlapping poller and hook invocations.
 4. Resource cleanup: Reuses single store instances and closes all owned SQLite
    connections to prevent handle leaks.
-5. Local inference safeguard: CMF_LLM_PROVIDER is temporarily forced to "local"
-   during unattended worker runs.
+5. Local inference safeguard: CMF_LLM_PROVIDER is temporarily switched to
+   CMF_CAPTURE_LLM_PROVIDER (default "local") during unattended worker runs.
 """
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -36,6 +34,7 @@ from server.adapters.codex.transcript_reader import (
     capture_file_to_journal,
     discover_transcript_files,
 )
+from server.adapters.capture_provider import capture_llm_provider
 from server.adapters.spark_lock import spark_slot
 from server.consolidation.pipeline import run_reasoning_consolidation
 from server.consolidation.store import ConsolidationStore
@@ -65,24 +64,6 @@ class WorkerStats:
     consolidation_runs: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     lock_acquired: bool = True
-
-
-@contextlib.contextmanager
-def _forced_local_llm_provider():
-    """Force CMF_LLM_PROVIDER=local during unattended worker extraction.
-
-    Restores previous environment on exit. Prevents burning cloud quotas.
-    """
-    previous = os.environ.get("CMF_LLM_PROVIDER")
-    os.environ["CMF_LLM_PROVIDER"] = "local"
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("CMF_LLM_PROVIDER", None)
-        else:
-            os.environ["CMF_LLM_PROVIDER"] = previous
-
 
 
 def process_pending(journal_store: SqliteEventStore, *args: Any, **kwargs: Any) -> WorkerStats:
@@ -207,7 +188,7 @@ def _process_pending_unlocked(
 
                 extraction_policy = policy if policy is not None else ExtractPolicyV1()
 
-                with _forced_local_llm_provider():
+                with capture_llm_provider():
                     for pe in pending_extractions:
                         conv_id = pe["conversation_id"]
                         stats.extractions_attempted += 1

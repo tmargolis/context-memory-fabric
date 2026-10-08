@@ -31,8 +31,8 @@ from typing import Any, Optional
 
 from server.adapters.claude_code.parser import ParseStats, parse_line
 from server.adapters.claude_code.transcript_reader import TailStateStore, read_new_lines
-from server.adapters.claude_code.worker import _forced_local_llm_provider
 from server.adapters.claude_cowork.discovery import discover_transcripts, scheduled_allowlist
+from server.adapters.capture_provider import capture_llm_provider
 from server.adapters.spark_lock import spark_slot
 from server.consolidation.pipeline import run_reasoning_consolidation
 from server.consolidation.store import ConsolidationStore
@@ -133,7 +133,7 @@ def process_pending(
                 store = consolidation_store or ConsolidationStore(None)
                 if consolidation_store is None:
                     owned_store = store
-                with _forced_local_llm_provider():
+                with capture_llm_provider():
                     policy = ExtractPolicyV1()
                     for conversation_id in stats.extract_conversations:
                         try:
@@ -393,7 +393,7 @@ def extract_pending(
             return stats
         store = consolidation_store or ConsolidationStore(None)
         try:
-            with _forced_local_llm_provider():
+            with capture_llm_provider():
                 policy = ExtractPolicyV1()
                 for conversation_id in batch:
                     try:

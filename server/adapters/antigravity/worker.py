@@ -1,7 +1,7 @@
 """Antigravity adapter's background worker: tail changed transcript.jsonl
 files, journal new events, then run ExtractPolicy consolidation (episodes +
 doc proposals) over the touched conversations. Mirrors
-server.adapters.claude_code.worker's structure and CMF_LLM_PROVIDER-forcing
+server.adapters.claude_code.worker's structure and capture-provider
 rationale -- see that module's docstring.
 
 Intended to run from a launchd agent polling every ~15 minutes (precedent:
@@ -17,9 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import contextlib
 import json
-import os
 
 from server.adapters.antigravity.parser import ParseStats, parse_line
 from server.adapters.antigravity.project import resolve_project
@@ -28,6 +26,7 @@ from server.adapters.antigravity.transcript_reader import (
     discover_transcript_files,
     read_new_lines,
 )
+from server.adapters.capture_provider import capture_llm_provider
 from server.adapters.spark_lock import spark_slot
 from server.consolidation.pipeline import run_reasoning_consolidation
 from server.consolidation.store import ConsolidationStore
@@ -49,25 +48,6 @@ class WorkerStats:
     conversations_touched: set = field(default_factory=set)
     consolidation_runs: list = field(default_factory=list)
     errors: list = field(default_factory=list)
-
-
-@contextlib.contextmanager
-def _forced_local_llm_provider():
-    """Force CMF_LLM_PROVIDER=local for the duration of the block, then
-    restore whatever was there before -- never leaks into the caller's
-    process-wide state. Same rationale as claude_code/worker.py's copy:
-    this unattended worker's own reasoning-episode extraction must never
-    burn a cloud LLM's quota with no human review gate in front of it.
-    """
-    previous = os.environ.get("CMF_LLM_PROVIDER")
-    os.environ["CMF_LLM_PROVIDER"] = "local"
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("CMF_LLM_PROVIDER", None)
-        else:
-            os.environ["CMF_LLM_PROVIDER"] = previous
 
 
 def _peek_created_at(raw_line: str) -> Optional[datetime]:
@@ -234,7 +214,7 @@ def _process_pending_unlocked(
             store = consolidation_store or ConsolidationStore(None)
             if consolidation_store is None:
                 owned_store = store
-            with _forced_local_llm_provider():
+            with capture_llm_provider():
                 policy = ExtractPolicyV1()
                 for conversation_id in sorted(stats.conversations_touched):
                     try:
