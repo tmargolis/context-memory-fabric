@@ -42,10 +42,11 @@ named like an EntityNode attribute (name, summary, ...) is rejected outright.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from server.core.config import (
     LEGACY_EXTRACTION,
@@ -71,7 +72,37 @@ LEGACY_INSTRUCTIONS = (
 # techniques, formats and generic roles/organizations are entities; numbers,
 # files, identifiers and local labels are not. Keep examples for the prompt
 # and docstrings come from that review.
-RECALL_INSTRUCTIONS = (
+#
+# The examples that name the operator's own work -- projects, hardware,
+# topics, a person, file names -- come from the gitignored .env (MS10a), so
+# a new user's prompt never carries someone else's projects. Unset, each
+# falls back to the generic built-in below. Each site takes the first few
+# names in order; extra names are ignored.
+EXAMPLE_SETTINGS: dict[str, tuple[str, int, tuple[str, ...]]] = {
+    # placeholder: (env var, names used, built-in)
+    "workstreams": (
+        "CMF_EXTRACTION_WORKSTREAMS", 5, ("Atlas", "Acme Billing", "home-lab", "Field Notes", "Moonbeam"),
+    ),
+    "hardware": ("CMF_EXTRACTION_HARDWARE", 4, ("MacBook Pro", "NAS", "Raspberry Pi", "iPad")),
+    "topics": (
+        "CMF_EXTRACTION_TOPICS", 6,
+        ("home renovation", "photography", "machine learning", "personal finance", "gardening", "travel planning"),
+    ),
+    "person": ("CMF_EXTRACTION_PERSON", 1, ("Jordan Lee",)),
+    "debris_files": ("CMF_EXTRACTION_DEBRIS_FILES", 3, ("build_index.py", "results.json", "app.js")),
+}
+
+
+def extraction_examples() -> dict[str, list[str]]:
+    """Each example list: the setting's comma-separated names, else the built-in."""
+    out: dict[str, list[str]] = {}
+    for key, (env_var, count, builtin) in EXAMPLE_SETTINGS.items():
+        names = [n.strip() for n in (os.getenv(env_var) or "").split(",") if n.strip()]
+        out[key] = (names or list(builtin))[:count]
+    return out
+
+
+_RECALL_INSTRUCTIONS_TEMPLATE = (
     "The TEXT is a third-person summary of work from a personal knowledge log: decisions, plans, "
     "findings and troubleshooting, often followed by 'Driving question:' and 'Reasoning:' lines. "
     "Extract EVERY entity in it that fits one of the entity types, including ones mentioned only in "
@@ -81,10 +112,10 @@ RECALL_INSTRUCTIONS = (
     "real entities (uncertainty_fake_gemma-4-12b-it.jsonl names the model gemma-4-12b-it) but never "
     "extract the file name itself.\n"
     "Use the plain canonical name: no version numbers (Photoshop, not Photoshop v27) and no generic "
-    "suffixes (J-Space, not J-Space project). Extract each thing once: GitHub, not also 'GitHub "
+    "suffixes ({workstream}, not {workstream} project). Extract each thing once: GitHub, not also 'GitHub "
     "connector' or 'GitHub integration'.\n"
     "Never extract:\n"
-    "- file names, scripts or paths (build_traces20.py, qa_dump.json, jspace20.js)\n"
+    "- file names, scripts or paths ({debris_files})\n"
     "- functions, variables, fields, config keys, CLI flags, env vars (head_idx, defaultK, top_probs, sys.path)\n"
     "- exception and error names (ModuleNotFoundError)\n"
     "- numbers, measurements, sizes, durations, counts, PIDs, IPs, ports, layers, steps "
@@ -95,81 +126,82 @@ RECALL_INSTRUCTIONS = (
     "Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity."
 )
 
-
-class PersonOrRole(BaseModel):
-    """A specific person (Alex Finn) or a role a real person plays in the user's life (board
+# (label, model name, docstring template). A label is the dict key Graphiti
+# saves as the node's FalkorDB label; the docstring is the type description
+# Graphiti sends to the model, so it is part of the prompt.
+_RECALL_TYPE_TEMPLATES: tuple[tuple[str, str, str], ...] = (
+    ("Person", "PersonOrRole",
+     """A specific person ({person}) or a role a real person plays in the user's life (board
     director, property manager, staff, neighbor). Never the narrator ("the user", "the assistant"),
-    and never a name that only appears as sample data inside the work."""
-
-
-class OrganizationOrGroup(BaseModel):
-    """A company, institution, team, community, board or committee (Google, NVIDIA, condo board,
-    the board of an HOA)."""
-
-
-class SoftwareOrService(BaseModel):
-    """A software product, app, operating system, library, framework, service, platform, online
+    and never a name that only appears as sample data inside the work."""),
+    ("Organization", "OrganizationOrGroup",
+     """A company, institution, team, community, board or committee (Google, NVIDIA, condo board,
+    the board of an HOA)."""),
+    ("Software", "SoftwareOrService",
+     """A software product, app, operating system, library, framework, service, platform, online
     account or web technology (Google Docs, BBEdit, Photoshop, macOS, FalkorDB, torch, transformers,
     uvicorn, node-cron, Hugging Face, a Google account, CSP, CORS, DOM, canvas), or a tool the user
     built and refers to as a lasting thing (labeling tool). A file, script, dataset id, field or
-    variable name is NEVER Software."""
-
-
-class Format(BaseModel):
-    """A file or data format or encoding (JSON, Markdown, parquet, safetensors, GIF, HTML, CSV,
-    base64). The format itself, never a particular file."""
-
-
-class Topic(BaseModel):
-    """The overall subject of the whole piece of work, in general terms (artwork, 3D, EV charging
-    station, collaborative research studio, interpretability, star trails). At most TWO per text,
+    variable name is NEVER Software."""),
+    ("AIModel", "RecallAIModel",
+     """An AI or machine-learning model, model family or variant, including one named only by a size
+    or variant code (Claude, gemini-2.5-flash, qwen3.5-122b, Gemma, E4B, gemma-4-12b-it). Never
+    Hardware."""),
+    ("Hardware", "RecallHardware",
+     """A physical device, computer, component or piece of equipment ({hardware}, a camera or telescope). Never software, an operating system, a web technology, a
+    model, or a form-factor word like 'mobile'."""),
+    ("Workstream", "ProjectOrWork",
+     """A project, codebase, product effort, study or named creative work the user works on
+    ({workstreams}). Not a milestone, phase, step or
+    option inside one ("Phase 6", "Option C"), and not a document, README, test run, trace type or
+    data type inside a project (README, Trace Schema, Key Questions, local model test)."""),
+    ("Place", "RecallPlace",
+     """A real geographic location, venue, astronomical/celestial body or physical site (a city,
+    gallery, observatory, home, celestial targets like Sun, Moon). Never a word used to describe a
+    style or design ('a gallery/lab treatment')."""),
+    ("Method", "TechniqueOrMethod",
+     """A technique, algorithm, research method or practice (occlusion, counterfactuals, k-means,
+    PCA, MDS, teacher-forcing, logit lens). Not a one-off step, parameter or setting."""),
+    ("Format", "Format",
+     """A file or data format or encoding (JSON, Markdown, parquet, safetensors, GIF, HTML, CSV,
+    base64). The format itself, never a particular file."""),
+    ("Topic", "Topic",
+     """The overall subject of the whole piece of work, in general terms ({topics}). At most TWO per text,
     and only what the text as a whole is about. NEVER a data field, metric, variable, internal
     mechanism, quantity, UI element, step, setting or implementation concept (embedding vectors,
-    attention weights, entropy, per-layer opacity, ground truth answers)."""
+    attention weights, entropy, per-layer opacity, ground truth answers)."""),
+)
 
 
-class TechniqueOrMethod(BaseModel):
-    """A technique, algorithm, research method or practice (occlusion, counterfactuals, k-means,
-    PCA, MDS, teacher-forcing, logit lens). Not a one-off step, parameter or setting."""
+def render_recall_profile(
+    examples: Optional[dict[str, list[str]]] = None,
+) -> tuple[str, dict[str, type[BaseModel]]]:
+    """The typed-recall instructions and ontology with `examples` filled in
+    (default: extraction_examples(), read from the environment now).
+
+    Types are docstring-only models built fresh on each call, so rendering
+    with other examples never touches the module-level ones.
+    """
+    ex = extraction_examples() if examples is None else examples
+    fields = {
+        "workstream": ex["workstreams"][0],
+        "workstreams": ", ".join(ex["workstreams"]),
+        "hardware": ", ".join(ex["hardware"]),
+        "topics": ", ".join(ex["topics"]),
+        "person": ex["person"][0],
+        "debris_files": ", ".join(ex["debris_files"]),
+    }
+    instructions = _RECALL_INSTRUCTIONS_TEMPLATE.format(**fields)
+    types = {
+        label: create_model(model_name, __doc__=template.format(**fields), __module__=__name__)
+        for label, model_name, template in _RECALL_TYPE_TEMPLATES
+    }
+    return instructions, types
 
 
-class ProjectOrWork(BaseModel):
-    """A project, codebase, product effort, study or named creative work the user works on
-    (J-Space, Career Navigator, nanospark, Thought Trails, Unsaid). Not a milestone, phase, step or
-    option inside one ("Phase 6", "Option C"), and not a document, README, test run, trace type or
-    data type inside a project (README, Trace Schema, Key Questions, local model test)."""
-
-
-class RecallAIModel(BaseModel):
-    """An AI or machine-learning model, model family or variant, including one named only by a size
-    or variant code (Claude, gemini-2.5-flash, qwen3.5-122b, Gemma, E4B, gemma-4-12b-it). Never
-    Hardware."""
-
-
-class RecallHardware(BaseModel):
-    """A physical device, computer, component or piece of equipment (Mac Pro, NAS, NVIDIA Spark,
-    Galaxy Tab, a camera or telescope). Never software, an operating system, a web technology, a
-    model, or a form-factor word like 'mobile'."""
-
-
-class RecallPlace(BaseModel):
-    """A real geographic location, venue, astronomical/celestial body or physical site (a city,
-    gallery, observatory, home, celestial targets like Sun, Moon). Never a word used to describe a
-    style or design ('a gallery/lab treatment')."""
-
-
-RECALL_ENTITY_TYPES: dict[str, type[BaseModel]] = {
-    "Person": PersonOrRole,
-    "Organization": OrganizationOrGroup,
-    "Software": SoftwareOrService,
-    "AIModel": RecallAIModel,
-    "Hardware": RecallHardware,
-    "Workstream": ProjectOrWork,
-    "Place": RecallPlace,
-    "Method": TechniqueOrMethod,
-    "Format": Format,
-    "Topic": Topic,
-}
+# Rendered once at import: server/__init__.py has loaded .env by then, so a
+# change to the example settings takes effect on the next restart.
+RECALL_INSTRUCTIONS, RECALL_ENTITY_TYPES = render_recall_profile()
 
 _PROJECT_IN_SOURCE = re.compile(r"(?:^|\|)\s*project=([^|\s]+)")
 

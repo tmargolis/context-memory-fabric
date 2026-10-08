@@ -26,7 +26,10 @@ from server.providers.extraction_profile import (
     LEGACY_INSTRUCTIONS,
     RECALL_ENTITY_TYPES,
     RECALL_INSTRUCTIONS,
+    EXAMPLE_SETTINGS,
+    extraction_examples,
     extraction_kwargs,
+    render_recall_profile,
 )
 from server.review import projects
 from server.review.correction import correct_memory
@@ -120,6 +123,62 @@ class TestOntology(unittest.TestCase):
 
     def test_recall_adds_format_and_topic(self):
         self.assertTrue({"Format", "Topic"} <= set(RECALL_ENTITY_TYPES))
+
+
+class TestExtractionExamples(unittest.TestCase):
+    """The operator's own names in the typed-recall prompt come from .env
+    (CMF_EXTRACTION_*), never from code, so a new user's prompt carries none
+    of this deployment's projects."""
+
+    ENV_VARS = [env_var for env_var, _count, _builtin in EXAMPLE_SETTINGS.values()]
+
+    def _env(self, **values):
+        env = {k: v for k, v in os.environ.items() if k not in self.ENV_VARS}
+        env.update(values)
+        return mock.patch.dict(os.environ, env, clear=True)
+
+    @staticmethod
+    def _rendered_text(examples=None):
+        instructions, types = render_recall_profile(examples)
+        return instructions + "".join(t.__doc__ for t in types.values())
+
+    def test_unset_uses_builtins(self):
+        with self._env():
+            examples = extraction_examples()
+        for key, (_env_var, count, builtin) in EXAMPLE_SETTINGS.items():
+            self.assertEqual(examples[key], list(builtin)[:count])
+        text = self._rendered_text(examples)
+        self.assertIn("(Atlas, not Atlas project)", text)
+        self.assertIn("(build_index.py, results.json, app.js)", text)
+
+    def test_every_site_reads_its_setting(self):
+        # Canary names: each must reach the prompt, and no built-in name may
+        # survive at a site whose setting is set.
+        canaries = {
+            env_var: ",".join(f"{key.upper()}-{i}" for i in range(count))
+            for key, (env_var, count, _builtin) in EXAMPLE_SETTINGS.items()
+        }
+        with self._env(**canaries):
+            text = self._rendered_text()
+        for key, (_env_var, count, builtin) in EXAMPLE_SETTINGS.items():
+            for i in range(count):
+                self.assertIn(f"{key.upper()}-{i}", text)
+            for name in builtin:
+                self.assertNotIn(name, text, f"built-in {key} name {name!r} is still hardcoded")
+
+    def test_settings_are_trimmed_and_capped(self):
+        with self._env(CMF_EXTRACTION_HARDWARE=" a , ,b,c,d,e ", CMF_EXTRACTION_PERSON="  "):
+            examples = extraction_examples()
+        self.assertEqual(examples["hardware"], ["a", "b", "c", "d"])
+        self.assertEqual(examples["person"], list(EXAMPLE_SETTINGS["person"][2]))
+
+    def test_rendering_does_not_touch_the_module_ontology(self):
+        before = {label: t.__doc__ for label, t in RECALL_ENTITY_TYPES.items()}
+        with self._env(CMF_EXTRACTION_TOPICS="canary topic"):
+            _instructions, types = render_recall_profile()
+        self.assertIn("canary topic", types["Topic"].__doc__)
+        self.assertEqual({label: t.__doc__ for label, t in RECALL_ENTITY_TYPES.items()}, before)
+        self.assertEqual(set(types), set(RECALL_ENTITY_TYPES))
 
 
 class TestTypedRecallProject(unittest.TestCase):

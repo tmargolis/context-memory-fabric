@@ -249,7 +249,7 @@ async def get_context(
     topic: Annotated[
         str,
         Field(
-            description="The project, topic, or question to retrieve full personal context for (e.g. 'Project Atlas', 'Spark architecture', 'EV charging')."
+            description="The project, topic, or question to retrieve full personal context for (e.g. 'Project Atlas', 'home-lab network', 'kitchen renovation')."
         ),
     ],
     max_wiki_results: Annotated[
@@ -273,8 +273,8 @@ async def get_context(
 
     EXAMPLES OF USER INTENT:
     - 'Where are we with Project Atlas?'
-    - 'What do we know about the Spark architecture?'
-    - 'What's my current thinking on EV charging?'
+    - 'What do we know about the home-lab network?'
+    - 'What's my current thinking on the kitchen renovation?'
     - 'Continue our work on Context Memory Fabric.'
     - 'Catch me up on our discussions regarding the database.'
 
@@ -318,7 +318,7 @@ async def search_wiki(
     - Use when looking for specific authored content, structured tables, or uploaded document text.
 
     EXAMPLES OF USER INTENT:
-    - 'Find my notes on J-Space.'
+    - 'Find my notes on Project Atlas.'
     - 'What does the wiki say about OpenClaw?'
     - 'Search my reports for the candidate form.'
     - 'Look up the specification file for Interlock.'
@@ -377,7 +377,7 @@ async def recall_mem(
 
     EXAMPLES OF USER INTENT:
     - 'What did I decide about the database last time?'
-    - 'What changed recently regarding our Spark configuration?'
+    - 'What changed recently regarding our home-lab configuration?'
     - 'What was the outcome of the meeting with Noel?'
     - 'What are my current preferred model baselines?'
     - 'What did we agree on during the last session?'
@@ -411,13 +411,13 @@ async def remember(
     name: Annotated[
         Optional[str],
         Field(
-            description="Optional sequence identifier for the episode strictly following '<harness>-<project>-NNN' (e.g. 'chatgpt-ev-charging-018'). If omitted or if a descriptive title is given, the server auto-generates the sequential '<harness>-<project>-NNN' identifier."
+            description="Optional sequence identifier for the episode strictly following '<harness>-<project>-NNN' (e.g. 'chatgpt-project-atlas-018'). If omitted or if a descriptive title is given, the server auto-generates the sequential '<harness>-<project>-NNN' identifier."
         ),
     ] = None,
     project: Annotated[
         Optional[str],
         Field(
-            description="Optional project slug for the episode (e.g. 'ev-charging', 'context-memory-fabric', 'astrophotography', 'mac-infra'). Highly recommended to link the episode to its project hub."
+            description="Optional project slug for the episode (e.g. 'project-atlas', 'context-memory-fabric', 'home-lab'). Highly recommended to link the episode to its project hub."
         ),
     ] = None,
     source_description: Annotated[
@@ -435,13 +435,13 @@ async def remember(
 
     EXAMPLES OF USER INTENT:
     - 'Remember that we chose PostgreSQL for Project Atlas.'
-    - 'Save this preference: my preferred Spark baseline is GLM-4.7-Flash + Qwen3.5-27B.'
+    - 'Save this preference: my preferred local model is Qwen3.5-27B.'
     - 'Note that I decided to use port 6379 for FalkorDB.'
     - 'Record that the regulatory mapping review was completed on August 31.'
 
     IMPORTANT USAGE GUIDELINE:
     - Do NOT call this automatically for every casual chat message or temporary conversational turn. Only store substantive, meaningful decisions, preferences, milestones, and state changes.
-    - Episode identifiers follow the strict `<harness>-<project>-NNN` convention (e.g. `chatgpt-ev-charging-018`, `claude-code-context-memory-fabric-073`). Specify `project` whenever known; sequential numbering is managed automatically.
+    - Episode identifiers follow the strict `<harness>-<project>-NNN` convention (e.g. `chatgpt-project-atlas-018`, `claude-code-context-memory-fabric-073`). Specify `project` whenever known; sequential numbering is managed automatically.
 
     DISTINCTIONS:
     - Writes into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.
@@ -764,7 +764,7 @@ async def list_doc_proposals(
     ] = None,
     project: Annotated[
         Optional[str],
-        Field(description="Filter to proposals tagged with one project (e.g. 'context-memory-fabric', 'jspace'), as returned by list_review_conversations(). Omit to list across all projects. Proposals created before this field existed never match."),
+        Field(description="Filter to proposals tagged with one project (e.g. 'context-memory-fabric', 'project-atlas'), as returned by list_review_conversations(). Omit to list across all projects. Proposals created before this field existed never match."),
     ] = None,
 ) -> str:
     """List durable-knowledge doc proposals (MS6d). Read-only.
@@ -779,7 +779,7 @@ async def list_doc_proposals(
     - 'What doc proposals are still pending?'
     - 'Show me all the proposals I've approved but not yet applied.'
     - 'What doc proposals came out of that conversation?'
-    - 'Show me the doc proposals for the jspace project.'
+    - 'Show me the doc proposals for the project-atlas project.'
 
     DISTINCTIONS:
     - Read-only listing. Use get_doc_proposal for one proposal's full diff and rationale. Different from
@@ -1184,7 +1184,7 @@ async def edit_memory(
     - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.
     - new_content replaces the episode's facts too: it is re-extracted from the new content in the background
       (~30-40s on the local model) and its old facts are removed. It must match exactly one episode (use its
-      uuid) and fails without changing anything while another Spark job is running.
+      uuid) and fails without changing anything while another local-model extraction job is running.
     """
     return await edit_episodic_memory(
         target_query=target_query,
@@ -1330,8 +1330,8 @@ async def promote_approved_episodes(
     WHEN TO USE:
     - Use to close the gap between `review_episode`/`bulk_review_episodes` (which only record a verdict in
       the `reviews` table, per their own CRITICAL SAFETY CONTRACT) and actual episodic memory, one episode
-      per call. Spark-local entity/fact extraction takes 1–4 minutes per episode, so a multi-episode call
-      outlives client tool-call timeouts and overloads the Spark server; for several episodes, call this
+      per call. Local-model entity/fact extraction can take 1–4 minutes per episode, so a multi-episode call
+      outlives client tool-call timeouts and overloads the model server; for several episodes, call this
       once per episode, or run `python -m server.review.cli promote` from a terminal for a bulk batch.
     - Only an episode with `review_state='approved'` and not already promoted is eligible. An episode whose
       `derived_memories.approval_state` has since moved to rejected/superseded is refused even if an old
@@ -1392,7 +1392,7 @@ async def list_review_conversations(
     ] = None,
     project: Annotated[
         Optional[str],
-        Field(description="Filter to one project (e.g. 'context-memory-fabric', 'jspace') on both episodes and doc proposals. A conversation whose items carry no project (written before this field existed) never matches a non-None value — use this to review a large multi-project batch project-by-project."),
+        Field(description="Filter to one project (e.g. 'context-memory-fabric', 'project-atlas') on both episodes and doc proposals. A conversation whose items carry no project (written before this field existed) never matches a non-None value — use this to review a large multi-project batch project-by-project."),
     ] = None,
     include_tier2_only: Annotated[
         bool,
@@ -1463,7 +1463,7 @@ async def list_episode_proposals(
     ] = None,
     project: Annotated[
         Optional[str],
-        Field(description="Filter to episodes tagged with one project (e.g. 'context-memory-fabric', 'jspace'), as returned by list_review_conversations(). Omit to list across all projects. Episodes written before this field existed never match."),
+        Field(description="Filter to episodes tagged with one project (e.g. 'context-memory-fabric', 'project-atlas'), as returned by list_review_conversations(). Omit to list across all projects. Episodes written before this field existed never match."),
     ] = None,
 ) -> str:
     """List staged reasoning episodes awaiting or past review. Read-only.
@@ -1481,7 +1481,7 @@ async def list_episode_proposals(
     - 'What episodes are still queued for review?'
     - 'Show me the tier1 decisions waiting to be reviewed.'
     - 'Show me what came out of that one conversation.'
-    - 'Show me the episodes for the jspace project.'
+    - 'Show me the episodes for the project-atlas project.'
 
     DISTINCTIONS:
     - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from
