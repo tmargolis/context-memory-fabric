@@ -477,7 +477,9 @@ Context Memory Fabric utilizes the Graphiti graph schema inside FalkorDB:
 - **`[:NEXT_EPISODE]`**: Chronological transition between episodes.
 - **`[:IN_PROJECT]`** *(CMF-local, not Graphiti)*: `(:Episodic)` → `(:Project)`.
 
-### Graph naming (2026-09-09)
+### Graph naming (updated 2026-10-08)
 - **`mem-fabric-local`** — live graph. qwen3.5-122b extraction, `nomic-embed` (768-dim). Episodes named `<harness>-<project>-NNN`.
-- **`mem-fabric-gemini`** — pre-migration, 1024-dim, retained untouched (rollback).
-- **`mem-fabric-local-glm`** — rejected Phase 7 GLM build, kept as the A/B record.
+- **`mem-fabric-local.pre-<change>-<date>`** — a `GRAPH.COPY` backup taken before a production write; old ones are pruned once the change is settled.
+- **`mem-fabric-rebuild-scratch`** — the paused full rebuild from the journal ledger.
+- **`cmf_test`** — reserved for the test suite.
+- The pre-migration `mem-fabric-gemini` (rollback) and `mem-fabric-local-glm` (Phase 7 A/B record) graphs were found empty and deleted on 2026-10-08, along with older backups and scratch copies; a full dump from before that cleanup is kept locally. Rolling back to Gemini now means rebuilding from the journal into a new graph at `EMBEDDING_DIM=1024`.
