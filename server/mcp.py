@@ -36,7 +36,7 @@ from server.knowledge import (
     propose_knowledge_change as run_propose_knowledge_change,
     search_knowledge as run_search_knowledge,
 )
-from server.core.config import load_config
+from server.core.config import default_reviewer, load_config
 from server.core.http_auth import AUTH_TOKEN_ENV_VAR, BearerTokenAuthMiddleware, get_configured_auth_token
 from server.core.oauth_provider import CMFOAuthProvider
 from server.episode_proposals import (
@@ -824,7 +824,7 @@ async def review_doc_proposal(
     ] = None,
     reviewer: Annotated[
         Optional[str],
-        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+        Field(description="Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name."),
     ] = None,
 ) -> str:
     """Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.
@@ -843,7 +843,7 @@ async def review_doc_proposal(
     """
     try:
         proposal = review_proposal(
-            proposal_id, verdict, reviewer=reviewer or "todd", notes=notes
+            proposal_id, verdict, reviewer=reviewer or default_reviewer(), notes=notes
         )
         return format_review_result(proposal)
     except ValueError as e:
@@ -1547,7 +1547,7 @@ async def review_episode(
     ] = None,
     reviewer: Annotated[
         Optional[str],
-        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+        Field(description="Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name."),
     ] = None,
 ) -> str:
     """Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.
@@ -1570,7 +1570,7 @@ async def review_episode(
     verdict_fn = {"approved": approve_episode, "rejected": reject_episode, "deferred": defer_episode}[verdict]
     with ReviewStore() as review_store:
         try:
-            verdict_fn(review_store, memory_id, reviewer=reviewer or "todd", reason=reason)
+            verdict_fn(review_store, memory_id, reviewer=reviewer or default_reviewer(), reason=reason)
         except Exception as e:
             logger.error(f"Error reviewing episode '{memory_id}': {e}")
             return f"Error reviewing episode '{memory_id}': {e}"
@@ -1599,7 +1599,7 @@ async def bulk_review_episodes(
     ],
     reviewer: Annotated[
         Optional[str],
-        Field(description="Who is reviewing. Defaults to 'todd' — CMF is single-user today."),
+        Field(description="Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name."),
     ] = None,
 ) -> str:
     """Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.
@@ -1614,7 +1614,7 @@ async def bulk_review_episodes(
     """
     with ReviewStore() as review_store:
         try:
-            result = apply_verdicts(review_store, verdicts, reviewer=reviewer or "todd")
+            result = apply_verdicts(review_store, verdicts, reviewer=reviewer or default_reviewer())
         except Exception as e:
             logger.error(f"Error bulk-reviewing episodes: {e}")
             return f"Error bulk-reviewing episodes: {e}"

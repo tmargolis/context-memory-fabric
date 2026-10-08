@@ -4,6 +4,9 @@ Derives a project slug from the session/workspace `cwd` and `workspace_roots`
 following project slug conventions (e.g. `Dev/<project>`,
 `Documents/<project>`, `/Volumes/<volume>/projects/<project>`).
 
+CMF_PROJECT_FOLDER_MAP is applied first, and CMF_PROJECT_ROOTS replaces the
+built-in roots when set (server.core.project_roots).
+
 Per docs/CODEX-CAPTURE-PLAN.md:
 "Projectless sessions remain explicitly unassigned rather than inheriting
 the current repository."
@@ -16,7 +19,9 @@ from pathlib import Path
 import re
 from typing import Optional, Sequence
 
-# Matches a project directory under standard local project roots
+from server.core.project_roots import project_for_mapped_folder, project_roots, root_path_regex
+
+# Built-in roots when CMF_PROJECT_ROOTS is unset
 _PROJECT_PATH_RE = re.compile(
     r"(?:/Users/[^/\s\"]+/(?:Dev|Documents)|/Volumes/[^/\s\"]+/(?:data/)?projects)/([A-Za-z0-9_.-]+)"
 )
@@ -35,14 +40,20 @@ def project_from_path(path_str: Optional[str]) -> Optional[str]:
     if norm in ("/", str(Path.home()), "/tmp", "/private/tmp", "/var", "/private/var"):
         return None
 
-    m = _PROJECT_PATH_RE.search(norm)
+    mapped = project_for_mapped_folder(norm)
+    if mapped:
+        return mapped
+
+    roots = project_roots()
+    pattern = root_path_regex(roots) if roots is not None else _PROJECT_PATH_RE
+    m = pattern.search(norm)
     if not m:
         return None
 
     raw_slug = m.group(1)
     # Worktree naming convention: if slug contains worktree or is inside a worktrees dir
     if raw_slug in ("worktrees", ".worktrees"):
-        parts = norm.split("/")
+        parts = norm.replace("\\", "/").split("/")
         try:
             idx = parts.index(raw_slug)
             if idx + 1 < len(parts):

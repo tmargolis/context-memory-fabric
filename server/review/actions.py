@@ -29,13 +29,15 @@ from typing import Any, Optional
 
 from server.consolidation.promotion import PromotionStore, promote_reviewed
 from server.consolidation.store import ConsolidationStore
+from server.core.config import default_reviewer
 from server.episode_proposals import move_episode_mirror
 from server.journal.store import DEFAULT_JOURNAL_PATH, SqliteEventStore
 from server.review.store import APPROVED, DEFERRED, REJECTED, ReviewStore
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REVIEWER = "todd"
+# Read once at import; server/__init__.py has already loaded .env by then.
+DEFAULT_REVIEWER = default_reviewer()
 
 
 def _episode_proposals_dir_for(review_store: ReviewStore) -> Optional[Path]:

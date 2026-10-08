@@ -25,6 +25,8 @@ from pathlib import Path
 import re
 from typing import Any, Optional
 
+from server.core.project_roots import folder_project_map, project_for_mapped_folder  # noqa: F401  (re-exported)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SESSIONS_ROOT = Path.home() / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
@@ -83,35 +85,6 @@ def scheduled_task_projects() -> dict[str, str]:
             continue
         out[task.strip()] = _slug(project)
     return out
-
-
-def folder_project_map() -> list[tuple[str, str]]:
-    """`CMF_PROJECT_FOLDER_MAP="path=project,..."` (2026-10-03): a folder (and
-    everything under it) belongs to the named project. `~` expands; matching
-    is case-insensitive and the longest prefix wins, so a data folder nested
-    inside a repo can belong to a different project than the repo itself.
-    """
-    out: list[tuple[str, str]] = []
-    for item in (os.getenv("CMF_PROJECT_FOLDER_MAP") or "").split(","):
-        if not item.strip():
-            continue
-        path, sep, project = item.partition("=")
-        path = os.path.expanduser(path.strip()).rstrip("/")
-        if not sep or not path or not _slug(project):
-            logger.warning("cowork: ignoring malformed CMF_PROJECT_FOLDER_MAP entry %r", item)
-            continue
-        out.append((path.lower(), _slug(project)))
-    return sorted(out, key=lambda pp: len(pp[0]), reverse=True)
-
-
-def project_for_mapped_folder(folder: Optional[str], folder_map: list[tuple[str, str]]) -> Optional[str]:
-    if not folder:
-        return None
-    f = folder.rstrip("/").lower()
-    for prefix, project in folder_map:
-        if f == prefix or f.startswith(prefix + "/"):
-            return project
-    return None
 
 
 def project_for_session(

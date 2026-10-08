@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 import uuid
 
+from server.core.config import default_reviewer
 from server.providers.wiki.corpus import (
     IGNORED_DIR_NAMES,
     get_corpus_root,
@@ -384,7 +385,7 @@ def _save_proposal(proposal: DocProposal, proposals_dir: Optional[Path] = None) 
 def review_proposal(
     proposal_id: str,
     verdict: str,
-    reviewer: str = "todd",
+    reviewer: Optional[str] = None,
     notes: Optional[str] = None,
     proposals_dir: Optional[Path] = None,
 ) -> DocProposal:
@@ -413,6 +414,7 @@ def review_proposal(
             "re-review is refused rather than overwriting the prior verdict."
         )
 
+    reviewer = reviewer or default_reviewer()
     proposal.status = verdict
     proposal.reviewer = reviewer
     proposal.reviewed_at = datetime.now(timezone.utc).isoformat()
@@ -426,7 +428,7 @@ def review_proposal(
 def bulk_reject_proposals(
     proposal_ids: list[str],
     reason: str,
-    reviewer: str = "todd",
+    reviewer: Optional[str] = None,
     proposals_dir: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Reject a batch of pending proposals with one recorded reason each.

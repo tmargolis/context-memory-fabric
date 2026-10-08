@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+from server.core.project_roots import project_roots, root_path_regex
+
 UNKNOWN_PROJECT = "unknown"
 
 # Matches an absolute path under a "projects live here" root, capturing the
@@ -47,7 +49,7 @@ UNKNOWN_PROJECT = "unknown"
 # (Dev/Documents only, this machine's actual layout) rather than "any path
 # under /Users/<user>/" -- a broad match would just as happily "win" on a
 # heavily-referenced library path (site-packages, a venv) as on the real
-# workspace.
+# workspace. CMF_PROJECT_ROOTS replaces it when set.
 _WORKSPACE_PATH_RE = re.compile(r"/Users/[^/\s\"]+/(?:Dev|Documents)/([A-Za-z0-9_.-]+)")
 
 # A transcript is JSON lines of bounded-ish size (real ones seen: tens of KB
@@ -92,7 +94,9 @@ def _project_from_transcript_paths(conversation_id: str, app_data_dir: Path) -> 
     except OSError:
         return None
 
-    matches = _WORKSPACE_PATH_RE.findall(text)
+    roots = project_roots()
+    pattern = root_path_regex(roots) if roots is not None else _WORKSPACE_PATH_RE
+    matches = pattern.findall(text)
     if not matches:
         return None
     slug, _count = Counter(matches).most_common(1)[0]

@@ -16,6 +16,7 @@ staleness for no measurable benefit.
 """
 
 from dataclasses import dataclass
+import getpass
 import os
 from pathlib import Path
 from typing import Optional
@@ -188,6 +189,18 @@ def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:
             f"Valid values are {', '.join(VALID_PROVIDERS)}."
         )
     return value
+
+
+def default_reviewer() -> str:
+    """Who a review verdict is recorded against when the caller names no one:
+    CMF_REVIEWER, else the OS login name."""
+    raw = os.getenv("CMF_REVIEWER")
+    if raw and raw.strip():
+        return raw.strip()
+    try:
+        return getpass.getuser()
+    except Exception:  # no login name in some containers
+        return "user"
 
 
 def capture_llm_provider_from_env() -> str:

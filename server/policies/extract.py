@@ -31,6 +31,7 @@ import logging
 import re
 from typing import Optional
 
+from server.consolidation.project_aliases import resolve_project
 from server.core.models import DatePrecision, SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
@@ -591,6 +592,8 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
                 project = derive_project_from_path(ordered[0].metadata.get("project_path"))
             elif harness in ("antigravity", "codex", "claude_cowork") and ordered:
                 project = ordered[0].metadata.get("project")
+            # Same alias folding pipeline.py applies to derived_memories.project.
+            project = resolve_project(project)
 
             if project and project not in ("unknown", "other", "tmp-other"):
                 target_path = _canonicalize_doc_project_folder(target_path, project, existing_project_folders)

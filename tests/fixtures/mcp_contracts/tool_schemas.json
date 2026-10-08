@@ -125,7 +125,7 @@
             }
           ],
           "default": null,
-          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "description": "Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name.",
           "title": "Reviewer"
         },
         "verdicts": {
@@ -1239,7 +1239,7 @@
             }
           ],
           "default": null,
-          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "description": "Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name.",
           "title": "Reviewer"
         },
         "verdict": {
@@ -1310,7 +1310,7 @@
             }
           ],
           "default": null,
-          "description": "Who is reviewing. Defaults to 'todd' \u2014 CMF is single-user today.",
+          "description": "Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name.",
           "title": "Reviewer"
         },
         "verdict": {
