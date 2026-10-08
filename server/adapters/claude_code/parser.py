@@ -213,8 +213,15 @@ def parse_line(
     stats: Optional[ParseStats] = None,
     default_harness: str = HARNESS,
     event_id_prefix: str = EVENT_ID_PREFIX,
+    conversation_id: Optional[str] = None,
+    extra_metadata: Optional[dict] = None,
 ) -> Optional[SourceEvent]:
     """Parse one JSONL line into a SourceEvent, or None if it should be skipped.
+
+    `conversation_id` defaults to `session_id`. A subagent transcript passes
+    its own (`<session>:agent-<id>`) with `extra_metadata` naming the parent
+    session, so its turns form a separate conversation; `session_id` stays
+    the parent's, which is also what the transcript's own lines carry.
 
     Never raises: any parse or shape failure is counted and logged, not
     propagated -- a single malformed/unexpected line must not abort tailing
@@ -281,14 +288,15 @@ def parse_line(
 
     harness = harness_for_entrypoint(record.get("entrypoint"), default_harness)
 
+    conversation = conversation_id or session_id
     parent_uuid = record.get("parentUuid")
-    parent_event_ids = [f"{event_id_prefix}:{session_id}:{parent_uuid}"] if parent_uuid else []
+    parent_event_ids = [f"{event_id_prefix}:{conversation}:{parent_uuid}"] if parent_uuid else []
 
     # Redact before hashing -- see module docstring.
     redacted_content, redacted_count = filters.redact_secrets_and_count(extracted)
 
     content_hash = compute_content_hash(redacted_content)
-    event_id = f"{event_id_prefix}:{session_id}:{turn_uuid}"
+    event_id = f"{event_id_prefix}:{conversation}:{turn_uuid}"
 
     event = SourceEvent(
         schema_version=SCHEMA_VERSION,
@@ -296,7 +304,7 @@ def parse_line(
         event_type=EVENT_TYPE_TURN,
         source=SourceProvenance(
             harness=harness,
-            conversation_id=session_id,
+            conversation_id=conversation,
             session_id=session_id,
             turn_id=turn_uuid,
             model=(record.get("message") or {}).get("model") if rtype == "assistant" else None,
@@ -313,6 +321,7 @@ def parse_line(
             "entrypoint": record.get("entrypoint"),
             "redacted_field_count": redacted_count,
             "content_kind": redacted_content.get("kind"),
+            **(extra_metadata or {}),
         },
     )
     stats["kept"] += 1

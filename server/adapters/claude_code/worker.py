@@ -116,13 +116,14 @@ def _process_pending_unlocked(
         for transcript in discover_transcript_files(projects_root):
             stats.files_scanned += 1
             session_id = transcript.session_id
+            conversation_id = transcript.conversation
             try:
                 raw_lines = list(
                     read_new_lines(
                         transcript.path,
                         tail_store,
                         project_slug=transcript.project_slug,
-                        session_id=session_id,
+                        session_id=conversation_id,
                     )
                 )
             except OSError as exc:
@@ -140,6 +141,8 @@ def _process_pending_unlocked(
                     session_id=session_id,
                     project_path=transcript.project_slug,
                     stats=parse_stats,
+                    conversation_id=conversation_id,
+                    extra_metadata=transcript.extra_metadata,
                 )
                 if event is None:
                     continue
@@ -152,8 +155,8 @@ def _process_pending_unlocked(
                 continue
 
             stats.files_with_new_bytes += 1
-            stats.conversations_touched.add(session_id)
-            stats.conversation_harnesses.setdefault(session_id, set()).update(e.source.harness for e in events)
+            stats.conversations_touched.add(conversation_id)
+            stats.conversation_harnesses.setdefault(conversation_id, set()).update(e.source.harness for e in events)
 
             for event in events:
                 inserted = journal_store.append(event)

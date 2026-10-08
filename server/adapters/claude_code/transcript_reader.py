@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -62,6 +63,26 @@ class TranscriptFile:
     path: Path
     project_slug: str
     session_id: str
+    # Set for a subagent transcript (<session>/subagents/agent-<id>.jsonl):
+    # it is its own conversation, `<session>:agent-<id>`, linked to the
+    # parent session the way Codex links a child thread.
+    conversation_id: Optional[str] = None
+    parent_conversation_id: Optional[str] = None
+    subagent: Optional[dict] = None
+
+    @property
+    def conversation(self) -> str:
+        return self.conversation_id or self.session_id
+
+    @property
+    def extra_metadata(self) -> dict:
+        if not self.parent_conversation_id:
+            return {}
+        meta = {"parent_conversation_id": self.parent_conversation_id, "is_subagent": True}
+        for key, value in (self.subagent or {}).items():
+            if value:
+                meta[f"subagent_{key}"] = value
+        return meta
 
 
 class TailStateStore:
@@ -154,10 +175,23 @@ def _project_allowed(project_slug: str, allow: set[str], deny: set[str]) -> bool
     return True
 
 
+def _subagent_meta(jsonl_path: Path) -> dict:
+    """agentType / description from the sibling `.meta.json`, when present."""
+    meta_path = jsonl_path.with_suffix(".meta.json")
+    try:
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {"type": raw.get("agentType"), "description": raw.get("description")}
+
+
 def discover_transcript_files(projects_root: Optional[Path] = None) -> list[TranscriptFile]:
-    """Find every `<session-uuid>.jsonl` under `~/.claude/projects/*/`,
-    minus temp-dir projects (unless CMF_CLAUDE_CODE_INCLUDE_TEMP), filtered
-    by CMF_CLAUDE_CODE_PROJECT_ALLOW/_DENY.
+    """Find every `<session-uuid>.jsonl` under `~/.claude/projects/*/`, and
+    every subagent transcript under `<session-uuid>/subagents/agent-*.jsonl`
+    (MS10a), minus temp-dir projects (unless CMF_CLAUDE_CODE_INCLUDE_TEMP),
+    filtered by CMF_CLAUDE_CODE_PROJECT_ALLOW/_DENY.
     """
     root = projects_root or DEFAULT_PROJECTS_ROOT
     if not root.is_dir():
@@ -175,6 +209,19 @@ def discover_transcript_files(projects_root: Optional[Path] = None) -> list[Tran
         for jsonl_path in sorted(project_dir.glob("*.jsonl")):
             session_id = jsonl_path.stem
             out.append(TranscriptFile(path=jsonl_path, project_slug=slug, session_id=session_id))
+        for jsonl_path in sorted(project_dir.glob("*/subagents/agent-*.jsonl")):
+            session_id = jsonl_path.parent.parent.name
+            agent_id = jsonl_path.stem.removeprefix("agent-")
+            out.append(
+                TranscriptFile(
+                    path=jsonl_path,
+                    project_slug=slug,
+                    session_id=session_id,
+                    conversation_id=f"{session_id}:agent-{agent_id}",
+                    parent_conversation_id=session_id,
+                    subagent=_subagent_meta(jsonl_path),
+                )
+            )
     return out
 
 
