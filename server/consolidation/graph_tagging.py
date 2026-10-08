@@ -33,12 +33,10 @@ logger = logging.getLogger(__name__)
 
 TagFn = Callable[[str, Optional[str], Optional[str]], Awaitable[None]]
 
-# Kept in sync with scripts/tag_projects.py's own DISPLAY_OVERRIDES -- see
-# that module's docstring for why "career-navigator" maps to "job_hunt".
-# tag_projects.py imports this dict rather than keeping its own copy.
-PROJECT_DISPLAY_OVERRIDES: dict[str, str] = {
-    "career-navigator": "job_hunt",
-}
+# tag_projects.py imports this dict rather than keeping its own copy. Maps a
+# project id to a different FalkorDB label (e.g. {"old-slug": "new-slug"}, to
+# fold a retired slug into its replacement). Empty by default.
+PROJECT_DISPLAY_OVERRIDES: dict[str, str] = {}
 
 # Harness id (server/core/models.py SourceEvent.source.harness) -> FalkorDB
 # label. Not a bare .title() of the harness string -- "chatgpt" -> "ChatGPT"

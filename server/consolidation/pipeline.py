@@ -60,6 +60,7 @@ from server.policies.protocols import (
 from server.adapters.claude_code.project_slug import derive_project_from_path
 from server.consolidation.project_aliases import resolve_project
 from server.adapters.claude_code.parser import HARNESS_COWORK, TRANSCRIPT_HARNESSES as CLAUDE_TRANSCRIPT_HARNESSES
+from server.adapters.claude_cowork.discovery import project_for_journaled_session
 from server.proposals import create_doc_proposal, review_proposal
 from server.review.actions import reject_episode
 from server.review.store import ReviewStore
@@ -446,7 +447,11 @@ def run_reasoning_consolidation(
                 # folder into metadata["project"], like antigravity/codex.
                 if harness_slug in CLAUDE_TRANSCRIPT_HARNESSES and harness_slug != HARNESS_COWORK:
                     project = derive_project_from_path(window.events[0].metadata.get("project_path"))
-                elif harness_slug in ("antigravity", "codex", HARNESS_COWORK):
+                elif harness_slug == HARNESS_COWORK:
+                    # Re-derive from the journaled folder/sidecar so the current
+                    # folder and scheduled-task maps apply to old events too.
+                    project = project_for_journaled_session(window.events[0].metadata)
+                elif harness_slug in ("antigravity", "codex"):
                     project = window.events[0].metadata.get("project")
                 else:
                     project = None

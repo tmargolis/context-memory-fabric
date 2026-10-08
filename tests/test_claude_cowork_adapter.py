@@ -16,6 +16,7 @@ from server.adapters.claude_cowork.discovery import (
     discover_transcripts,
     folder_project_map,
     project_for_folder,
+    project_for_journaled_session,
     project_for_session,
     scheduled_task_projects,
 )
@@ -456,3 +457,24 @@ def test_retriage_resends_withheld_windows_of_allowlisted_scheduled_sessions(tmp
         stats = cowork_worker.extract_pending(store, _Store(), retriage=True)
         assert stats.extract_conversations == ["local_s-t0"]
     assert seen[0][1]["triage"] is False and seen[0][1]["min_window_events"] == 1
+
+
+def test_project_for_journaled_session_applies_current_maps_to_old_events(monkeypatch):
+    # Journaled before the folder map existed: metadata["project"] holds the old slug.
+    old = {"project": "proj-alpha", "project_folder": f"{HOME}/Dev/proj-alpha/work", "cowork": {}}
+    monkeypatch.setenv("CMF_PROJECT_FOLDER_MAP", "~/Dev/proj-alpha/work=proj-work")
+    monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
+    assert project_for_journaled_session(old) == "proj-work"
+    # The repo root is outside the mapped folder, so it keeps its own project.
+    root = {"project": "proj-alpha", "project_folder": f"{HOME}/Dev/proj-alpha", "cowork": {}}
+    assert project_for_journaled_session(root) == "proj-alpha"
+    # A scheduled task's mapping beats the folder, as at journaling time.
+    monkeypatch.setenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", "weekly=proj-task")
+    assert project_for_journaled_session({**old, "cowork": {"scheduledTaskId": "weekly"}}) == "proj-task"
+
+
+def test_project_for_journaled_session_falls_back_to_stored_project(monkeypatch):
+    monkeypatch.delenv("CMF_PROJECT_FOLDER_MAP", raising=False)
+    monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
+    assert project_for_journaled_session({"project": "stored"}) == "stored"
+    assert project_for_journaled_session({}) is None

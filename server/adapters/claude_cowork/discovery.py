@@ -136,6 +136,21 @@ def project_for_session(
     )
 
 
+def project_for_journaled_session(metadata: dict[str, Any]) -> Optional[str]:
+    """A journaled Cowork event's project, re-derived from its folder and sidecar.
+
+    Events keep the metadata they were journaled with, so a folder or
+    scheduled-task mapping added later never reaches `metadata["project"]`.
+    Re-deriving here lets extraction from an existing journal (a rebuild, a
+    new policy version) see the current maps. The stored value is the
+    fallback when nothing derives.
+    """
+    derived = project_for_session(
+        metadata.get("project_folder"), metadata.get("cowork") or {}, scheduled_task_projects()
+    )
+    return derived or metadata.get("project")
+
+
 _HOME = str(Path.home())
 
 

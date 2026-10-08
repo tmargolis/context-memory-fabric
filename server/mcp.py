@@ -1182,6 +1182,9 @@ async def edit_memory(
 
     SIDE EFFECTS:
     - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.
+    - new_content replaces the episode's facts too: it is re-extracted from the new content in the background
+      (~30-40s on the local model) and its old facts are removed. It must match exactly one episode (use its
+      uuid) and fails without changing anything while another Spark job is running.
     """
     return await edit_episodic_memory(
         target_query=target_query,
@@ -1191,6 +1194,7 @@ async def edit_memory(
         new_name=new_name,
         dry_run=dry_run,
         format_for_mcp=True,
+        background=True,
     )
 
 

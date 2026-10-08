@@ -59,12 +59,15 @@ import tempfile  # noqa: E402
 os.environ["CMF_STATE_DIR"] = tempfile.mkdtemp(prefix="cmf-test-state-")
 
 _REAL_STATE_DIRS = (_PROJECT_ROOT / "doc-proposals", _PROJECT_ROOT / "episode-proposals")
+_REAL_IMPORT_REGISTRY = _PROJECT_ROOT / "imports" / "state" / "import_registry.json"
 
 
 @pytest.fixture(autouse=True)
 def _isolated_state_dir(tmp_path, monkeypatch):
     """Point CMF_STATE_DIR at this test's tmp_path and refuse the real dirs."""
     monkeypatch.setenv("CMF_STATE_DIR", str(tmp_path / "cmf-state"))
+    # edit_memory / reconcile_memories sync the import registry; never the real one.
+    monkeypatch.setenv("CMF_IMPORT_REGISTRY", str(tmp_path / "import_registry.json"))
     # The operator's own project/task mappings in .env must not steer tests.
     monkeypatch.delenv("CMF_PROJECT_ALIASES", raising=False)
     monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
@@ -75,6 +78,9 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     resolved = (get_proposals_dir().resolve(), get_episode_proposals_dir().resolve())
     for real in _REAL_STATE_DIRS:
         assert real.resolve() not in resolved, f"test state resolves to production dir {real}"
+    from server.providers.memory_graphiti import default_import_registry_path
+
+    assert default_import_registry_path().resolve() != _REAL_IMPORT_REGISTRY.resolve(), "test registry is the real one"
     yield
 
 

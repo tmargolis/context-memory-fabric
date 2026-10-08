@@ -14,6 +14,7 @@ unchanged from their pre-Milestone-1 form.
 """
 
 import asyncio
+import contextlib
 import contextvars
 from datetime import datetime, timezone
 import hashlib
@@ -1075,6 +1076,7 @@ def format_edit_memory_results_for_mcp(
     matched_entities: list[dict[str, Any]],
     matched_edges: list[dict[str, Any]],
     registry_updates: list[dict[str, Any]],
+    reextraction: Optional[dict[str, Any]] = None,
 ) -> str:
     """Format memory edit/update results into clean Markdown for MCP clients."""
     status_label = "DRY RUN (Preview Only - No Changes Made)" if dry_run else "COMMITTED (Graphiti and FalkorDB Updated)"
@@ -1133,7 +1135,124 @@ def format_edit_memory_results_for_mcp(
             lines.append(f"  - **Text:** `{reg.get('new_text')}`")
             lines.append("")
 
+    if reextraction:
+        lines.append(f"#### ♻️ Fact Re-extraction: `{reextraction.get('status')}`")
+        retract = reextraction.get("retract") or {}
+        for f in retract.get("facts_deleted", []):
+            lines.append(f"- **Removed fact:** {f.get('fact')}")
+        for f in retract.get("facts_detached", []):
+            lines.append(f"- **Detached (still supported elsewhere):** {f.get('fact')}")
+        for fact in reextraction.get("new_facts", []):
+            lines.append(f"- **New fact:** {fact}")
+        if reextraction.get("message"):
+            lines.append(f"- {reextraction['message']}")
+        lines.append("")
+
     return "\n".join(lines).strip()
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_EDIT_LEDGER = _REPO_ROOT / "imports" / "state" / "edit_memory_ledger.jsonl"
+
+
+def default_import_registry_path() -> Path:
+    """imports/state/import_registry.json at the repo root, or CMF_IMPORT_REGISTRY.
+
+    Until 2026-10-06 edit_memory and reconcile_memories resolved this one
+    directory too shallow (server/imports/...), a path that never existed,
+    so registry sync was silently skipped. Tests point CMF_IMPORT_REGISTRY
+    at a temp file (tests/conftest.py) so they can't write the real one.
+    """
+    override = os.getenv("CMF_IMPORT_REGISTRY")
+    return Path(override) if override else _REPO_ROOT / "imports" / "state" / "import_registry.json"
+
+
+def _append_edit_ledger(ledger_path: Path, record: dict[str, Any]) -> None:
+    """Append one edit_memory re-extraction record (best-effort, JSONL)."""
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(), **record}, default=str) + "\n")
+    except Exception as e:  # noqa: BLE001 - the ledger must never block an edit
+        logger.warning(f"edit_memory ledger write failed: {e}")
+
+
+async def _reextract_episode(
+    graphiti: Graphiti,
+    old_uuid: str,
+    *,
+    content: str,
+    name: str,
+    reference_time: str | datetime,
+) -> dict[str, Any]:
+    """Replace one episode with a fresh extraction of `content`, keeping its name.
+
+    Add first, retract second: the new episode is extracted under a temporary
+    name, post-processed and tagged exactly as remember() does, and only then
+    is the old episode retracted (episode_retract) and the new one renamed
+    back. A failed extraction removes the partial new episode and leaves the
+    old one untouched. A fact the new extraction repeats gets the new episode
+    added to `r.episodes` by Graphiti's edge dedupe before the old episode is
+    detached, so it survives.
+
+    add_episode is called directly, not through remember(), because
+    resolve_remember_identity renames any name not shaped
+    <harness>-<project>-NNN.
+    """
+    from uuid import uuid4
+
+    from server.consolidation.graph_tagging import HARNESS_LABELS, tag_promoted_episode
+    from server.providers.episode_retract import retract_episode
+
+    driver = graphiti.driver
+    rows = await driver.execute_query(
+        "MATCH (e:Episodic {uuid: $u}) RETURN e.source_description AS sd, e.project AS project, labels(e) AS labels",
+        u=old_uuid,
+    )
+    rows = rows[0] if rows and isinstance(rows[0], list) else (rows or [])
+    if not rows:
+        raise ValueError(f"episode {old_uuid} no longer exists; nothing re-extracted")
+    sd = rows[0]["sd"] or "Context Memory Fabric MCP"
+    project = rows[0]["project"]
+    labels = rows[0]["labels"] or []
+    harness = next((h for h, label in HARNESS_LABELS.items() if label in labels), None)
+
+    pending = f"{name}__edit-pending-{uuid4().hex[:8]}"
+    new_uuid: Optional[str] = None
+    try:
+        result = await graphiti.add_episode(
+            name=pending,
+            episode_body=neutralize_fulltext_hazards(content),
+            source_description=sd,
+            reference_time=parse_iso_datetime(reference_time),
+            source=EpisodeType.text,
+            **extraction_kwargs(source_description=sd),
+        )
+        new_uuid = result.episode.uuid
+        await postprocess_episode(graphiti, result, episode_name=pending, content=content, source_description=sd)
+        await tag_promoted_episode(driver, pending, project, harness)
+    except BaseException:
+        leftovers = await driver.execute_query("MATCH (e:Episodic {name: $n}) RETURN e.uuid AS uuid", n=pending)
+        leftovers = leftovers[0] if leftovers and isinstance(leftovers[0], list) else (leftovers or [])
+        for r in leftovers:
+            await retract_episode(driver, r["uuid"])
+        raise
+
+    retracted = await retract_episode(driver, old_uuid)
+    await driver.execute_query("MATCH (e:Episodic {uuid: $u}) SET e.name = $name", u=new_uuid, name=name)
+
+    facts = await driver.execute_query(
+        "MATCH ()-[r:RELATES_TO]->() WHERE $u IN r.episodes RETURN r.fact AS fact", u=new_uuid,
+    )
+    facts = facts[0] if facts and isinstance(facts[0], list) else (facts or [])
+    return {
+        "status": "done",
+        "name": name,
+        "old_uuid": old_uuid,
+        "new_uuid": new_uuid,
+        "retract": retracted,
+        "new_facts": [f["fact"] for f in facts],
+    }
 
 
 @overload
@@ -1146,6 +1265,9 @@ async def edit_memory(
     dry_run: bool = False,
     format_for_mcp: Literal[True] = True,
     registry_path: Optional[str | Path] = None,
+    background: bool = False,
+    ledger_path: Optional[str | Path] = None,
+    journal_db: Optional[str | Path] = None,
 ) -> str: ...
 
 
@@ -1159,6 +1281,9 @@ async def edit_memory(
     dry_run: bool = False,
     format_for_mcp: Literal[False] = ...,
     registry_path: Optional[str | Path] = None,
+    background: bool = False,
+    ledger_path: Optional[str | Path] = None,
+    journal_db: Optional[str | Path] = None,
 ) -> dict[str, Any]: ...
 
 
@@ -1172,6 +1297,9 @@ async def edit_memory(
     dry_run: bool = False,
     format_for_mcp: bool = ...,
     registry_path: Optional[str | Path] = None,
+    background: bool = False,
+    ledger_path: Optional[str | Path] = None,
+    journal_db: Optional[str | Path] = None,
 ) -> str | dict[str, Any]: ...
 
 
@@ -1184,6 +1312,9 @@ async def edit_memory(
     dry_run: bool = False,
     format_for_mcp: bool = True,
     registry_path: Optional[str | Path] = None,
+    background: bool = False,
+    ledger_path: Optional[str | Path] = None,
+    journal_db: Optional[str | Path] = None,
 ) -> str | dict[str, Any]:
     """Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.
 
@@ -1206,6 +1337,17 @@ async def edit_memory(
         dry_run: If True, previews changes without writing to FalkorDB or updating the import registry.
         format_for_mcp: If True, returns formatted Markdown for MCP responses.
         registry_path: Path to import registry JSON (defaults to project-root imports/state/import_registry.json).
+        background: Run a `new_content` re-extraction as a background task and return at once
+            (the MCP tool does this; extraction takes ~30-40s on Spark).
+        ledger_path: JSONL ledger for re-extractions (default imports/state/edit_memory_ledger.jsonl).
+        journal_db: Journal path whose directory holds the Spark lock (default: the live journal).
+
+    `new_content` replaces the episode's facts as well as its text: the
+    episode is re-extracted from the new content and the old episode's facts,
+    mentions and orphaned entities are retracted (_reextract_episode). That
+    needs the Spark slot and exactly one directly-matched episode; otherwise
+    it raises before writing anything. Date-only edits (the automatic date
+    substitution in content) keep the no-LLM path.
     """
     if not target_query or not target_query.strip():
         raise ValueError("target_query cannot be empty.")
@@ -1316,6 +1458,70 @@ async def edit_memory(
                 if ep_uuid in direct_episode_uuids:
                     direct_edge_uuids.add(r["uuid"])
 
+    # 3b. A new_content edit re-extracts the episode's facts on Spark. Check
+    # everything that can refuse it before any write below.
+    reextract_uuid: Optional[str] = None
+    if new_content is not None and direct_episode_uuids:
+        if len(direct_episode_uuids) > 1:
+            names = sorted(episodes_map[u].get("name") or u for u in direct_episode_uuids)
+            raise ValueError(
+                f"new_content would replace {len(direct_episode_uuids)} episodes ({', '.join(names[:5])}); "
+                "target exactly one episode, preferably by uuid. Nothing was changed."
+            )
+        (only_uuid,) = direct_episode_uuids
+        if (episodes_map[only_uuid].get("content") or "") != new_content:
+            reextract_uuid = only_uuid
+
+    spark_hold = contextlib.ExitStack()
+    if reextract_uuid and not dry_run:
+        from server.adapters.spark_lock import spark_slot
+
+        busy = spark_hold.enter_context(spark_slot(Path(journal_db) if journal_db else None))
+        if busy:
+            spark_hold.close()
+            raise RuntimeError(
+                f"Spark is busy ({busy}), and replacing an episode's content re-extracts its facts there. "
+                "Nothing was changed; retry when the Spark job finishes."
+            )
+    # The slot is released when this function exits, unless the re-extraction
+    # is handed to a background task, which then releases it itself.
+    try:
+        return await _edit_memory_writes(
+            spark_hold, reextract_uuid, graphiti, driver, clean_query, episodes_map, entities_map, edges_map,
+            direct_episode_uuids, direct_entity_uuids, direct_edge_uuids,
+            new_valid_at_iso, new_date_str, new_compact_str, new_content, new_summary, new_name,
+            dry_run, format_for_mcp, registry_path, background,
+            Path(ledger_path) if ledger_path else DEFAULT_EDIT_LEDGER,
+        )
+    finally:
+        spark_hold.close()
+
+
+async def _edit_memory_writes(
+    spark_hold: contextlib.ExitStack,
+    reextract_uuid: Optional[str],
+    graphiti: Graphiti,
+    driver: Any,
+    clean_query: str,
+    episodes_map: dict[str, dict[str, Any]],
+    entities_map: dict[str, dict[str, Any]],
+    edges_map: dict[str, dict[str, Any]],
+    direct_episode_uuids: set[str],
+    direct_entity_uuids: set[str],
+    direct_edge_uuids: set[str],
+    new_valid_at_iso: Optional[str],
+    new_date_str: Optional[str],
+    new_compact_str: Optional[str],
+    new_content: Optional[str],
+    new_summary: Optional[str],
+    new_name: Optional[str],
+    dry_run: bool,
+    format_for_mcp: bool,
+    registry_path: Optional[str | Path],
+    background: bool,
+    ledger_path: Path,
+) -> str | dict[str, Any]:
+    """edit_memory's write half: steps 4-6 over the nodes it matched."""
     # 4. Plan and track modifications
     modified_episodes: list[dict[str, Any]] = []
     modified_entities: list[dict[str, Any]] = []
@@ -1401,10 +1607,12 @@ async def edit_memory(
                 "old_content": old_content,
                 "new_content": target_content,
                 "content_changed": content_changed,
+                "reextract": ep_uuid == reextract_uuid,
             }
             modified_episodes.append(ep_change)
 
-            if not dry_run:
+            # A re-extracted episode is replaced as a whole at the end, not edited in place.
+            if not dry_run and ep_uuid != reextract_uuid:
                 await driver.execute_query(
                     "MATCH (e:Episodic {uuid: $uuid}) SET e.valid_at = $valid_at, e.content = $content, e.name = $name",
                     uuid=ep_uuid,
@@ -1447,8 +1655,9 @@ async def edit_memory(
                     summary=target_summary,
                 )
 
-    # Process Edge modifications — scoped to edges of directly-matched episodes only.
-    for edge_uuid in direct_edge_uuids:
+    # Process Edge modifications — scoped to edges of directly-matched episodes
+    # only. A re-extracted episode's edges are replaced, so none are re-dated.
+    for edge_uuid in (set() if reextract_uuid else direct_edge_uuids):
         edge = edges_map[edge_uuid]
         old_valid_at = edge.get("valid_at")
         target_valid_at = old_valid_at
@@ -1476,7 +1685,7 @@ async def edit_memory(
                 )
 
     # 5. Synchronize with import_registry.json if applicable
-    actual_reg_path = Path(registry_path) if registry_path else Path(__file__).resolve().parent.parent / "imports" / "state" / "import_registry.json"
+    actual_reg_path = Path(registry_path) if registry_path else default_import_registry_path()
     if actual_reg_path.exists():
         try:
             with open(actual_reg_path, "r", encoding="utf-8") as f:
@@ -1519,6 +1728,23 @@ async def edit_memory(
         except Exception as e:
             logger.warning(f"Failed to synchronize import registry during edit_memory: {e}")
 
+    # 6. Re-extract a content-edited episode: its facts follow its new text.
+    reextraction: Optional[dict[str, Any]] = None
+    if reextract_uuid:
+        from server.providers.episode_retract import retract_episode
+
+        ep_change = next(c for c in modified_episodes if c["uuid"] == reextract_uuid)
+        if dry_run:
+            reextraction = {
+                "status": "dry_run",
+                "retract": await retract_episode(driver, reextract_uuid, apply=False),
+                "message": "On commit, the episode is re-extracted from the new content on Spark (~30-40s).",
+            }
+        else:
+            reextraction = await _start_reextraction(
+                spark_hold.pop_all(), ep_change, background=background, ledger_path=ledger_path,
+            )
+
     result_data = {
         "target_query": clean_query,
         "dry_run": dry_run,
@@ -1526,6 +1752,7 @@ async def edit_memory(
         "matched_entities": modified_entities,
         "matched_edges": modified_edges,
         "registry_updates": registry_updates,
+        "reextraction": reextraction,
     }
 
     if format_for_mcp:
@@ -1536,8 +1763,65 @@ async def edit_memory(
             matched_entities=modified_entities,
             matched_edges=modified_edges,
             registry_updates=registry_updates,
+            reextraction=reextraction,
         )
     return result_data
+
+
+_BACKGROUND_EDIT_TASKS: set[asyncio.Task] = set()
+
+
+async def _start_reextraction(
+    spark_hold: contextlib.ExitStack,
+    ep_change: dict[str, Any],
+    *,
+    background: bool,
+    ledger_path: Path,
+) -> dict[str, Any]:
+    """Run (or queue) _reextract_episode for one edit; owns and releases the Spark slot."""
+    old_uuid, name = ep_change["uuid"], ep_change["new_name"]
+    _append_edit_ledger(ledger_path, {
+        "event": "started", "old_uuid": old_uuid, "old_name": ep_change["old_name"], "name": name,
+        "old_valid_at": ep_change["old_valid_at"], "new_valid_at": ep_change["new_valid_at"],
+        "old_content": ep_change["old_content"], "new_content": ep_change["new_content"],
+    })
+
+    async def _run() -> dict[str, Any]:
+        with spark_hold:
+            try:
+                graphiti, _ = get_graphiti_for_operation()
+                outcome = await _reextract_episode(
+                    graphiti, old_uuid, content=ep_change["new_content"], name=name,
+                    reference_time=ep_change["new_valid_at"] or datetime.now(timezone.utc),
+                )
+            except Exception as e:
+                _append_edit_ledger(ledger_path, {"event": "failed", "old_uuid": old_uuid, "name": name, "error": repr(e)})
+                raise
+        _append_edit_ledger(ledger_path, {"event": "done", **outcome})
+        return outcome
+
+    if not background:
+        return await _run()
+
+    async def _logged() -> None:
+        try:
+            await _run()
+            logger.info(f"edit_memory re-extraction committed: '{name}'")
+        except Exception:
+            logger.exception(f"edit_memory re-extraction FAILED (old episode kept): '{name}'")
+
+    task = asyncio.create_task(_logged())
+    _BACKGROUND_EDIT_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_EDIT_TASKS.discard)
+    return {
+        "status": "queued",
+        "name": name,
+        "old_uuid": old_uuid,
+        "message": (
+            "Re-extracting facts from the new content in the background (~30-40s on Spark). "
+            "Until it finishes the episode keeps its old text and facts; recall_mem afterwards to confirm."
+        ),
+    }
 
 
 def format_reconcile_results_for_mcp(
@@ -1645,7 +1929,7 @@ async def reconcile_memories(
 
     graphiti = get_graphiti()
     driver = graphiti.driver
-    actual_reg_path = Path(registry_path) if registry_path else Path(__file__).resolve().parent.parent / "imports" / "state" / "import_registry.json"
+    actual_reg_path = Path(registry_path) if registry_path else default_import_registry_path()
 
     reg_data: dict[str, Any] = {"version": "1.0", "records": {}, "rejected_records": {}}
     if actual_reg_path.exists():

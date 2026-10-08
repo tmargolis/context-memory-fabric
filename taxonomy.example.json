@@ -4,11 +4,29 @@
     "Copy to taxonomy.local.json (gitignored) and replace with your own projects.",
     "Ordered: FIRST MATCH WINS — put specific buckets above general ones.",
     "Each alternative sits inside \\b...\\b, so a prefix token needs an explicit \\w*.",
+    "A whole-word token is deliberate: '\\bmount\\b' will not fire on 'mounting'.",
+    "'overrides' maps an exact thread slug to a bucket and is consulted BEFORE the rules,",
+    "so a one-off correction does not need a regex. 'display_names' gives a bucket the",
+    "readable name that entity extraction uses for the episode's project.",
+    "One bucket per project: do not give the same effort two buckets (e.g. 'jobs' and 'job-search').",
     "With no taxonomy file present, every episode classifies as 'misc'."
   ],
   "rules": [
+    ["my-app-dev", "\\b(my-app-(api|plugin|release|roadmap)|unit-test\\w*|ci-pipeline)\\b"],
+    ["my-app", "\\b(my-app|onboarding|user-feedback)\\b"],
     ["infrastructure", "\\b(server|backup|storage|network|deploy\\w*)\\b"],
     ["writing", "\\b(draft|essay|article|blog|newsletter)\\b"],
     ["finance", "\\b(tax|invoice|billing|receipt|payment)\\b"]
-  ]
+  ],
+  "overrides": {
+    "quarterly-planning-notes": "writing",
+    "my-app-pricing-experiment": "my-app"
+  },
+  "display_names": {
+    "my-app-dev": "My App development",
+    "my-app": "My App",
+    "infrastructure": "infrastructure",
+    "writing": "writing",
+    "finance": "finance"
+  }
 }

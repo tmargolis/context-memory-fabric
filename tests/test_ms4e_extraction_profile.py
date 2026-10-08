@@ -161,9 +161,17 @@ class TestTypedRecallProject(unittest.TestCase):
                 )
 
 
+class _NoRowsDriver:
+    """remember() resolves the episode name and tags the episode through graphiti.driver."""
+
+    async def execute_query(self, query: str, **kwargs):
+        return [[]]
+
+
 class _RecordingGraphiti:
     def __init__(self):
         self.calls: list[dict] = []
+        self.driver = _NoRowsDriver()
 
     async def add_episode(self, **kw):
         self.calls.append(kw)

@@ -267,7 +267,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.\n    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).\n    - Use to update entity summaries or episode narrative content in the knowledge graph.\n\n    EXAMPLES OF USER INTENT:\n    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'\n    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'\n    - 'Correct the summary for the SQLite database entity.'\n\n    SIDE EFFECTS:\n    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.\n    ",
+    "description": "Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.\n    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).\n    - Use to update entity summaries or episode narrative content in the knowledge graph.\n\n    EXAMPLES OF USER INTENT:\n    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'\n    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'\n    - 'Correct the summary for the SQLite database entity.'\n\n    SIDE EFFECTS:\n    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.\n    - new_content replaces the episode's facts too: it is re-extracted from the new content in the background\n      (~30-40s on the local model) and its old facts are removed. It must match exactly one episode (use its\n      uuid) and fails without changing anything while another Spark job is running.\n    ",
     "input_schema": {
       "properties": {
         "dry_run": {
@@ -368,14 +368,14 @@
     "input_schema": {
       "properties": {
         "max_memory_results": {
-          "default": 8,
-          "description": "Maximum number of episodic memory facts to return (default: 8).",
+          "default": 10,
+          "description": "Maximum number of episodic memory facts to return (default: 10).",
           "title": "Max Memory Results",
           "type": "integer"
         },
         "max_wiki_results": {
-          "default": 8,
-          "description": "Maximum number of durable Wiki documents/notes to return (default: 8).",
+          "default": 5,
+          "description": "Maximum number of durable Wiki documents/notes to return (default: 5).",
           "title": "Max Wiki Results",
           "type": "integer"
         },
@@ -1130,7 +1130,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Direct episodic write tool to Graphiti and FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user explicitly asks to save, remember, record, or log an important event, decision, preference change, project milestone, experimental outcome, or state observation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Remember that we chose PostgreSQL for Project Atlas.'\n    - 'Save this preference: my preferred Spark baseline is GLM-4.7-Flash + Qwen3.5-27B.'\n    - 'Note that I decided to use port 6379 for FalkorDB.'\n    - 'Record that the regulatory mapping review was completed on August 31.'\n\n    IMPORTANT USAGE GUIDELINE:\n    - Do NOT call this automatically for every casual chat message or temporary conversational turn. Only store substantive, meaningful decisions, preferences, milestones, and state changes.\n\n    DISTINCTIONS:\n    - Writes into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.\n    - Does NOT modify LLM_Wiki files.\n\n    SIDE EFFECTS:\n    - Queues a background write of an episodic memory node and relationship edges in FalkorDB; non-destructive.\n      This tool returns as soon as the episode is queued, NOT once it is confirmed durable -- on the\n      local-model extraction path a single episode can take well over a minute, long enough that a remote\n      client's own connection/tunnel can time out before that finishes if this tool waited for it. If you\n      need to confirm a specific episode actually landed, call recall_mem for it after a short wait.\n    ",
+    "description": "Direct episodic write tool to Graphiti and FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user explicitly asks to save, remember, record, or log an important event, decision, preference change, project milestone, experimental outcome, or state observation.\n\n    EXAMPLES OF USER INTENT:\n    - 'Remember that we chose PostgreSQL for Project Atlas.'\n    - 'Save this preference: my preferred Spark baseline is GLM-4.7-Flash + Qwen3.5-27B.'\n    - 'Note that I decided to use port 6379 for FalkorDB.'\n    - 'Record that the regulatory mapping review was completed on August 31.'\n\n    IMPORTANT USAGE GUIDELINE:\n    - Do NOT call this automatically for every casual chat message or temporary conversational turn. Only store substantive, meaningful decisions, preferences, milestones, and state changes.\n    - Episode identifiers follow the strict `<harness>-<project>-NNN` convention (e.g. `chatgpt-ev-charging-018`, `claude-code-context-memory-fabric-073`). Specify `project` whenever known; sequential numbering is managed automatically.\n\n    DISTINCTIONS:\n    - Writes into the persistent episodic graph in FalkorDB with temporal timestamps and provenance.\n    - Does NOT modify LLM_Wiki files.\n\n    SIDE EFFECTS:\n    - Queues a background write of an episodic memory node and relationship edges in FalkorDB; non-destructive.\n      This tool returns as soon as the episode is queued, NOT once it is confirmed durable -- on the\n      local-model extraction path a single episode can take well over a minute, long enough that a remote\n      client's own connection/tunnel can time out before that finishes if this tool waited for it. If you\n      need to confirm a specific episode actually landed, call recall_mem for it after a short wait.\n    ",
     "input_schema": {
       "properties": {
         "content": {
@@ -1148,8 +1148,21 @@
             }
           ],
           "default": null,
-          "description": "Optional recognizable identifier/slug for the episode (auto-generated if omitted).",
+          "description": "Optional sequence identifier for the episode strictly following '<harness>-<project>-NNN' (e.g. 'chatgpt-ev-charging-018'). If omitted or if a descriptive title is given, the server auto-generates the sequential '<harness>-<project>-NNN' identifier.",
           "title": "Name"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional project slug for the episode (e.g. 'ev-charging', 'context-memory-fabric', 'astrophotography', 'mac-infra'). Highly recommended to link the episode to its project hub.",
+          "title": "Project"
         },
         "source_description": {
           "anyOf": [
