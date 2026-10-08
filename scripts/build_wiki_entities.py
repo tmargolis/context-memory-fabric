@@ -303,7 +303,7 @@ def build(sections_path: Path, model: str, batch_size: int, limit: Optional[int]
                     f"This spends the same quota ledger production capture uses.")
     else:
         cfg = load_config()
-        base_url, api_key = cfg.local_base_url, cfg.local_api_key
+        base_url, api_key = cfg.local_llm_base_url, cfg.local_llm_api_key
         call_fn = lambda prompt, max_tok: _call_model(base_url, api_key, model, prompt, max_tok)  # noqa: E731
         transient_errors = _TRANSIENT_NETWORK_ERRORS
 

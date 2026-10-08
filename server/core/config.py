@@ -25,7 +25,19 @@ from dotenv import load_dotenv
 
 GEMINI_PROVIDER = "gemini"
 LOCAL_PROVIDER = "local"
-VALID_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER)
+ANTHROPIC_PROVIDER = "anthropic"
+OPENAI_PROVIDER = "openai"
+VALID_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER, ANTHROPIC_PROVIDER, OPENAI_PROVIDER)
+# Anthropic has no embeddings API, so it can only be an LLM provider.
+VALID_EMBED_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER, OPENAI_PROVIDER)
+
+# Hosted-API model defaults (MS10a), overridable per provider. The Claude
+# default is the current Opus; pick a Sonnet or Haiku in CMF_ANTHROPIC_MODEL
+# to trade quality for cost. gpt-5.5 is Graphiti 0.29.3's own OpenAI default.
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
+DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
+VALID_ANTHROPIC_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 # MS4e: which entity-extraction profile add_episode() runs under (see
 # server.providers.extraction_profile). "typed-recall" is the default since
@@ -104,6 +116,24 @@ class CMFConfig:
     embedding_dim: int
     extraction_profile: str = TYPED_RECALL_EXTRACTION
 
+    # Per-role local endpoints (MS10a): an LM Studio LLM and an Ollama
+    # embedder can live on different hosts/ports, and a hosted LLM can pair
+    # with a laptop embedder. Each falls back to local_base_url/local_api_key
+    # in load_config(), so a single CMF_LOCAL_BASE_URL keeps working.
+    local_llm_base_url: str = DEFAULT_LOCAL_BASE_URL
+    local_llm_api_key: str = DEFAULT_LOCAL_API_KEY
+    local_embed_base_url: str = DEFAULT_LOCAL_BASE_URL
+    local_embed_api_key: str = DEFAULT_LOCAL_API_KEY
+
+    # Hosted APIs (MS10a), reached with the operator's own keys.
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
+    openai_model: str = DEFAULT_OPENAI_MODEL
+    openai_embed_model: str = DEFAULT_OPENAI_EMBED_MODEL
+    # None = the model's own default effort (medium on claude-opus-5-5).
+    anthropic_effort: Optional[str] = None
+
     @property
     def llm_is_local(self) -> bool:
         return self.llm_provider == LOCAL_PROVIDER
@@ -144,13 +174,28 @@ class CMFConfig:
         """
         if not (self.falkordb_database and self.falkordb_database.strip()):
             return False
+        return self.llm_credential_ok and self.embed_credential_ok
 
-        providers = (self.llm_provider, self.embed_provider)
-        if GEMINI_PROVIDER in providers and not self.gemini_api_key:
-            return False
-        if LOCAL_PROVIDER in providers and not (self.local_base_url and self.local_base_url.strip()):
-            return False
-        return True
+    @property
+    def llm_credential_ok(self) -> bool:
+        """The selected LLM provider has its key or endpoint."""
+        return self._credential_ok(self.llm_provider, self.local_llm_base_url)
+
+    @property
+    def embed_credential_ok(self) -> bool:
+        """The selected embedding provider has its key or endpoint."""
+        return self._credential_ok(self.embed_provider, self.local_embed_base_url)
+
+    def _credential_ok(self, provider: str, local_url: str) -> bool:
+        if provider == GEMINI_PROVIDER:
+            return bool(self.gemini_api_key)
+        if provider == LOCAL_PROVIDER:
+            return bool(local_url and local_url.strip())
+        if provider == ANTHROPIC_PROVIDER:
+            return bool(self.anthropic_api_key)
+        if provider == OPENAI_PROVIDER:
+            return bool(self.openai_api_key)
+        return False
 
 
 def _resolve_state_dir() -> Path:
@@ -199,6 +244,37 @@ def default_reviewer() -> str:
         return getpass.getuser()
     except Exception:  # no login name in some containers
         return "user"
+
+
+def _embed_provider() -> str:
+    """CMF_EMBED_PROVIDER, which also rejects a provider with no embeddings API."""
+    value = _provider("CMF_EMBED_PROVIDER")
+    if value not in VALID_EMBED_PROVIDERS:
+        raise ValueError(
+            f"CMF_EMBED_PROVIDER={value!r}: {value} has no embeddings API. "
+            f"Use one of {', '.join(VALID_EMBED_PROVIDERS)} (for example openai, or a local "
+            "embedder such as Ollama via CMF_LOCAL_EMBED_BASE_URL; see docs/SETUP.md)."
+        )
+    return value
+
+
+def _anthropic_effort() -> Optional[str]:
+    raw = os.getenv("CMF_ANTHROPIC_EFFORT")
+    if raw is None or not raw.strip():
+        return None
+    value = raw.strip().lower()
+    if value not in VALID_ANTHROPIC_EFFORTS:
+        raise ValueError(
+            f"CMF_ANTHROPIC_EFFORT={raw!r} is not a recognised effort. "
+            f"Valid values are {', '.join(VALID_ANTHROPIC_EFFORTS)}."
+        )
+    return value
+
+
+def _env_or(name: str, fallback: str) -> str:
+    """`name` when set and non-blank, else `fallback`."""
+    value = os.getenv(name)
+    return value if value and value.strip() else fallback
 
 
 def capture_llm_provider_from_env() -> str:
@@ -255,6 +331,8 @@ def load_config() -> CMFConfig:
     for why that dependency is fragile).
     """
     load_dotenv()
+    local_base_url = os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL)
+    local_api_key = os.getenv("CMF_LOCAL_API_KEY", DEFAULT_LOCAL_API_KEY)
     return CMFConfig(
         llm_wiki_path=os.getenv("LLM_WIKI_PATH"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
@@ -264,12 +342,22 @@ def load_config() -> CMFConfig:
         falkordb_database=os.getenv("FALKORDB_DATABASE"),
         cmf_state_dir=_resolve_state_dir(),
         llm_provider=_provider("CMF_LLM_PROVIDER"),
-        embed_provider=_provider("CMF_EMBED_PROVIDER"),
-        local_base_url=os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL),
-        local_api_key=os.getenv("CMF_LOCAL_API_KEY", DEFAULT_LOCAL_API_KEY),
+        embed_provider=_embed_provider(),
+        local_base_url=local_base_url,
+        local_api_key=local_api_key,
         local_llm_model=os.getenv("CMF_LOCAL_LLM_MODEL", DEFAULT_LOCAL_LLM_MODEL),
         local_embed_model=os.getenv("CMF_LOCAL_EMBED_MODEL", DEFAULT_LOCAL_EMBED_MODEL),
         local_structured_mode=os.getenv("CMF_LOCAL_STRUCTURED_MODE", DEFAULT_LOCAL_STRUCTURED_MODE),
         embedding_dim=_embedding_dim(),
         extraction_profile=extraction_profile_from_env(),
+        local_llm_base_url=_env_or("CMF_LOCAL_LLM_BASE_URL", local_base_url),
+        local_llm_api_key=_env_or("CMF_LOCAL_LLM_API_KEY", local_api_key),
+        local_embed_base_url=_env_or("CMF_LOCAL_EMBED_BASE_URL", local_base_url),
+        local_embed_api_key=_env_or("CMF_LOCAL_EMBED_API_KEY", local_api_key),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        anthropic_model=_env_or("CMF_ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL),
+        openai_model=_env_or("CMF_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        openai_embed_model=_env_or("CMF_OPENAI_EMBED_MODEL", DEFAULT_OPENAI_EMBED_MODEL),
+        anthropic_effort=_anthropic_effort(),
     )

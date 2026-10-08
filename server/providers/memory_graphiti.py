@@ -34,7 +34,7 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
-from server.core.config import CMFConfig, load_config
+from server.core.config import ANTHROPIC_PROVIDER, GEMINI_PROVIDER, OPENAI_PROVIDER, CMFConfig, load_config
 from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     classify_transient_error as _classify_transient_error,
@@ -190,8 +190,29 @@ def _require_gemini_key() -> str:
     return api_key
 
 
+def _require_key(value: Optional[str], env_var: str, provider: str) -> str:
+    if not value:
+        raise RuntimeError(f"{env_var} is not set, but {provider} is a configured provider. Add it to .env.")
+    return value
+
+
 def _build_llm_client(config: CMFConfig, resolved_model: str):
     """LLM client for entity/fact extraction, per CMF_LLM_PROVIDER."""
+    if config.llm_provider == ANTHROPIC_PROVIDER:
+        from server.providers.anthropic_client import StructuredAnthropicClient
+
+        api_key = _require_key(config.anthropic_api_key, "ANTHROPIC_API_KEY", "anthropic")
+        return StructuredAnthropicClient(
+            config=LLMConfig(api_key=api_key, model=resolved_model, small_model=resolved_model),
+            effort=config.anthropic_effort,
+        )
+
+    if config.llm_provider == OPENAI_PROVIDER:
+        from graphiti_core.llm_client.openai_client import OpenAIClient
+
+        api_key = _require_key(config.openai_api_key, "OPENAI_API_KEY", "openai")
+        return OpenAIClient(config=LLMConfig(api_key=api_key, model=resolved_model, small_model=resolved_model))
+
     if not config.llm_is_local:
         api_key = _require_gemini_key()
         return GeminiClient(
@@ -207,12 +228,12 @@ def _build_llm_client(config: CMFConfig, resolved_model: str):
     # required fixups — see server/providers/lmstudio_client.py.
     return OpenAIGenericClient(
         config=LLMConfig(
-            api_key=config.local_api_key,
-            base_url=config.local_base_url,
+            api_key=config.local_llm_api_key,
+            base_url=config.local_llm_base_url,
             model=resolved_model,
             small_model=resolved_model,
         ),
-        client=LMStudioCompatClient(config.local_base_url, config.local_api_key),
+        client=LMStudioCompatClient(config.local_llm_base_url, config.local_llm_api_key),
         structured_output_mode=config.local_structured_mode,
     )
 
@@ -220,12 +241,26 @@ def _build_llm_client(config: CMFConfig, resolved_model: str):
 def _build_embedder(config: CMFConfig):
     """Embedder, per CMF_EMBED_PROVIDER.
 
-    The explicit `embedding_dim` is load-bearing in both branches:
+    The explicit `embedding_dim` is load-bearing in every branch:
     OpenAIEmbedder slices every vector to `embedding[: embedding_dim]`, so a
     value wider than the model actually returns is a silent no-op while a
     narrower one silently truncates. Neither raises. `assert_embedding_width`
     below is the guard that turns that into a real failure.
     """
+    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+
+    if config.embed_provider == OPENAI_PROVIDER:
+        from server.providers.openai_embedder import DimensionedOpenAIEmbedder
+
+        api_key = _require_key(config.openai_api_key, "OPENAI_API_KEY", "openai")
+        return DimensionedOpenAIEmbedder(
+            config=OpenAIEmbedderConfig(
+                api_key=api_key,
+                embedding_model=config.openai_embed_model,
+                embedding_dim=config.embedding_dim,
+            )
+        )
+
     if not config.embed_is_local:
         from server.providers.metered_embedder import maybe_meter
 
@@ -243,12 +278,10 @@ def _build_embedder(config: CMFConfig):
             embed_is_local=False,
         )
 
-    from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
-
     return OpenAIEmbedder(
         config=OpenAIEmbedderConfig(
-            api_key=config.local_api_key,
-            base_url=config.local_base_url,
+            api_key=config.local_embed_api_key,
+            base_url=config.local_embed_base_url,
             embedding_model=config.local_embed_model,
             embedding_dim=config.embedding_dim,
         )
@@ -256,14 +289,24 @@ def _build_embedder(config: CMFConfig):
 
 
 def _build_cross_encoder(config: CMFConfig, resolved_model: str):
-    """Reranker. Local deployments cannot use a Gemini or OpenAI reranker.
+    """Reranker, per CMF_LLM_PROVIDER.
 
+    Local and Anthropic deployments use CMF's own reranker choice
+    (CMF_RERANKER, default passthrough): Graphiti's LLM rerankers score from
+    token logprobs, which Claude's API doesn't return, and
     `OpenAIRerankerClient` is specifically unusable against LM Studio: it
     scores via `logit_bias` on hardcoded OpenAI BPE token ids, which map to
     unrelated tokens under GLM's or Qwen's tokenizer. See
-    server/providers/reranker.py.
+    server/providers/reranker.py. On OpenAI it is the real thing, on
+    Graphiti's own small default model (logprobs need a non-reasoning model).
     """
-    if not config.llm_is_local:
+    if config.llm_provider == OPENAI_PROVIDER:
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
+
+        api_key = _require_key(config.openai_api_key, "OPENAI_API_KEY", "openai")
+        return OpenAIRerankerClient(config=LLMConfig(api_key=api_key))
+
+    if config.llm_provider == GEMINI_PROVIDER:
         api_key = _require_gemini_key()
         return GeminiRerankerClient(config=LLMConfig(api_key=api_key, model=resolved_model))
 
@@ -276,14 +319,18 @@ def resolve_llm_model(config: Optional[CMFConfig] = None, model: Optional[str] =
     """The model id for extraction, from whichever provider is configured.
 
     The rate limiter's chain is a list of *Gemini* model ids, so it is only a
-    meaningful default when extraction actually runs on Gemini. On the local
-    path the model comes from CMF_LOCAL_LLM_MODEL instead.
+    meaningful default when extraction actually runs on Gemini. On the other
+    paths the model comes from that provider's own setting.
     """
     if model:
         return model
     config = config or load_config()
     if config.llm_is_local:
         return config.local_llm_model
+    if config.llm_provider == ANTHROPIC_PROVIDER:
+        return config.anthropic_model
+    if config.llm_provider == OPENAI_PROVIDER:
+        return config.openai_model
     return get_default_rate_limiter().chain[0]
 
 

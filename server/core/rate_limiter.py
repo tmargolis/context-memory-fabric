@@ -458,6 +458,22 @@ def get_default_rate_limiter() -> GeminiRateLimiter:
             from server.core.config import load_config
 
             config = load_config()
+            hosted_model = {
+                "anthropic": config.anthropic_model,
+                "openai": config.openai_model,
+            }.get(config.llm_provider)
+            if hosted_model is not None:
+                # A paid API key (MS10a): the provider enforces its own rate
+                # limits, and its SDK retries 429/529 with backoff. The
+                # free-tier ledger would only throttle against Gemini's
+                # numbers, so it is switched off the same way as for local.
+                _DEFAULT_LIMITER = GeminiRateLimiter(
+                    chain=[hosted_model],
+                    budgets={},
+                    state_path=_default_state_path(),
+                    unmetered=True,
+                )
+                return _DEFAULT_LIMITER
             if config.llm_is_local:
                 # Local inference has no quota to enforce, so the ledger has
                 # nothing to protect. It is switched off rather than given

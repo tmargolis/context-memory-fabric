@@ -116,8 +116,8 @@ Embeddings can run on your own machine instead of a paid or rate-limited API. `n
 4. **Point CMF at it** in `.env`:
    ```bash
    CMF_EMBED_PROVIDER=local
-   CMF_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
-   CMF_LOCAL_API_KEY=ollama            # Ollama ignores it; the client just needs a non-empty value
+   CMF_LOCAL_EMBED_BASE_URL=http://127.0.0.1:11434/v1
+   CMF_LOCAL_EMBED_API_KEY=ollama      # Ollama ignores it; the client just needs a non-empty value
    CMF_LOCAL_EMBED_MODEL=nomic-embed-text
    EMBEDDING_DIM=768                   # nomic's fixed output width
    ```
@@ -125,8 +125,8 @@ Embeddings can run on your own machine instead of a paid or rate-limited API. `n
 Things to know:
 - **Pick the embedder before your graph has data.** A graph's vectors and index are built at one width. Switching embedders later (e.g. to 1024-wide Gemini or OpenAI vectors) means a new `FALKORDB_DATABASE` and re-importing your history into it, not an in-place change.
 - **Ollama must be running** whenever CMF writes or searches memory. If it's down, those calls fail rather than falling back.
-- **Which LLM can pair with it today:** `CMF_LLM_PROVIDER=gemini` works as-is, since only the embedder reads `CMF_LOCAL_BASE_URL`. A fully local setup (LLM and embedder both on one OpenAI-compatible server) also works. Anthropic or OpenAI as the LLM alongside a local embedder is planned but not yet built. It will add separate LLM and embedder endpoint settings.
-- **Background transcript capture** (the Claude Code / Codex pollers) currently always runs its extraction on the local LLM endpoint, independent of `CMF_LLM_PROVIDER`. With an embedder-only Ollama setup, run CMF's MCP tools but leave the pollers off until capture gets its own provider setting.
+- **Any LLM can pair with it:** `anthropic`, `openai`, `gemini`, or a local LLM on a different server. The embedder reads `CMF_LOCAL_EMBED_BASE_URL` and a local LLM reads `CMF_LOCAL_LLM_BASE_URL`; each falls back to `CMF_LOCAL_BASE_URL` when unset.
+- **Background transcript capture** (the Claude Code / Codex pollers) extracts with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`. It defaults to `local`, so with an embedder-only Ollama setup, set it to your LLM provider (for example `anthropic`) before turning the pollers on.
 
 ### 5. Run the Server
 
@@ -207,16 +207,24 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GEMINI_API_KEY` | Conditional | — | Required when using Gemini extraction/embeddings (`CMF_LLM_PROVIDER=gemini`). |
+| `ANTHROPIC_API_KEY` | Conditional | — | Required when any provider setting is `anthropic`. |
+| `OPENAI_API_KEY` | Conditional | — | Required when any provider setting is `openai`. |
 | `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
 | `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset, knowledge tools (`search_wiki`, `propose_doc_update`) are gracefully omitted. |
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
 | `CMF_STATE_DIR` | No | `./wiki-proposals` | Staging directory for generated document update proposals and local state. |
-| `CMF_LLM_PROVIDER` | No | `gemini` | Extractor LLM provider: `gemini` or `local`. |
-| `CMF_EMBED_PROVIDER` | No | `gemini` | Embedder provider: `gemini` or `local`. |
+| `CMF_LLM_PROVIDER` | No | `gemini` | Extractor LLM provider: `anthropic`, `openai`, `gemini` or `local`. |
+| `CMF_EMBED_PROVIDER` | No | `gemini` | Embedder provider: `openai`, `gemini` or `local` (Anthropic has no embeddings API). |
+| `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
+| `CMF_ANTHROPIC_MODEL` | No | `claude-opus-5-5` | Claude model for extraction. A Sonnet or Haiku costs less. |
+| `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |
+| `CMF_OPENAI_MODEL` | No | `gpt-5.5` | OpenAI model for extraction. |
+| `CMF_OPENAI_EMBED_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model, shortened to `EMBEDDING_DIM`. |
 | `CMF_LOCAL_BASE_URL` | No | `http://127.0.0.1:12345/v1` | OpenAI-compatible endpoint for local inference (vLLM, Ollama, LM Studio). Ollama: `http://127.0.0.1:11434/v1`. |
+| `CMF_LOCAL_LLM_BASE_URL` / `CMF_LOCAL_EMBED_BASE_URL` | No | `CMF_LOCAL_BASE_URL` | Separate endpoints for a local LLM and a local embedder, each with its own `_API_KEY`. |
 | `CMF_LOCAL_EMBED_MODEL` | No | `text-embedding-nomic-embed-text-v1.5` | Local embedding model id as your server names it (Ollama: `nomic-embed-text`). |
-| `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini; 768 for nomic local embedder). Fixed per graph. |
+| `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini or OpenAI; 768 for nomic local embedder). Fixed per graph. |
 | `CMF_EXTRACTION_PROFILE` | No | `typed-recall` | Entity extraction prompt. `legacy` (the pre-2026-09-28 prompt) is opt-in, for reproducing old extraction. |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 

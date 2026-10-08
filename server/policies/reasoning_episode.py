@@ -292,7 +292,7 @@ def _local_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, sc
         # closed loop, which surfaced as "Event loop is closed" / "Task
         # exception was never retrieved" on every window of the poller's
         # first run (2026-09-22).
-        client = LMStudioCompatClient(config.local_base_url, config.local_api_key)
+        client = LMStudioCompatClient(config.local_llm_base_url, config.local_llm_api_key)
         try:
             resp = await client.chat.completions.create(
                 model=model,
@@ -320,23 +320,70 @@ def _local_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, sc
     raise RuntimeError("Failed to generate content: retry loop exhausted unexpectedly.")
 
 
+def _anthropic_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, schema_name: str = "reasoning_episodes") -> str:
+    """Same contract as _default_generate, on Claude with structured outputs.
+
+    `model` is the rate limiter's pick, which is only meaningful for Gemini;
+    the configured CMF_ANTHROPIC_MODEL is used instead, so a limiter built
+    for another provider earlier in the process can't send a Gemini model
+    id here. Retries (429/529 included) are the SDK's.
+    """
+    from server.core.config import load_config
+    from server.providers.anthropic_client import generate_json
+
+    config = load_config()
+    return generate_json(
+        api_key=config.anthropic_api_key,
+        model=config.anthropic_model,
+        prompt=prompt,
+        schema=schema,
+        effort=config.anthropic_effort,
+    )
+
+
+def _openai_generate(model: str, prompt: str, schema: dict = _EPISODES_SCHEMA, schema_name: str = "reasoning_episodes") -> str:
+    """Same contract as _default_generate, on OpenAI with a strict JSON schema.
+
+    Uses CMF_OPENAI_MODEL rather than `model`, for the same reason as
+    _anthropic_generate.
+    """
+    from server.core.config import load_config
+    from server.providers.openai_extraction import generate_json
+
+    config = load_config()
+    return generate_json(
+        api_key=config.openai_api_key,
+        model=config.openai_model,
+        prompt=prompt,
+        schema=schema,
+        schema_name=schema_name,
+    )
+
+
 def _select_generate_fn(schema: dict = _EPISODES_SCHEMA, schema_name: str = "reasoning_episodes") -> GenerateFn:
     """Pick the model call for the configured provider, at construction time.
 
-    `schema`/`schema_name` only matter on the local path (see
-    _local_generate's docstring) -- the Gemini path is free-form JSON with
-    no grammar to widen, so a subclass's wider schema is simply unused
-    there, not an error.
+    `schema`/`schema_name` matter on every schema-constrained path (local,
+    anthropic, openai; see _local_generate's docstring) -- the Gemini path
+    is free-form JSON with no grammar to widen, so a subclass's wider schema
+    is simply unused there, not an error.
     """
     import functools
 
-    from server.core.config import load_config
+    from server.core.config import ANTHROPIC_PROVIDER, OPENAI_PROVIDER, load_config
 
-    if not load_config().llm_is_local:
+    provider = load_config().llm_provider
+    if provider == ANTHROPIC_PROVIDER:
+        constrained = _anthropic_generate
+    elif provider == OPENAI_PROVIDER:
+        constrained = _openai_generate
+    elif provider == "local":
+        constrained = _local_generate
+    else:
         return _default_generate
     if schema is _EPISODES_SCHEMA and schema_name == "reasoning_episodes":
-        return _local_generate
-    return functools.partial(_local_generate, schema=schema, schema_name=schema_name)
+        return constrained
+    return functools.partial(constrained, schema=schema, schema_name=schema_name)
 
 
 class ReasoningEpisodePolicyV1:

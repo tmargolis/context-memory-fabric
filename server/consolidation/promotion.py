@@ -62,7 +62,9 @@ def default_inter_call_delay() -> float:
     """
     from server.core.config import load_config
 
-    return LOCAL_INTER_CALL_DELAY if load_config().llm_is_local else GEMINI_INTER_CALL_DELAY
+    # Only Gemini's free tier needs spacing; local models and paid API keys
+    # (whose SDKs retry 429s themselves) get the token delay.
+    return GEMINI_INTER_CALL_DELAY if load_config().llm_provider == "gemini" else LOCAL_INTER_CALL_DELAY
 
 
 # Fixed backoff for a real Gemini API 429/503 that survives remember()'s own
