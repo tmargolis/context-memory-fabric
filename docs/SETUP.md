@@ -217,7 +217,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_LOCAL_BASE_URL` | No | `http://127.0.0.1:12345/v1` | OpenAI-compatible endpoint for local inference (vLLM, Ollama, LM Studio). Ollama: `http://127.0.0.1:11434/v1`. |
 | `CMF_LOCAL_EMBED_MODEL` | No | `text-embedding-nomic-embed-text-v1.5` | Local embedding model id as your server names it (Ollama: `nomic-embed-text`). |
 | `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini; 768 for nomic local embedder). Fixed per graph. |
-| `CMF_EXTRACTION_PROFILE` | No | `legacy` | Entity extraction prompt. Set `typed-recall` (recommended; `.env.example` sets it). |
+| `CMF_EXTRACTION_PROFILE` | No | `typed-recall` | Entity extraction prompt. `legacy` (the pre-2026-09-28 prompt) is opt-in, for reproducing old extraction. |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 
 ---

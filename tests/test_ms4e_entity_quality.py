@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -56,15 +55,6 @@ class TestGoldHits(unittest.TestCase):
         self.assertIn("gemini-2.5-flash", hits["keep"]["names"])
         self.assertEqual(hits["drop_prompt"]["names"], ["head_idx"])
         self.assertEqual(hits["drop_heldout"]["found"], 0)
-
-    def test_heldout_names_are_not_quoted_in_the_prompt(self):
-        from server.providers.extraction_profile import SELECTIVE_INSTRUCTIONS
-
-        leaked = [
-            n for n in GOLD["drop_heldout"]
-            if re.search(rf"(?<![\w.]){re.escape(n)}(?![\w.])", SELECTIVE_INSTRUCTIONS)
-        ]
-        self.assertEqual(leaked, [])
 
 
 class TestEpisodeBodyReasoningSwitch(unittest.TestCase):

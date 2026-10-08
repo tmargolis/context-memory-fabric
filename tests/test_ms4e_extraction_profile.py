@@ -22,12 +22,10 @@ from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entit
 from server.core.config import load_config
 from server.providers import memory_graphiti
 from server.providers.extraction_profile import (
-    ENTITY_TYPES,
     EXCLUDED_ENTITY_TYPES,
     LEGACY_INSTRUCTIONS,
     RECALL_ENTITY_TYPES,
     RECALL_INSTRUCTIONS,
-    SELECTIVE_INSTRUCTIONS,
     extraction_kwargs,
 )
 from server.review import projects
@@ -53,30 +51,36 @@ class TestExtractionKwargs(unittest.TestCase):
         self.assertEqual(extraction_kwargs("legacy"), {"custom_extraction_instructions": LEGACY_INSTRUCTIONS})
         self.assertIs(memory_graphiti.EXTRACTION_INSTRUCTIONS, LEGACY_INSTRUCTIONS)
 
-    def test_selective_has_no_ontology(self):
-        self.assertEqual(extraction_kwargs("selective"), {"custom_extraction_instructions": SELECTIVE_INSTRUCTIONS})
-
-    def test_typed_adds_ontology_and_excludes_generic_entity(self):
-        kw = extraction_kwargs("typed")
-        self.assertEqual(kw["custom_extraction_instructions"], SELECTIVE_INSTRUCTIONS)
-        self.assertIs(kw["entity_types"], ENTITY_TYPES)
+    def test_typed_recall_adds_ontology_and_excludes_generic_entity(self):
+        kw = extraction_kwargs("typed-recall")
+        self.assertEqual(kw["custom_extraction_instructions"], RECALL_INSTRUCTIONS)
+        self.assertIs(kw["entity_types"], RECALL_ENTITY_TYPES)
         self.assertEqual(kw["excluded_entity_types"], ["Entity"])
 
     def test_unknown_profile_raises(self):
         with self.assertRaises(ValueError):
             extraction_kwargs("strict")
 
-    def test_env_default_is_legacy(self):
+    def test_removed_profiles_are_rejected(self):
+        # "selective" and "typed" were removed in MS10a (2026-10-08).
+        for profile in ("selective", "typed"):
+            with self.subTest(profile=profile):
+                with self.assertRaises(ValueError):
+                    extraction_kwargs(profile)
+                with _env(profile), self.assertRaises(ValueError):
+                    load_config()
+
+    def test_env_default_is_typed_recall(self):
         # load_config() re-reads .env, which may set a profile (production
         # does); the default under test is the code's, not the operator's.
         with _env(None), mock.patch("server.core.config.load_dotenv"):
-            self.assertEqual(extraction_kwargs(), extraction_kwargs("legacy"))
-            self.assertEqual(load_config().extraction_profile, "legacy")
+            self.assertEqual(extraction_kwargs(), extraction_kwargs("typed-recall"))
+            self.assertEqual(load_config().extraction_profile, "typed-recall")
 
     def test_env_selects_profile_case_insensitively(self):
-        with _env(" Typed "):
-            self.assertEqual(extraction_kwargs(), extraction_kwargs("typed"))
-            self.assertEqual(load_config().extraction_profile, "typed")
+        with _env(" Legacy "):
+            self.assertEqual(extraction_kwargs(), extraction_kwargs("legacy"))
+            self.assertEqual(load_config().extraction_profile, "legacy")
 
     def test_env_typo_fails_fast(self):
         with _env("selectve"):
@@ -85,15 +89,15 @@ class TestExtractionKwargs(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_config()
 
-    def test_selective_instructions_name_the_prompt_input_correctly(self):
+    def test_recall_instructions_name_the_prompt_input_correctly(self):
         # remember() sends EpisodeType.text, whose prompt calls the input <TEXT>.
-        self.assertIn("TEXT", SELECTIVE_INSTRUCTIONS)
-        self.assertNotIn("CURRENT MESSAGE", SELECTIVE_INSTRUCTIONS)
-        self.assertNotIn("should be rare", SELECTIVE_INSTRUCTIONS)
+        self.assertIn("TEXT", RECALL_INSTRUCTIONS)
+        self.assertNotIn("CURRENT MESSAGE", RECALL_INSTRUCTIONS)
+        self.assertNotIn("should be rare", RECALL_INSTRUCTIONS)
 
 
 class TestOntology(unittest.TestCase):
-    ONTOLOGIES = {"typed": ENTITY_TYPES, "typed-recall": RECALL_ENTITY_TYPES}
+    ONTOLOGIES = {"typed-recall": RECALL_ENTITY_TYPES}
 
     def test_passes_graphiti_validators(self):
         for profile, types in self.ONTOLOGIES.items():
@@ -154,11 +158,7 @@ class TestTypedRecallProject(unittest.TestCase):
                 self.assertEqual(self._instructions(sd), RECALL_INSTRUCTIONS)
 
     def test_other_profiles_ignore_the_project(self):
-        for profile in ("legacy", "selective", "typed"):
-            with self.subTest(profile=profile):
-                self.assertEqual(
-                    extraction_kwargs(profile, "x | project=3d"), extraction_kwargs(profile)
-                )
+        self.assertEqual(extraction_kwargs("legacy", "x | project=3d"), extraction_kwargs("legacy"))
 
 
 class _NoRowsDriver:
@@ -191,12 +191,12 @@ class TestRememberPassesProfile(unittest.IsolatedAsyncioTestCase):
         return fake.calls[0]
 
     async def test_each_profile_reaches_add_episode(self):
-        for profile in ("legacy", "selective", "typed", "typed-recall"):
+        for profile in ("legacy", "typed-recall"):
             with self.subTest(profile=profile):
                 call = await self._remember_under(profile)
                 for key, value in extraction_kwargs(profile).items():
                     self.assertEqual(call[key], value)
-                self.assertEqual("entity_types" in call, profile in ("typed", "typed-recall"))
+                self.assertEqual("entity_types" in call, profile == "typed-recall")
 
 
 class TestCorrectMemoryPassesProfile(MS6bBase):
@@ -205,15 +205,15 @@ class TestCorrectMemoryPassesProfile(MS6bBase):
         driver = FakeDriver(episode={"uuid": "ep-1", "valid_at": datetime(2026, 5, 1, tzinfo=timezone.utc),
                                       "content": "old statement", "source_description": "reasoning_kind=decision"})
         graphiti = FakeGraphiti(driver)
-        with _env("typed"):
+        with _env("typed-recall"):
             await correct_memory(
                 self.prom, self.rev, self.cs, memory_id, "corrected statement", graphiti,
                 reviewer=DEFAULT_REVIEWER, reason="fix", graph_name=GRAPH, dry_run=False,
             )
         self.assertEqual(len(graphiti.added), 1)
         added = graphiti.added[0]
-        self.assertEqual(added["custom_extraction_instructions"], SELECTIVE_INSTRUCTIONS)
-        self.assertIs(added["entity_types"], ENTITY_TYPES)
+        self.assertEqual(added["custom_extraction_instructions"], extraction_kwargs("typed-recall", added["source_description"])["custom_extraction_instructions"])
+        self.assertIs(added["entity_types"], RECALL_ENTITY_TYPES)
         self.assertEqual(added["excluded_entity_types"], ["Entity"])
 
 

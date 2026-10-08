@@ -18,7 +18,7 @@ Per bucket it reports:
 - RELATES_TO facts per episode (edges touching those entities, created by
   those episodes)
 - regex noise share: distinct entities server.providers.entity_filter.noise_category() flags
-- type-label mix (only non-empty for the `typed` profile)
+- type-label mix (only non-empty for the `typed-recall` profile)
 - gold hits (tests/fixtures/ms4e/entity_gold.json): which keep / drop names
   are among the entities these episodes mention
 

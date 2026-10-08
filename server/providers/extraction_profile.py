@@ -10,7 +10,8 @@ Graphiti's bare defaults).
 
 Profiles, selected by CMF_EXTRACTION_PROFILE (server.core.config):
 
-- "legacy": the pre-MS4e instructions, verbatim. Tuned in Spark Phase 7 for
+- "legacy": the pre-MS4e instructions, verbatim. Opt-in only, kept so
+  pre-2026-09-28 extraction can be reproduced. Tuned in Spark Phase 7 for
   terse ~200-char episodes where qwen3.5-122b returned an empty entity list
   ~45% of the time, so it pushes hard the other way ("extract every specific
   named entity ... files and path patterns ... settings or parameters").
@@ -18,18 +19,17 @@ Profiles, selected by CMF_EXTRACTION_PROFILE (server.core.config):
   entity noise: 79% of jspace's 398 entities were mentioned by exactly one
   episode, most of them file names, identifiers and numbers (MS4e, measured
   2026-09-28).
-- "selective": instructions that ask for durable, re-findable things only
-  and list the debris to skip. No ontology.
-- "typed": "selective" plus an ontology, with Graphiti's generic `Entity`
-  type excluded, so anything the model can't place in a real type is
-  dropped rather than saved.
-- "typed-recall": the MS4e Phase 3 follow-up. The A/B showed the ontology
-  is what filters debris, while "selective"'s cautious wording made qwen
-  return nothing on long episodes (typed found 36 of 57 reference entities,
-  legacy 50). So this keeps a wider ontology as the filter, adding Format and
+- "typed-recall" (the default since MS10a, 2026-10-08): the MS4e Phase 3
+  follow-up. The A/B showed the ontology is what filters debris, while the
+  intermediate "selective" profile's cautious wording made qwen return
+  nothing on long episodes ("typed", selective plus an ontology, found 36 of
+  57 reference entities, legacy 50). So this keeps a wider ontology as the filter, adding Format and
   Topic per the user's review, and asks for coverage within it. It also names
   the episode's own project, which Graphiti's text prompt never shows the
   model (source_description carries it as `project=<bucket>`).
+
+"selective" and "typed" were removed in MS10a (2026-10-08); their prompt and
+ontology are in git history before that date.
 
 The ontology's type names become FalkorDB labels on the saved nodes
 (alongside `Entity`), so none may collide with a label CMF already uses:
@@ -49,8 +49,6 @@ from pydantic import BaseModel
 
 from server.core.config import (
     LEGACY_EXTRACTION,
-    SELECTIVE_EXTRACTION,
-    TYPED_EXTRACTION,
     TYPED_RECALL_EXTRACTION,
     VALID_EXTRACTION_PROFILES,
     extraction_profile_from_env,
@@ -68,92 +66,6 @@ LEGACY_INSTRUCTIONS = (
     "Returning an empty entity list should be rare, only when the summary genuinely names "
     "nothing concrete. Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity."
 )
-
-# The keep/drop examples are the user's own, from reviewing jspace's entities
-# (2026-09-28); tests/fixtures/ms4e/entity_gold.json holds the same lists
-# for scoring. `remember()` sends EpisodeType.text, whose prompt labels the
-# input <TEXT> — the legacy text's "CURRENT MESSAGE" was the message prompt's
-# wording.
-SELECTIVE_INSTRUCTIONS = (
-    "The TEXT is a third-person summary of work from a personal knowledge log: decisions, plans, "
-    "findings and troubleshooting, sometimes followed by 'Driving question:' and 'Reasoning:' lines. "
-    "It is later searched to answer questions like 'what did I decide about X' across months of "
-    "sessions, so extract only entities someone would plausibly search for again in a DIFFERENT "
-    "session or project: people; organizations and companies; products, software, apps, services "
-    "and platforms; AI models and model families; hardware and devices; named projects; places; "
-    "and named methods, techniques or research ideas that matter beyond this one task.\n"
-    "Do NOT extract implementation debris, even when it is named precisely:\n"
-    "- file names, scripts and paths (build_traces20.py, qa_dump.json, answers.json)\n"
-    "- functions, variables, config keys, CLI flags, env vars, code identifiers "
-    "(head_idx, defaultK, sys.path, place() function, run_qa_local)\n"
-    "- exception and error names (ModuleNotFoundError)\n"
-    "- numbers, measurements, sizes, durations, counts, limits, PIDs, IPs, ports, "
-    "indices, layers and steps (layer 40, layer 29-40, step-0, 317MB, 3x call limit multiplier)\n"
-    "- labels local to one discussion (Option C, Phase 7, scores, structure)\n"
-    "- UI details and styling (arrowhead size, cloud token position)\n"
-    "- data encodings and formats used in passing (base64 data URIs, UTF-8)\n"
-    "- generic nouns, fragments, quoted words and punctuation (asterisk, 'Depends', renderer)\n"
-    "Good entities look like: gemini-2.5-flash, Mac Pro, NAS, NVIDIA Spark, J-Space, Claude, "
-    "Google Docs, Alex, labeling tool, open-source language model.\n"
-    "A short list of durable entities is better than a long list padded with details; returning "
-    "no entities is fine when the text names nothing durable. Do NOT extract the narrator "
-    "(\"the user\", \"the assistant\") as an entity."
-)
-
-
-class Person(BaseModel):
-    """A specific, named human being: a collaborator, contact, author or public figure. Not a role
-    ("the reviewer"), a group of people, or the narrator ("the user", "the assistant")."""
-
-
-class Organization(BaseModel):
-    """A named company, institution, team, community or government body (e.g. Google, NVIDIA,
-    Anthropic, a university lab)."""
-
-
-class Software(BaseModel):
-    """A named software product, application, library, framework, service, platform, protocol or
-    online account (e.g. Google Docs, FalkorDB, Tailscale, Obsidian, Hugging Face, a Google
-    account). Also a tool the user built, when it is referred to as a lasting thing (e.g. a
-    labeling tool). Not a single file, script, function, variable or config key."""
-
-
-class AIModel(BaseModel):
-    """A named AI or machine-learning model, model family or model variant (e.g. Claude,
-    gemini-2.5-flash, flash-lite variants, qwen3.5-122b, an open-source language model)."""
-
-
-class Hardware(BaseModel):
-    """A named physical device, computer, component or piece of equipment (e.g. Mac Pro, NAS,
-    NVIDIA Spark, a camera or telescope model, a phone)."""
-
-
-class Workstream(BaseModel):
-    """A named project, codebase, product effort, study or ongoing initiative the user works on
-    (e.g. J-Space, nanospark, Context Memory Fabric). Not a milestone, phase, step or option
-    inside one ("Phase 7", "Option C")."""
-
-
-class Place(BaseModel):
-    """A named geographic location, venue, astronomical/celestial body or physical site (a city, gallery, observatory, home, celestial targets like Sun, Moon)."""
-
-
-class Method(BaseModel):
-    """A named technique, algorithm, research method or field that matters beyond a single task
-    and could recur across projects (e.g. logit lens, sparse autoencoders, astrophotography
-    stacking). Not a one-off implementation step, parameter or setting."""
-
-
-ENTITY_TYPES: dict[str, type[BaseModel]] = {
-    "Person": Person,
-    "Organization": Organization,
-    "Software": Software,
-    "AIModel": AIModel,
-    "Hardware": Hardware,
-    "Workstream": Workstream,
-    "Place": Place,
-    "Method": Method,
-}
 
 # typed-recall (MS4e v2). the user's review of the Phase 3 replay (2026-09-28):
 # techniques, formats and generic roles/organizations are entities; numbers,
@@ -295,14 +207,6 @@ def extraction_kwargs(profile: str | None = None, source_description: Optional[s
         profile = extraction_profile_from_env()
     if profile == LEGACY_EXTRACTION:
         return {"custom_extraction_instructions": LEGACY_INSTRUCTIONS}
-    if profile == SELECTIVE_EXTRACTION:
-        return {"custom_extraction_instructions": SELECTIVE_INSTRUCTIONS}
-    if profile == TYPED_EXTRACTION:
-        return {
-            "custom_extraction_instructions": SELECTIVE_INSTRUCTIONS,
-            "entity_types": ENTITY_TYPES,
-            "excluded_entity_types": EXCLUDED_ENTITY_TYPES,
-        }
     if profile == TYPED_RECALL_EXTRACTION:
         return {
             "custom_extraction_instructions": RECALL_INSTRUCTIONS + _project_instruction(source_description),

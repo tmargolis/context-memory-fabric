@@ -28,13 +28,11 @@ LOCAL_PROVIDER = "local"
 VALID_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER)
 
 # MS4e: which entity-extraction profile add_episode() runs under (see
-# server.providers.extraction_profile). "legacy" is the pre-MS4e behaviour
-# and stays the default until the MS4e exit gate picks a replacement.
+# server.providers.extraction_profile). "typed-recall" is the default since
+# MS10a (2026-10-08); "legacy", the pre-MS4e behaviour, is opt-in.
 LEGACY_EXTRACTION = "legacy"
-SELECTIVE_EXTRACTION = "selective"
-TYPED_EXTRACTION = "typed"
 TYPED_RECALL_EXTRACTION = "typed-recall"
-VALID_EXTRACTION_PROFILES = (LEGACY_EXTRACTION, SELECTIVE_EXTRACTION, TYPED_EXTRACTION, TYPED_RECALL_EXTRACTION)
+VALID_EXTRACTION_PROFILES = (LEGACY_EXTRACTION, TYPED_RECALL_EXTRACTION)
 
 # Defaults describe the *current* deployment, not the target one: provider
 # stays "gemini" so importing this module can never silently re-point a
@@ -104,7 +102,7 @@ class CMFConfig:
     local_embed_model: str
     local_structured_mode: str
     embedding_dim: int
-    extraction_profile: str = LEGACY_EXTRACTION
+    extraction_profile: str = TYPED_RECALL_EXTRACTION
 
     @property
     def llm_is_local(self) -> bool:
@@ -217,13 +215,15 @@ def capture_llm_provider_from_env() -> str:
 def extraction_profile_from_env() -> str:
     """Read CMF_EXTRACTION_PROFILE, rejecting anything not recognised.
 
-    Same fail-loudly reasoning as _provider(): a typo silently falling back
-    to "legacy" would make an A/B replay measure the wrong thing, and the
-    only symptom would be a graph that looks exactly like the baseline.
+    Unset means "typed-recall", the production profile since 2026-09-28;
+    "legacy" is opt-in, for reproducing older extraction. Same fail-loudly
+    reasoning as _provider(): a typo silently falling back to the default
+    would make an A/B replay measure the wrong thing, and the only symptom
+    would be a graph that looks exactly like the baseline.
     """
     raw = os.getenv("CMF_EXTRACTION_PROFILE")
     if raw is None or not raw.strip():
-        return LEGACY_EXTRACTION
+        return TYPED_RECALL_EXTRACTION
     value = raw.strip().lower()
     if value not in VALID_EXTRACTION_PROFILES:
         raise ValueError(

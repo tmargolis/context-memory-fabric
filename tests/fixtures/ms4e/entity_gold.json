@@ -1,5 +1,5 @@
 {
-  "_about": "MS4e entity-quality gold lists (2026-09-28). keep and drop_prompt are curated examples from reviewing jspace's entities in mem-fabric-local. drop_prompt names are quoted in SELECTIVE_INSTRUCTIONS, so scoring them flatters the new profiles; drop_heldout comes from the same jspace single-mention list but is NOT in any prompt, and is the one acceptance test 3 is judged on. Matching is case- and punctuation-insensitive exact-name.",
+  "_about": "MS4e entity-quality gold lists (2026-09-28). keep and drop_prompt are curated examples from reviewing jspace's entities in mem-fabric-local. drop_prompt names were quoted in the (removed, 2026-10-08) selective prompt, so scoring them flatters the new profiles; drop_heldout comes from the same jspace single-mention list and was not in that prompt, and is the one acceptance test 3 was judged on. Note: the typed-recall prompt (RECALL_INSTRUCTIONS) does quote four drop_heldout names (jspace20.js, top_probs, PID 12955, 'There'), so held-out scores against typed-recall are flattered for those four. Matching is case- and punctuation-insensitive exact-name.",
   "keep": [
     "gemini-2.5", "flash-lite variants", "Google account", "gemini-2.5-flash", "Mac Pro", "NAS",
     "NVIDIA Spark", "J-Space", "open-source language model", "Alex", "nanospark", "Spark",
