@@ -38,10 +38,13 @@ from server.policies.protocols import ExtractionCategory, PolicyContext, Reasoni
 from server.policies.reasoning_episode import (
     GenerateFn,
     ReasoningEpisodePolicyV1,
+    SUBAGENT_NOTE,
     _MAX_TURN_CHARS,
     _SYSTEM,
     _clean,
     _select_generate_fn,
+    is_subagent_window,
+    turn_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -495,12 +498,15 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         return out
 
     def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
-        lines = [_EXTRACT_SYSTEM, "", "--- CONVERSATION WINDOW ---"]
+        lines = [_EXTRACT_SYSTEM, ""]
+        if is_subagent_window(ordered):
+            lines += [SUBAGENT_NOTE, ""]
+        lines.append("--- CONVERSATION WINDOW ---")
         for i, ev in enumerate(ordered, start=1):
             text = (ev.content.get("text") or "").strip()
             if len(text) > _MAX_TURN_CHARS:
                 text = text[:_MAX_TURN_CHARS] + " …[truncated]"
-            lines.append(f"[turn {i}] ({ev.actor_type}) {text}")
+            lines.append(f"[turn {i}] ({turn_label(ev)}) {text}")
 
         threads = context.open_threads or []
         if threads:

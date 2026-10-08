@@ -116,3 +116,61 @@ def test_rerun_does_not_rejournal_subagent(tmp_path):
         again = process_pending(store, projects_root=root, run_consolidation=False)
     assert again.events_journaled == 0
     assert again.files_with_new_bytes == 0
+
+
+# --- extraction prompt: who is speaking in a subagent window ------------------
+
+
+def _events(tmp_path, *, subagent):
+    root, sub = _fixture(tmp_path)
+    from server.adapters.claude_code.parser import parse_line
+
+    target = next(f for f in discover_transcript_files(root) if (f.path == sub) == subagent)
+    events = []
+    for raw in target.path.read_text().splitlines():
+        ev = parse_line(raw, session_id=target.session_id, project_path=target.project_slug,
+                        conversation_id=target.conversation, extra_metadata=target.extra_metadata)
+        if ev is not None:
+            events.append(ev)
+    return events
+
+
+def _tool_result(uuid, parent):
+    record = _turn("user", uuid, "", parent=parent, sidechain=True)
+    record["message"]["content"] = [{"type": "tool_result", "tool_use_id": "t1", "content": "file contents"}]
+    return record
+
+
+def test_subagent_prompt_labels_parent_agent_and_tool_results(tmp_path):
+    from server.policies.extract import ExtractPolicyV1
+    from server.policies.protocols import PolicyContext
+    from server.policies.reasoning_episode import SUBAGENT_NOTE
+
+    root, sub = _fixture(tmp_path)
+    _write_lines(sub, [_tool_result("s3", "s2")])
+    events = _events(tmp_path, subagent=True)
+    policy = ExtractPolicyV1(generate_fn=lambda m, p: "{}")
+    prompt = policy._build_prompt(sorted(events, key=lambda e: e.observed_at), PolicyContext())
+    assert SUBAGENT_NOTE in prompt
+    window = prompt.split("--- CONVERSATION WINDOW ---", 1)[1]
+    assert "(parent agent) Find every place" in window
+    assert "(assistant) Found four branch sites" in window
+    assert "(tool result)" in window
+    assert "(user)" not in window
+    # The journal still records the turn's real role.
+    assert {e.actor_type for e in events} == {"user", "assistant"}
+
+
+def test_ordinary_prompt_is_unchanged(tmp_path):
+    from server.policies.extract import _EXTRACT_SYSTEM, ExtractPolicyV1
+    from server.policies.protocols import PolicyContext
+
+    events = sorted(_events(tmp_path, subagent=False), key=lambda e: e.observed_at)
+    prompt = ExtractPolicyV1(generate_fn=lambda m, p: "{}")._build_prompt(events, PolicyContext())
+    expected_head = "\n".join([
+        _EXTRACT_SYSTEM, "", "--- CONVERSATION WINDOW ---",
+        "[turn 1] (user) please plan the provider work",
+        "[turn 2] (assistant) I'll explore the codebase first.",
+    ])
+    assert prompt.startswith(expected_head)
+    assert "SUBAGENT" not in prompt

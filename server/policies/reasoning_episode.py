@@ -51,6 +51,33 @@ logger = logging.getLogger(__name__)
 GenerateFn = Callable[[str, str], str]
 
 _MAX_TURN_CHARS = 2000
+
+# Subagent transcripts (MS10a task 3, 2026-10-08): a Claude Code subagent's
+# `user` turns are the parent agent's instructions and the tool results
+# returned to it, not the human's words. The first extraction of them wrote
+# "The user investigated..." for work an Explore agent did. Such windows get
+# relabelled turns and this note; every other window's prompt is unchanged.
+SUBAGENT_NOTE = (
+    "--- SUBAGENT TRANSCRIPT ---\n"
+    "This conversation is a subagent: an AI agent that another AI assistant (the parent agent) "
+    "started to handle part of a larger task. Turns marked (parent agent) are that assistant's "
+    "instructions to the subagent, and turns marked (tool result) are tool output; the human user "
+    "wrote none of them. Describe what the agents found, decided or did (\"The assistant found...\", "
+    "\"A subagent mapped...\"), never \"The user...\" for agent work. Attribute a goal, decision or "
+    "preference to the user only when the parent agent's instructions state it explicitly as the "
+    "user's, and say that it was relayed (\"The user's requirement, relayed to the subagent, was...\")."
+)
+
+
+def is_subagent_window(ordered: list[SourceEvent]) -> bool:
+    return any((ev.metadata or {}).get("is_subagent") for ev in ordered)
+
+
+def turn_label(ev: SourceEvent) -> str:
+    """The speaker shown to the model for one turn."""
+    if ev.actor_type == "user" and (ev.metadata or {}).get("is_subagent"):
+        return "tool result" if (ev.content or {}).get("kind") == "tool_result" else "parent agent"
+    return ev.actor_type
 _SYSTEM = """You extract REASONING EPISODES from a slice of a conversation between a user and an AI assistant.
 
 A reasoning episode is a unit of the USER working something out:
@@ -452,12 +479,15 @@ class ReasoningEpisodePolicyV1:
 
     # -- internals ------------------------------------------------------
     def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
-        lines = [_SYSTEM, "", "--- CONVERSATION WINDOW ---"]
+        lines = [_SYSTEM, ""]
+        if is_subagent_window(ordered):
+            lines += [SUBAGENT_NOTE, ""]
+        lines.append("--- CONVERSATION WINDOW ---")
         for i, ev in enumerate(ordered, start=1):
             text = (ev.content.get("text") or "").strip()
             if len(text) > _MAX_TURN_CHARS:
                 text = text[:_MAX_TURN_CHARS] + " …[truncated]"
-            lines.append(f"[turn {i}] ({ev.actor_type}) {text}")
+            lines.append(f"[turn {i}] ({turn_label(ev)}) {text}")
 
         threads = context.open_threads or []
         if threads:
