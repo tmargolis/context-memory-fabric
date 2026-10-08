@@ -63,7 +63,6 @@ htmlcov/
 .env
 .env.*
 !.env.example
-!.env.preview.example
 .envrc
 *.pem
 *.key

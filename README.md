@@ -53,8 +53,8 @@ The fastest way to experience CMF is using the self-contained Compose preview, w
 git clone https://github.com/tmargolis/context-memory-fabric.git
 cd context-memory-fabric
 
-# 2. Copy the preview configuration template
-cp .env.preview.example .env
+# 2. Copy the configuration template
+cp .env.example .env
 
 # 3. Add your Gemini API key to .env
 # GEMINI_API_KEY=AIzaSy...

@@ -27,15 +27,15 @@ The fastest and most isolated way to run CMF is using the standalone preview Com
 git clone https://github.com/tmargolis/context-memory-fabric.git
 cd context-memory-fabric
 
-# Copy preview environment template
-cp .env.preview.example .env
+# Copy the environment template
+cp .env.example .env
 ```
 
 Edit `.env` to supply your **Google Gemini API Key**:
 ```bash
 GEMINI_API_KEY=AIzaSy...
 ```
-*(By default, this points `LLM_WIKI_PATH` to the included fictional `starter-wiki/` and uses graph `preview_db` on non-conflicting host ports.)*
+*(By default, this points `LLM_WIKI_PATH` to the included fictional `starter-wiki/` and uses graph `CMF-local` on non-conflicting host ports.)*
 
 ### 2. Launch the Stack
 
@@ -99,6 +99,34 @@ FALKORDB_DATABASE=memory-fabric
 # Optional: Durable knowledge corpus (if omitted, wiki tools are disabled gracefully)
 LLM_WIKI_PATH=./starter-wiki
 ```
+
+#### Optional: Run a Small Local Embedder (Ollama)
+
+Embeddings can run on your own machine instead of a paid or rate-limited API. `nomic-embed-text` is small (~270 MB) and runs fine on a laptop CPU, with no GPU needed. Setup takes about 15 minutes on macOS, Linux or Windows.
+
+1. **Install Ollama** from [ollama.com/download](https://ollama.com/download). It installs as a background service listening on `http://127.0.0.1:11434`.
+2. **Pull the embedding model:**
+   ```bash
+   ollama pull nomic-embed-text
+   ```
+3. **Check that it answers** on Ollama's OpenAI-compatible endpoint (the reply should contain a 768-number vector):
+   ```bash
+   curl http://127.0.0.1:11434/v1/embeddings -H "Content-Type: application/json" -d '{"model": "nomic-embed-text", "input": "hello"}'
+   ```
+4. **Point CMF at it** in `.env`:
+   ```bash
+   CMF_EMBED_PROVIDER=local
+   CMF_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+   CMF_LOCAL_API_KEY=ollama            # Ollama ignores it; the client just needs a non-empty value
+   CMF_LOCAL_EMBED_MODEL=nomic-embed-text
+   EMBEDDING_DIM=768                   # nomic's fixed output width
+   ```
+
+Things to know:
+- **Pick the embedder before your graph has data.** A graph's vectors and index are built at one width. Switching embedders later (e.g. to 1024-wide Gemini or OpenAI vectors) means a new `FALKORDB_DATABASE` and re-importing your history into it, not an in-place change.
+- **Ollama must be running** whenever CMF writes or searches memory. If it's down, those calls fail rather than falling back.
+- **Which LLM can pair with it today:** `CMF_LLM_PROVIDER=gemini` works as-is, since only the embedder reads `CMF_LOCAL_BASE_URL`. A fully local setup (LLM and embedder both on one OpenAI-compatible server) also works. Anthropic or OpenAI as the LLM alongside a local embedder is planned but not yet built. It will add separate LLM and embedder endpoint settings.
+- **Background transcript capture** (the Claude Code / Codex pollers) currently always runs its extraction on the local LLM endpoint, independent of `CMF_LLM_PROVIDER`. With an embedder-only Ollama setup, run CMF's MCP tools but leave the pollers off until capture gets its own provider setting.
 
 ### 5. Run the Server
 
@@ -179,15 +207,17 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GEMINI_API_KEY` | Conditional | — | Required when using Gemini extraction/embeddings (`CMF_LLM_PROVIDER=gemini`). |
-| `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `preview_db` or `memory-fabric`) to avoid silent collisions. |
+| `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
 | `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset, knowledge tools (`search_wiki`, `propose_doc_update`) are gracefully omitted. |
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
 | `CMF_STATE_DIR` | No | `./wiki-proposals` | Staging directory for generated document update proposals and local state. |
 | `CMF_LLM_PROVIDER` | No | `gemini` | Extractor LLM provider: `gemini` or `local`. |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embedder provider: `gemini` or `local`. |
-| `CMF_LOCAL_BASE_URL` | No | `http://127.0.0.1:12345/v1` | OpenAI-compatible endpoint for local inference (vLLM, Ollama, LM Studio). |
-| `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini; 768 for nomic local embedder). |
+| `CMF_LOCAL_BASE_URL` | No | `http://127.0.0.1:12345/v1` | OpenAI-compatible endpoint for local inference (vLLM, Ollama, LM Studio). Ollama: `http://127.0.0.1:11434/v1`. |
+| `CMF_LOCAL_EMBED_MODEL` | No | `text-embedding-nomic-embed-text-v1.5` | Local embedding model id as your server names it (Ollama: `nomic-embed-text`). |
+| `EMBEDDING_DIM` | No | `1024` | Vector embedding dimension (1024 for Gemini; 768 for nomic local embedder). Fixed per graph. |
+| `CMF_EXTRACTION_PROFILE` | No | `legacy` | Entity extraction prompt. Set `typed-recall` (recommended; `.env.example` sets it). |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 
 ---
@@ -216,7 +246,7 @@ CMF provides `import_memories` and `import_chatgpt_exports` for parsing historic
 3. **Resetting Test Graphs Safely:**
    To wipe only a specific test graph without destroying other graphs or container volumes:
    ```bash
-   docker exec cmf-preview-falkordb redis-cli GRAPH.QUERY preview_db "MATCH (n) DETACH DELETE n"
+   docker exec cmf-preview-falkordb redis-cli GRAPH.QUERY CMF-local "MATCH (n) DETACH DELETE n"
    ```
 
 ---
