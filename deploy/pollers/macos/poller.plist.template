@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- CMF transcript poller ({{NAME}}). Rendered by deploy/pollers/macos/install.sh. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{{LABEL}}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{PYTHON}}</string>
+		<string>-m</string>
+		<string>{{MODULE}}</string>
+		<string>{{COMMAND}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>{{REPO}}</string>
+	<key>StartInterval</key>
+	<integer>{{INTERVAL}}</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>{{LOG_DIR}}/cmf-{{NAME}}-poller.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{LOG_DIR}}/cmf-{{NAME}}-poller-err.log</string>
+</dict>
+</plist>

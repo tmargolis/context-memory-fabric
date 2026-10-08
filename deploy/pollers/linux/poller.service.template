@@ -1,0 +1,12 @@
+# CMF {{NAME}} transcript poller, started by cmf-{{NAME}}-poller.timer.
+# Rendered by deploy/pollers/linux/install.sh.
+[Unit]
+Description=CMF {{NAME}} transcript poller
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPO}}
+ExecStart={{PYTHON}} -m {{MODULE}} {{COMMAND}}
+# A long first backfill can take a while, but a stuck run must not block polling forever.
+TimeoutStartSec=2h

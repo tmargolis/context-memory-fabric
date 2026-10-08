@@ -1,0 +1,14 @@
+# CMF MCP server over streamable HTTP on loopback.
+# Rendered by deploy/pollers/linux/install.sh.
+[Unit]
+Description=Context Memory Fabric MCP server
+After=network-online.target
+
+[Service]
+WorkingDirectory={{REPO}}
+ExecStart={{PYTHON}} -m server.mcp --transport streamable-http --host 127.0.0.1 --port {{PORT}}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

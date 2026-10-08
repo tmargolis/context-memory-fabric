@@ -9,7 +9,7 @@ Follows Antigravity's caller-managed offset pattern:
 2. `TailStateStore` tracks byte offsets in `codex_tail_state` and adapter metadata
    in `codex_adapter_meta` within the existing journal SQLite database.
 3. Offsets advance ONLY after successful writes to the journal store.
-4. Process-level `WorkerLock` using `fcntl.flock` prevents hook/poller concurrency.
+4. Process-level `WorkerLock` (server.adapters.file_lock, portable) prevents hook/poller concurrency.
 5. Initial capture cutoff is persisted on first run; older history requires
    explicit backfill mode.
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import fcntl
 import json
 import logging
 import os
@@ -33,6 +32,7 @@ from server.adapters.codex.parser import (
     parse_line,
 )
 from server.adapters.codex.project import resolve_project
+from server.adapters.file_lock import WorkerLock as _FileLock
 from server.core.models import SourceEvent
 from server.journal.store import DEFAULT_JOURNAL_PATH, SqliteEventStore
 
@@ -74,9 +74,14 @@ _FILENAME_UUID_RE = re.compile(
 
 
 def get_default_sessions_root() -> Path:
+    """CMF_CODEX_SESSIONS_ROOT, else `$CODEX_HOME/sessions` (Codex's own
+    setting for where it keeps its state), else `~/.codex/sessions`."""
     env_root = os.environ.get("CMF_CODEX_SESSIONS_ROOT")
     if env_root:
         return Path(env_root).expanduser()
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser() / "sessions"
     return Path.home() / ".codex" / "sessions"
 
 
@@ -279,51 +284,17 @@ class TailStateStore:
         self._conn.commit()
 
 
-class WorkerLock:
-    """Non-blocking process-level file lock using fcntl.flock.
+class WorkerLock(_FileLock):
+    """Non-blocking process-level file lock (server.adapters.file_lock),
+    defaulting to the Codex worker's own lock file.
 
-    Prevents concurrent execution between launchd poller runs and hook invocations.
+    Prevents concurrent execution between scheduled poller runs and hook invocations.
     """
 
     def __init__(self, lock_path: Optional[Path] = None) -> None:
-        self.lock_path = (
-            Path(lock_path)
-            if lock_path is not None
-            else DEFAULT_JOURNAL_PATH.parent / "codex_worker.lock"
+        super().__init__(
+            Path(lock_path) if lock_path is not None else DEFAULT_JOURNAL_PATH.parent / "codex_worker.lock"
         )
-        self._fd: Optional[int] = None
-
-    def acquire(self, blocking: bool = False) -> bool:
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o644)
-        flags = fcntl.LOCK_EX
-        if not blocking:
-            flags |= fcntl.LOCK_NB
-        try:
-            fcntl.flock(self._fd, flags)
-            return True
-        except (BlockingIOError, OSError):
-            os.close(self._fd)
-            self._fd = None
-            return False
-
-    def release(self) -> None:
-        if self._fd is not None:
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            self._fd = None
-
-    def __enter__(self) -> bool:
-        return self.acquire(blocking=False)
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.release()
 
 
 def read_new_lines(

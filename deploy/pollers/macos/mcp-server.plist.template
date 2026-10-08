@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- CMF MCP server over streamable HTTP on loopback. Rendered by deploy/pollers/macos/install.sh. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{{LABEL}}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{PYTHON}}</string>
+		<string>-m</string>
+		<string>server.mcp</string>
+		<string>--transport</string>
+		<string>streamable-http</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>{{PORT}}</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>{{REPO}}</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>{{LOG_DIR}}/cmf-mcp-server.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{LOG_DIR}}/cmf-mcp-server.err.log</string>
+</dict>
+</plist>

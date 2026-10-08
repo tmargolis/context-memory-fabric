@@ -1,0 +1,12 @@
+# Starts cmf-{{NAME}}-poller.service every {{INTERVAL}} seconds.
+# Rendered by deploy/pollers/linux/install.sh.
+[Unit]
+Description=Run the CMF {{NAME}} transcript poller every {{INTERVAL}}s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{INTERVAL}}s
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

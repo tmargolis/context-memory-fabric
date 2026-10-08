@@ -23,13 +23,29 @@ import logging
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Optional
 
 from server.core.project_roots import folder_project_map, project_for_mapped_folder  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SESSIONS_ROOT = Path.home() / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
+def _default_sessions_root() -> Path:
+    """Where Claude Desktop keeps local Cowork sessions on this OS.
+    CMF_COWORK_SESSIONS_ROOT overrides it."""
+    override = os.getenv("CMF_COWORK_SESSIONS_ROOT")
+    if override:
+        return Path(override).expanduser()
+    if sys.platform == "win32":
+        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "Claude" / "local-agent-mode-sessions"
+
+
+DEFAULT_SESSIONS_ROOT = _default_sessions_root()
 
 # Session types whose conversations get ExtractPolicy consolidation by
 # default. "scheduled" runs are journal-only unless their scheduledTaskId is

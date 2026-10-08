@@ -6,8 +6,8 @@ a backfill, or the MS9 Phase 4 wiki extraction, they swamp the host. A poll
 that can't get the slot skips its whole pass *before tailing*, so no tail
 offset advances and the next poll retries -- nothing is lost, only delayed.
 
-The slot is an exclusive, non-blocking `fcntl.flock` on
-imports/journal/spark_job.lock (codex's WorkerLock), plus a refusal while a
+The slot is an exclusive, non-blocking file lock (server.adapters.file_lock) on
+imports/journal/spark_job.lock, plus a refusal while a
 process running `extract_wiki_relationships.py` exists -- that script is not
 modified to take the lock, so it is detected instead.
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 import subprocess
 from typing import Iterator, Optional
 
-from server.adapters.codex.transcript_reader import WorkerLock
+from server.adapters.file_lock import WorkerLock
 from server.journal.store import DEFAULT_JOURNAL_PATH
 
 logger = logging.getLogger(__name__)
