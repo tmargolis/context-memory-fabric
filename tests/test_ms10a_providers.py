@@ -49,7 +49,7 @@ def test_hosted_providers_are_valid_and_default_models(clean_env):
     _hosted(clean_env)
     config = load_config()
     assert (config.llm_provider, config.embed_provider) == ("anthropic", "openai")
-    assert config.anthropic_model == "claude-opus-5-5"
+    assert config.anthropic_model == "claude-sonnet-5-5"
     assert config.openai_model == "gpt-5.5"
     assert config.openai_embed_model == "text-embedding-3-small"
     assert config.anthropic_effort is None
@@ -58,10 +58,10 @@ def test_hosted_providers_are_valid_and_default_models(clean_env):
 
 def test_model_and_effort_overrides(clean_env):
     _hosted(clean_env)
-    clean_env.setenv("CMF_ANTHROPIC_MODEL", "claude-sonnet-5-5")
+    clean_env.setenv("CMF_ANTHROPIC_MODEL", "claude-opus-5-5")
     clean_env.setenv("CMF_ANTHROPIC_EFFORT", " Low ")
     config = load_config()
-    assert config.anthropic_model == "claude-sonnet-5-5"
+    assert config.anthropic_model == "claude-opus-5-5"
     assert config.anthropic_effort == "low"
 
 
@@ -148,11 +148,11 @@ def test_builders_on_anthropic_and_openai(clean_env):
     clean_env.setenv("CMF_ANTHROPIC_EFFORT", "low")
     config = load_config()
     model = mg.resolve_llm_model(config)
-    assert model == "claude-opus-5-5"
+    assert model == "claude-sonnet-5-5"
 
     llm = mg._build_llm_client(config, model)
     assert isinstance(llm, StructuredAnthropicClient)
-    assert (llm.model, llm.effort) == ("claude-opus-5-5", "low")
+    assert (llm.model, llm.effort) == ("claude-sonnet-5-5", "low")
 
     embedder = mg._build_embedder(config)
     assert isinstance(embedder, DimensionedOpenAIEmbedder)
@@ -324,15 +324,15 @@ def test_worker_uses_configured_model_not_the_limiters(clean_env, monkeypatch):
     from server.providers import anthropic_client
 
     _hosted(clean_env)
-    clean_env.setenv("CMF_ANTHROPIC_MODEL", "claude-sonnet-5-5")
+    clean_env.setenv("CMF_ANTHROPIC_MODEL", "claude-haiku-5-5")
     seen = {}
     monkeypatch.setattr(anthropic_client, "generate_json", lambda **kw: seen.update(kw) or "{}")
     assert re_mod._anthropic_generate("gemini-3.5-flash-lite", "prompt") == "{}"
-    assert seen["model"] == "claude-sonnet-5-5"
+    assert seen["model"] == "claude-haiku-5-5"
     assert seen["api_key"] == "sk-ant-test"
 
 
-@pytest.mark.parametrize("provider, model", [("anthropic", "claude-opus-5-5"), ("openai", "gpt-5.5")])
+@pytest.mark.parametrize("provider, model", [("anthropic", "claude-sonnet-5-5"), ("openai", "gpt-5.5")])
 def test_rate_limiter_is_unmetered_for_hosted(clean_env, provider, model):
     _hosted(clean_env, llm=provider)
     limiter = rate_limiter.get_default_rate_limiter()

@@ -217,7 +217,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_LLM_PROVIDER` | No | `gemini` | Extractor LLM provider: `anthropic`, `openai`, `gemini` or `local`. |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embedder provider: `openai`, `gemini` or `local` (Anthropic has no embeddings API). |
 | `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
-| `CMF_ANTHROPIC_MODEL` | No | `claude-opus-5-5` | Claude model for extraction. A Sonnet or Haiku costs less. |
+| `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |
 | `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |
 | `CMF_OPENAI_MODEL` | No | `gpt-5.5` | OpenAI model for extraction. |
 | `CMF_OPENAI_EMBED_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model, shortened to `EMBEDDING_DIM`. |

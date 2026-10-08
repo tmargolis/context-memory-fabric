@@ -32,9 +32,11 @@ VALID_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER, ANTHROPIC_PROVIDER, OPENAI_P
 VALID_EMBED_PROVIDERS = (GEMINI_PROVIDER, LOCAL_PROVIDER, OPENAI_PROVIDER)
 
 # Hosted-API model defaults (MS10a), overridable per provider. The Claude
-# default is the current Opus; pick a Sonnet or Haiku in CMF_ANTHROPIC_MODEL
-# to trade quality for cost. gpt-5.5 is Graphiti 0.29.3's own OpenAI default.
-DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+# default is the current Sonnet (User, 2026-10-08): capture runs dozens of
+# extraction calls per long transcript. claude-opus-5-5 is the step up,
+# claude-haiku-5-5 the cheaper step down. gpt-5.5 is Graphiti 0.29.3's own
+# OpenAI default.
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
 VALID_ANTHROPIC_EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -131,7 +133,7 @@ class CMFConfig:
     anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
     openai_model: str = DEFAULT_OPENAI_MODEL
     openai_embed_model: str = DEFAULT_OPENAI_EMBED_MODEL
-    # None = the model's own default effort (medium on claude-opus-5-5).
+    # None = the model's own default effort (high on claude-sonnet-5-5).
     anthropic_effort: Optional[str] = None
 
     @property
