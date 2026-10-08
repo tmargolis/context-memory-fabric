@@ -2,7 +2,7 @@
 
 The milestones still to do, in execution order. Index and decisions log: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Completed milestones: [plan-history.md](plan-history.md).
 
-**MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07). Next in order is [MS10](#ms10--distribution-and-ecosystem). What MS9 left open is in the [Backlog](#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
+**MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07). Next in order is [MS10a](#ms10a--second-user-readiness), then [MS10](#ms10--distribution-and-ecosystem). What MS9 left open is in the [Backlog](#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
 
 **MS4b and MS4b-antigravity closed 2026-09-28**, and their record is in [plan-history.md](plan-history.md#ms4b--claude-code-transcript-adapter-build-backfill-re-derivation-review-2026-09-18--09-22). **MS4d (Codex) closed 2026-09-30 (Gemini CLI dropped per user steer)**, and its record is in [plan-history.md](plan-history.md#ms4d--codex-transcript-adapter-and-ongoing-capture-2026-09-30). **MS4c (OpenClaw) remains on hold (User, 2026-09-28).** Its plan is kept intact below but not scheduled. What the active coding adapters keep capturing goes to the recurring review pass ([Backlog](#backlog)).
 
@@ -46,6 +46,66 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 **Effort:** 4–5 sessions (HTTP transport is most of it).
 **Risk:** Medium. First network-exposed surface.
+
+---
+
+## MS10a — Second-user readiness
+
+**Status:** ⚪ planned 2026-10-08, not started.
+
+**Goal:** A second person can run CMF on their own machine with their own data. Their setup: Claude Code (CLI and the desktop app's Code tab) as the main harness, Codex CLI alongside it, and a custom agent team running in both. They have no Spark and no LM Studio, and they prefer Claude or OpenAI models to Gemini or local ones. Operating system unknown. This is MS10's goal, scoped down to one real user. What it finds feeds MS10.
+
+**Decided (User, 2026-10-08):**
+- Claude and OpenAI are reached with **API keys** (Anthropic / OpenAI), not through subscription CLIs. If the user has neither key, they fall back to the Gemini free tier, which needs no new code.
+- Embeddings: **OpenAI** by default (Anthropic has no embeddings API). A small local embedder, nomic via Ollama, stays the documented fallback (SETUP.md, "Run a Small Local Embedder"). A frontier LLM with a local embedder becomes a first-class pairing via separate LLM and embedder endpoint settings (task 2).
+- Personal names in the extraction prompt move to `.env` rather than being swapped for other hardcoded examples (task 6).
+- Tasks 2–5 are already open as general gaps: the background-capture override, the poller install, the reviewer default and the project-root pattern all assume this deployment. Fixing them is generic work, not special-casing one user.
+
+### Tasks
+
+- [ ] **0. Commit the 2026-10-08 env cleanup** on its own: `.env.example` merged with the removed `.env.preview.example`, the `CMF-local` default graph, and doc references updated.
+- [ ] **1. Background-capture provider as a setting.** The four workers force `CMF_LLM_PROVIDER=local` during unattended extraction (`claude_code`, `codex`, `antigravity`; `claude_cowork` imports the `claude_code` copy). Replace the four `_forced_local_llm_provider` copies with one helper driven by a new `CMF_CAPTURE_LLM_PROVIDER`. Default `local`, so this deployment's Spark safeguard is unchanged.
+- [ ] **2. `anthropic` and `openai` providers** for `CMF_LLM_PROVIDER` / `CMF_EMBED_PROVIDER` / `CMF_CAPTURE_LLM_PROVIDER`:
+  - Config: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, per-provider model settings, and a `memory_enabled` credential check per selected provider.
+  - Promotion: Graphiti 0.29.3's `AnthropicClient` / `OpenAIClient`; add the `anthropic` SDK dependency (`openai` is already installed).
+  - Worker extraction: Anthropic and OpenAI branches in `reasoning_episode._select_generate_fn` with schema-constrained output. Check the current Claude structured-output API and model ids before writing it.
+  - Embeddings: `openai` (text-embedding-3-small, `dimensions=EMBEDDING_DIM`). `anthropic` as an embed provider fails at startup with a clear message.
+  - Reranker: passthrough on the `anthropic` path (Graphiti's reranker needs logprobs); `OpenAIRerankerClient` on `openai`.
+  - Retries on 429/529. The Gemini rate limiter does not apply.
+  - **Frontier LLM + local embedder as a supported pairing.** Today one `CMF_LOCAL_BASE_URL` / `CMF_LOCAL_API_KEY` serves both local roles. That makes Gemini + Ollama embeddings work only by accident: nothing else reads the URL. Split it into **`CMF_LOCAL_LLM_BASE_URL`** and **`CMF_LOCAL_EMBED_BASE_URL`** (each with its own `_API_KEY`), each falling back to `CMF_LOCAL_BASE_URL` when unset so existing `.env` files keep working. Then any frontier LLM (`anthropic` / `openai` / `gemini`) can pair with a laptop embedder (Ollama `nomic-embed-text`, 768). An LM Studio LLM and an Ollama embedder can also run on different hosts or ports. The `memory_enabled` credential check reads whichever URL each selected role uses. Update the SETUP.md "Run a Small Local Embedder" section and the `.env.example` Ollama block, both written 2026-10-08, to drop their "not yet built" caveats.
+- [ ] **3. Capture Claude subagent transcripts.** Discovery in `claude_code/transcript_reader.py` only globs `<project>/*.jsonl`, so `<project>/<session>/subagents/agent-*.jsonl` is never read. A subagent becomes its own conversation (`<session>:agent-<agentId>`) with its parent session as `parent_conversation_id`, matching the Codex adapter's `parent_thread_id` handling. The agent type and description come from the sibling `.meta.json`. Codex already captures subagents and forks; no change there. **Open:** backfill this deployment's 21 existing subagent transcripts (2026-09-07 → 09-28, nearly all CMF build exploration), or mark them read and capture forward only. Recommendation: forward only.
+- [ ] **4. Cross-platform poller templates** in `deploy/pollers/`:
+  - macOS: launchd `.plist` templates for the MCP server and the Claude Code and Codex pollers.
+  - Linux: systemd `--user` `.service` + `.timer`.
+  - Windows: a PowerShell Task Scheduler registration script.
+  - README with placeholders (repo path, venv Python, interval). The Spark tunnel is deployment-specific and stays out.
+  - Check Windows portability: `spark_lock`'s file locking, `project_slug.py` on Windows transcript folder names, `~/.claude` and `~/.codex` resolution.
+- [ ] **5. Env vars.** `CMF_REVIEWER`, replacing the hardcoded `"todd"` default in `server/mcp.py` and `server/proposals.py`; it defaults to the OS login name, so this deployment is unchanged. `CMF_PROJECT_ROOTS`: parent folders whose children are projects, replacing `project_slug.py`'s hardcoded `Dev|Documents|Volumes` pattern. Confirm the Claude Code and Codex adapters honour the existing `CMF_PROJECT_FOLDER_MAP` / `CMF_PROJECT_ALIASES`.
+- [ ] **6. Extraction examples from `.env`, not code.** The `typed-recall` prompt in `server/providers/extraction_profile.py` hardcodes this deployment's names: lines 96, 133, 143, 172, 226 (J-Space, nanospark, Career Navigator, NVIDIA Spark, astrophotography, …). So do the `server/mcp.py` tool descriptions (lines 321, 420). Read them instead from three comma-separated settings in the gitignored `.env`, next to `CMF_COWORK_SCHEDULED_TASK_PROJECTS`: `CMF_EXTRACTION_EXAMPLE_WORKSTREAMS`, `CMF_EXTRACTION_EXAMPLE_HARDWARE` and `CMF_EXTRACTION_EXAMPLE_TOPICS`. Unset = generic built-ins, so a new user's prompt never carries someone else's projects. Placeholders went into `.env.example` and this deployment's real values into `.env` on 2026-10-08. They're not read yet.
+  - Each prompt site takes the first few names it needs from the list, in order. Line 226 uses five workstream names, line 133 three, line 96 one plus hardware.
+  - Snapshot test: with this deployment's `.env`, the rendered prompt equals today's text byte for byte, so production extraction does not shift. Any unavoidable wording change is reviewed before merge.
+  - Bump the profile's version marker only if the snapshot differs.
+- [ ] **6b. `typed-recall` as the code default; retire the legacy profiles.** `extraction_profile_from_env()` (`server/core/config.py`) still returns `legacy` when `CMF_EXTRACTION_PROFILE` is unset. `.env.example` now sets `typed-recall` explicitly (2026-10-08), but a deleted line silently drops back to the pre-2026-09-28 prompt. Make `typed-recall` the default. Then drop `legacy`, `selective` and `typed`, or keep them reachable only for replay/eval scripts, after checking what `scripts/replay_eval.py` and the MS4e/MS8 tests still exercise. Update SETUP.md's config table (currently says default `legacy`).
+- [ ] **7. Docs.**
+  - `.env.example`: new providers and keys; `LLM_WIKI_PATH` "leave empty to run without a wiki". Unset already skips the wiki tools, but the template's default is `./starter-wiki`.
+  - `docs/CLIENTS.md` / `docs/SETUP.md`: a second-user setup path covering providers, Ollama embedder fallback, poller templates and the review loop.
+  - Note that the Docker preview always mounts a wiki and cannot run wiki-less.
+
+### Acceptance tests
+
+1. With `CMF_LLM_PROVIDER=anthropic`, `CMF_EMBED_PROVIDER=openai`, `CMF_CAPTURE_LLM_PROVIDER=anthropic` and no Gemini key or local endpoint, a Claude Code session and a Codex session are captured, extracted into reviewable proposals, approved and promoted, and `recall_mem` finds them.
+2. The same with `openai` for all three.
+3. This deployment with no `.env` change behaves exactly as before: capture still forced local, reviewer still `todd`, existing project slugs unchanged. Full test suite green.
+4. A Claude Code subagent's turns land in the journal as their own conversation linked to the parent session, and are extracted separately from the parent's windows.
+5. A clean `.env` from `.env.example` with `LLM_WIKI_PATH` emptied starts with no wiki tools and no errors.
+6. Poller templates install and run on macOS. Linux and Windows are reviewed, and tested if a machine is available.
+
+### Exit gate
+
+**Can the second user go from clone to captured, reviewed and recalled memory on their own machine, using only their own API keys, with no edits to code?** And has this deployment come through unchanged?
+
+**Effort:** 2–3 sessions (the providers in task 2 are most of it).
+**Risk:** Medium. New providers touch both LLM call paths. The extraction-prompt change (task 6) is guarded by a byte-for-byte snapshot against today's prompt, and the default flip (6b) is a no-op for this deployment, which already sets `typed-recall`.
 
 ---
 
