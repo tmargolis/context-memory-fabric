@@ -641,7 +641,7 @@ async def remember(
             if _is_transient_gemini_error(e) and attempt < max_retries - 1:
                 backoff = 25.0 * (attempt + 1)
                 logger.warning(
-                    f"Transient Gemini error in remember() ({_classify_transient_error(e)}). "
+                    f"Transient provider error in remember() ({_classify_transient_error(e)}). "
                     f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
                 )
                 await asyncio.sleep(backoff)
@@ -1018,7 +1018,7 @@ async def recall_mem(
             if _is_transient_gemini_error(e) and attempt < max_retries - 1:
                 backoff = 5.0 * (attempt + 1)
                 logger.warning(
-                    f"Transient Gemini error in recall_mem() ({_classify_transient_error(e)}). "
+                    f"Transient provider error in recall_mem() ({_classify_transient_error(e)}). "
                     f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
                 )
                 await asyncio.sleep(backoff)

@@ -348,3 +348,35 @@ def test_promotion_spacing_only_for_gemini(clean_env):
     _hosted(clean_env)
     assert default_inter_call_delay() == LOCAL_INTER_CALL_DELAY
 
+
+
+# --- billing errors are not transient ------------------------------------------
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("message", [
+    # The two real messages from the 2026-10-08 acceptance run.
+    "Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': "
+    "'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}}",
+    "Error code: 429 - {'error': {'message': 'You have no credits remaining.', 'type': 'insufficient_quota', "
+    "'code': 'credit_balance_exhausted'}}",
+])
+def test_billing_errors_fail_fast(message):
+    from server.core.rate_limiter import classify_transient_error, is_billing_error
+
+    exc = RuntimeError(message)
+    assert is_billing_error(exc)
+    assert classify_transient_error(exc) is None
+
+
+@_pytest.mark.parametrize("message, label", [
+    ("Error code: 429 - rate limit exceeded, retry after 20s", "quota"),
+    ("429 RESOURCE_EXHAUSTED", "quota"),
+    ("Error code: 529 - overloaded_error", "unavailable"),
+])
+def test_rate_limits_stay_transient(message, label):
+    from server.core.rate_limiter import classify_transient_error
+
+    assert classify_transient_error(RuntimeError(message)) == label

@@ -117,7 +117,28 @@ TRANSIENT_ERROR_MARKERS = {
 }
 
 
+# Billing failures on a paid API key (MS10a): an unfunded Anthropic or OpenAI
+# account. Waiting doesn't fix these, and OpenAI's `insufficient_quota`
+# contains "quota", so they are checked first and never treated as
+# transient: the call fails at once with the provider's own "add credits"
+# message instead of sleeping through retries.
+BILLING_ERROR_MARKERS = (
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "no credits remaining",
+    "credit balance is too low",
+    "purchase credits",
+)
+
+
+def is_billing_error(exc: Exception) -> bool:
+    err_msg = str(exc).lower()
+    return any(marker in err_msg for marker in BILLING_ERROR_MARKERS)
+
+
 def classify_transient_error(exc: Exception) -> Optional[str]:
+    if is_billing_error(exc):
+        return None
     err_msg = str(exc).lower()
     for label, markers in TRANSIENT_ERROR_MARKERS.items():
         if any(marker in err_msg for marker in markers):

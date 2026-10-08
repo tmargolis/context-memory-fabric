@@ -95,6 +95,8 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 1. With `CMF_LLM_PROVIDER=anthropic`, `CMF_EMBED_PROVIDER=openai`, `CMF_CAPTURE_LLM_PROVIDER=anthropic` and no Gemini key or local endpoint, a Claude Code session and a Codex session are captured, extracted into reviewable proposals, approved and promoted, and `recall_mem` finds them.
 2. The same with `openai` for all three.
+
+   *Status 2026-10-08: run once, blocked by billing, not by CMF. Test 1 journaled the Claude Code session and `claude-sonnet-5-5` extracted 2 clean episodes plus a thread merge (structured output and the new client work end to end); promotion then failed on Anthropic "credit balance is too low" and recall on OpenAI `insufficient_quota`. Test 2 not run (same OpenAI account). Found and fixed: billing errors were classified as transient quota errors and retried with 25-50 s waits under a "Gemini" log label; they now fail at once with the provider's message (`rate_limiter.is_billing_error`). The Codex fixture lacked `ordinal` and journaled nothing; a test-fixture bug only, real Codex lines always carry it. Rerun once both accounts have credit: the driver uses synthetic sessions, a scratch journal and `ms10a-accept-*` graphs.*
 3. This deployment with no `.env` change behaves exactly as before: capture still forced local, reviewer still `todd`, existing project slugs unchanged. Full test suite green.
 4. A Claude Code subagent's turns land in the journal as their own conversation linked to the parent session, and are extracted separately from the parent's windows.
 5. A clean `.env` from `.env.example` with `LLM_WIKI_PATH` emptied starts with no wiki tools and no errors.
