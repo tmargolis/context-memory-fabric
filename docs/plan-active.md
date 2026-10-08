@@ -2,7 +2,7 @@
 
 The milestones still to do, in execution order. Index and decisions log: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Completed milestones: [plan-history.md](plan-history.md).
 
-**Active: [MS9 — Graph quality for retrieval](#ms9--graph-quality-for-retrieval)** (started 2026-09-30). It was swapped ahead of Distribution, which is now [MS10](#ms10--distribution-and-ecosystem), the same day.
+**MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07). Next in order is [MS10](#ms10--distribution-and-ecosystem). What MS9 left open is in the [Backlog](#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
 
 **MS4b and MS4b-antigravity closed 2026-09-28**, and their record is in [plan-history.md](plan-history.md#ms4b--claude-code-transcript-adapter-build-backfill-re-derivation-review-2026-09-18--09-22). **MS4d (Codex) closed 2026-09-30 (Gemini CLI dropped per user steer)**, and its record is in [plan-history.md](plan-history.md#ms4d--codex-transcript-adapter-and-ongoing-capture-2026-09-30). **MS4c (OpenClaw) remains on hold (User, 2026-09-28).** Its plan is kept intact below but not scheduled. What the active coding adapters keep capturing goes to the recurring review pass ([Backlog](#backlog)).
 
@@ -15,60 +15,6 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 **extract@1.6 backfill review: Phases 0–4 closed 2026-10-04** (record in [plan-history.md](plan-history.md#extract16-backfill-review-phases-03-and-the-phase-4-pilot-2026-10-03); 60 approved docs applied, 443 approved episodes promoted across 23 batches, 8 failed on timeout, 1 superseded skipped). Post-Phase-4 items queued.
 
 **MS8 (replay and evaluation) closed 2026-09-29**; its record is in [plan-history.md](plan-history.md#ms8--replay-and-evaluation-2026-09-28--09-29). One-fact-per-episode candidate validated (0 regressions across 60 cases × 4 cutoffs) and adopted as production default.
-
----
-
-## MS9 — Graph quality for retrieval
-
-**🟡 Active (started 2026-09-30; proposed 2026-09-29, resequenced ahead of Distribution the same day).** Full plan: [FIX-GRAPH-PLAN.md](FIX-GRAPH-PLAN.md).
-
-**Goal:** Improve Graphiti retrieval by fixing the graph's shape: merge duplicate entities, connect notes to episodes, and add real relationships over wiki text.
-
-**Why now:** Measured read-only on `mem-fabric-local` (2026-09-29): 1,791 entities are mentioned by episodes and 1,317 by notes, but only **98** by both, and the **1,219 wiki-only entities have zero `RELATES_TO` edges** (1,899 exist in total, all on episode-mentioned entities). Many wiki-only names duplicate an existing entity (`User Morgan` / `Morgan` vs `User`, `ACME` / `ACME Holdings`, `Jacobian lens` / `J-lens`, `Spark` vs `NVIDIA Spark`, `Model Context Protocol` vs `MCP`).
-
-### Phases
-
-- [x] **0.** Baseline and safety: backup and scratch copies, MS8/MS7 baselines, the 1,219 population, the tool-entity question. Done 2026-09-30: replay 92.5% / 0.507 at `now`, primary-channel answer score 1.60 (`get_context` 1.63 over 60, grades reviewed), 66 exact-name duplicate groups ([results](FIX-GRAPH-PLAN.md#phase-0-results-2026-09-30)).
-
-  **Phase 0 answer-eval baseline** (grades reviewed by User, 2026-09-30; primary-channel score: **1.60**, `get_context` **1.63** over 60). Detailed per-question tables (Groups A, B, C) and full notes archived in gitignored [docs/eval-results/ms9_eval_results.md](eval-results/ms9_eval_results.md#1-phase-0-answer-eval-baseline-60-questions).
-
-  | Set | memory | wiki | both |
-  |---|---|---|---|
-  | Group A (Memory) | **1.80** | 0.00 | 1.90 |
-  | Group B (Wiki) | 0.00 | **1.50** | 1.50 |
-  | Group C (Spanning) | 0.85 | 0.70 | **1.50** |
-  | All 60 | 0.88 | 0.73 | 1.63 |
-
-- [x] **1.** Duplicate-candidate report (read-only): auto / review / never tiers, reviewed in batches of ≤50. Done 2026-09-30: 61 auto clusters plus 57 reviewed (47 merge, 1 partial, 9 reject), so about 125 nodes to fold in Phase 2 ([results](FIX-GRAPH-PLAN.md#phase-1-results-2026-09-30)).
-- [x] **1b.** Noise-candidate report over all of `mem-fabric-local` (read-only). Done 2026-09-30: 318 flagged, but 258 carry 501 real facts, so nothing is deleted; the cleanup becomes 2b ([results](FIX-GRAPH-PLAN.md#phase-1b-results-2026-09-30)).
-- [x] **2.** Merge tool (edge properties copied, aliases kept, ledger) and a scratch-graph merge. Scratch done 2026-09-30: 125 duplicates folded, 1,899 facts kept, J-Space episodes reaching a note 1 → 28 of 49, retrieval unchanged within noise ([results](FIX-GRAPH-PLAN.md#phase-2-results-scratch-2026-09-30)). Production apply done 2026-09-30: guarded mode verified against backup, 4,111 → 3,986 nodes (-125), 9,835 → 9,781 edges (-54 duplicate structural edges), 1,899 facts kept; MS8 replay confirmed zero regressions across all 4 cutoffs (92.5% / 0.507 at now).
-- [x] **2b.** Re-extract the 138 debris-producing legacy episodes under `typed-recall` + the debris filter (retract each episode's old facts first, then re-add), scratch first, after the merges. Scratch done 2026-09-30: 138 episodes retracted (971 facts removed, 793 orphaned debris entities cleaned), 136 episodes re-extracted on `fixgraph-p2b` under `typed-recall` + debris filter; noise entities dropped 85% (318 → 49), fact-carrying debris dropped 94% (258 → 15), facts at risk dropped 95% (501 → 24). Production apply done 2026-10-01: backed up to `mem-fabric-local.pre-p2b-20261001` (3,987 nodes / 9,837 edges), promoted to `mem-fabric-local` (3,531 nodes / 8,473 edges, −456 junk entities, −1,364 edges), 136 re-extracted episodes ledgered; MS8 replay verified at `now` (Hit@8 92.1%, MRR 0.510, Wiki@8 90.0%) ([results](FIX-GRAPH-PLAN.md#phase-2b-results-production-2026-10-01)). **Production damage found and repaired 2026-10-02** (by the Claude-provenance work, before its episode rename): 2b had mapped episode names to memory_ids through stale pre-2026-09-12 ledger rows, so 14 episodes were retracted with a *different* memory re-added (14 memories lost, 14 duplicated) and 128 re-added episodes got new names, 76 colliding with untouched episodes. Repaired rehearsal → `fixgraph-p4` → production: wrong re-adds removed, the 14 lost memories re-extracted, all pre-2b names restored (0 duplicate names), 150 stale ledger names aligned to the graph. MS8 replay at `now` afterwards: gold problems 3 → 0 (A9, A15 now hit), memory-answerable 38 → 40, Hit@8 36/40, MRR 0.515 ([repair](FIX-GRAPH-PLAN.md#phase-2b-repair-production-2026-10-02)).
-- [x] **3.** Cheap linking at retrieval time through shared entities (continuous INF-weighted, no new edge type, no LLM). Done 2026-10-01: 1-hop cross-tier expansion in `server/retrieval_expansion.py` and `server/context.py` with INF damping ($1/\text{note\_freq}$); direct+expanded caps (wiki 5+3=8, mem 10+3=13) with full provenance path tracking. Group C eval: Wiki hits lifted 17/20 (85.0%) → 19/20 (95.0%) (+2 recovered: C4, C8), Memory hits 16/20 (80.0%) with 0 regressions ([results](FIX-GRAPH-PLAN.md#phase-3-results-production-2026-10-01)).
-- [/] **4.** Relationship extraction over wiki text:
-  - **Design spike & pilot (completed):** Option B design spike & pilot completed on scratch graph `fixgraph-p4` via `scripts/extract_wiki_relationships.py` (4,586 ledgered `RELATES_TO` wiki edges extracted under `typed-recall` with `source='wiki'`, zero Episodic node pollution).
-  - **Canonical promotion to production (completed):** Promoted all 4,586 wiki relationship edges into production `mem-fabric-local` with strict entity endpoint deduplication (safety backup `mem-fabric-local.pre-wiki-edges-20261005`; nodes 4,847 → 6,476 [+1,629 new canonical entities], edges 13,899 → 18,482, wiki edges 0 → 4,586, 0 duplicate entity names introduced).
-  - **Full-corpus scale-up across remaining notes (in-progress / paused):** Paused on 2026-10-02 at batch 553..558 / section 673 (~37.5% of corpus, producing the 4,586 edges). 1,037 sections (62.5% of corpus) remain unextracted across remaining notes (Household, domain-epsilon, other projects), queued to resume via `scripts/extract_wiki_relationships.py --graph fixgraph-p4 --notes-scope all --resume`.
-- [x] **5.** Cross-model comparison & Control Evaluation:
-  - **Recall Evaluation (36 questions)**: Siloed baselines confirmed near-zero native recall (Claude 0.0%, Gemini 0.0%, ChatGPT 2.8%). With CMF MCP active under natural un-coerced prompt, **all three major assistants** — **ChatGPT (GPT-5.6)**, **Claude (Opus 5.5)**, and **Gemini (3.8 Flash)** — achieved **100.0% complete recall (36/36, 0 DKs, 0 hallucinations, mean score 2.0/2.0)** across all 6 silos.
-  - **Control & Adversarial Evaluation (12 questions)**: Tested negative controls, false premises, and temporal supersession (`tests/fixtures/ms9_eval/control_queries.json`). Both Claude Opus and Gemini Flash/Pro achieved **100% correct rejection on pure negatives (0 hallucinations on non-existent events)**. Under false premises, Claude Opus and Gemini Pro actively refuted falsehoods with evidence, while Gemini Flash safely refused confirmation (`DK`).
-  - Detailed fixture outputs, silo breakdowns, and model response logs archived in gitignored [docs/eval-results/ms9_eval_results.md](eval-results/ms9_eval_results.md#2-phase-5-cross-model-recall-evaluation-36-questions).
-- [/] **6. (Optional Post-MS9):** Full ledger re-ingest / fresh graph rebuild from transcripts using current extraction policies (`typed-recall` + debris filter) across all historical episodes. **Paused at 432/1,071 episodes (40.3%) on 2026-10-05 10:55 CDT** (freed Spark for Public Preview Phase 2 grading); isolated scratch graph `mem-fabric-rebuild-scratch` has 432 committed episodes, 1,017 nodes, 2,756 edges, 721 facts; ready to resume immediately.
-- [ ] **7.** Close-out: `:Project` nodes vs property, `edit_memory` stale facts, decisions log
-
-### Acceptance
-
-1. No regression on MS8 Hit@8 / MRR or the MS7 answer eval at any phase; improvement is expected from Phases 2–4.
-2. Merges lose no edge properties, and every merge is ledgered and replayable.
-3. Production node/edge counts are checked before and after each write; scratch first, backup graph taken.
-4. Hand-graded precision on sampled new relationship edges (Phase 4) before any scale-up.
-
-### Exit gate
-
-**Did the graph get measurably better for retrieval without losing information?** Baseline against final numbers, plus User's spot-check of merged entities and new edges.
-
-**Already done by MS4e (forward-only, 2026-09-28):** new episodes extract under `typed-recall` + the debris filter, thread merges are size-bounded, and all 634 episodes carry `content_embedding`. The 634 existing episodes were extracted under `legacy` and are untouched, so the graph this milestone fixes is still the pre-MS4e shape. Detail: [FIX-GRAPH-PLAN.md → What MS4e already did](FIX-GRAPH-PLAN.md#what-ms4e-already-did).
-
-**Absorbs:** the [entity/edge cleanup pass](#entityedge-cleanup-pass-for-the-cmf-graph-found-2026-09-20-reviewing-conversation-b23f6f7d) and MS4e Phase 5. **Effort:** 6–8 sessions. **Risk:** Medium (writes to the live graph, mitigated scratch-first).
 
 ---
 
@@ -184,7 +130,7 @@ Surfaced visually inspecting `mem-fabric-local` in FalkorDB Browser after promot
 - [ ] **Near-duplicate entities from qwen-122b extraction** (e.g. "MemPalace-like memory substrate layer" vs. "memory palace layer", "Obsidian URI schemes" vs. "Obsidian") need merging, not just cosmetic renaming. Mechanically: redirect every `MENTIONS`/`RELATES_TO`/`IN_PROJECT` edge from the duplicate onto the canonical node (`MATCH (dup)<-[r:MENTIONS]-(ep) MERGE (ep)-[:MENTIONS]->(canonical) DELETE r`, same pattern each direction/edge type), then delete the duplicate. **Not a bare `MERGE`-and-delete**: graphiti's edges carry real content (`fact` text, embeddings, `valid_at`/`created_at`) that a fresh bare edge won't have — properties must be copied onto the new edge first, or the redirect silently drops the fact each edge represents. No candidate list built yet.
 - [ ] **Confirmed unsafe to judge by eyeballing the graph.** Two entities that looked orphaned by visual inspection (`100MB limit`, `120-second OpenClaw timeouts`) both turned out to be real, correctly-connected data on closer query — `100MB limit` is a genuine fact from an unrelated Obsidian-project episode (`gemini-obsidian-009`) that surfaces in CMF's view only because it shares the `GitHub` entity (projects are many-to-many by `tag_projects.py`'s own design); `120-second OpenClaw timeouts` had two mentioning episodes, one from this very CMF batch, just not visible in a dense 127-node force layout. Any cleanup pass needs to query connectivity directly, not read the rendered graph.
 - [ ] **The real candidate set is graph-wide zero-`MENTIONS` entities — measured at 1,219**, which is very likely the same population the "Wiki entity-extraction quality" item above already names (`~1,219 entities mentioned by a note but by no episode/fact/project`) — worth confirming they're the same set before treating this as two separate backlog items. Even a zero-`MENTIONS` entity can carry real `RELATES_TO` fact text (as `100MB limit` shows) — "safe to delete" here means "won't break graph structure or dangling references," not "zero information loss." Needs a categorization pass (genuine standalone facts vs. junk — config values, restated instructions, extraction artifacts) before deleting anything, not a bulk sweep.
-- **Planned in [MS9 — Graph quality for retrieval](#ms9--graph-quality-for-retrieval)** (2026-09-29): the merge tool, the candidate report and the wiki-only entity categorization live there.
+- **Planned in [MS9 — Graph quality for retrieval](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)** (2026-09-29): the merge tool, the candidate report and the wiki-only entity categorization live there.
 - **Forward fix:** [MS4e](plan-history.md#ms4e--entity-extraction-quality-forward-only-2026-09-28) stops new noise at extraction time. Its optional Phase 5 report, this item's candidate list, moved to MS9 task 1b.
 - **Relates to:** [Wiki entity-extraction quality](#wiki-entity-extraction-quality-found-2026-09-17-closing-ms7b) (root-cause side of the same noise) and [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) (paused partly *because of* this same noise).
 
@@ -218,10 +164,64 @@ MS7b's `Note` nodes carry no dates (`scripts/seed_wiki_graph.py` seeds them once
 
 User's question, not yet settled: do `:Project`/`IN_PROJECT` nodes and edges (33 `Project` nodes and 2,090 `IN_PROJECT` edges in `mem-fabric-local` as of 2026-09-30 (1,946 from entities, 144 from episodes, 0 from notes), built by `tag_projects.py`) earn their place as first-class graph structure, or would `entity.project = ["proj1", "proj2"]` as a plain property serve the same purpose more simply? Paused rather than decided — visualizing the current graph in FalkorDB Browser showed the project layer isn't wrong, just not obviously pulling its weight next to the noise from the wiki-only entity layer above. Revisit once the extraction-quality items above are resolved, since they're currently confounding how legible the project layer looks.
 
+**Moved out of MS9 task 7 (User, 2026-10-06); undecided.** What the code shows:
+
+- **Retrieval never reads it.** `server/context.py` and `server/retrieval_expansion.py` don't touch `:Project` or `IN_PROJECT`; Phase 3's expansion follows typed `MENTIONS` only. Today the layer is for Browser viewing, not retrieval.
+- **Episodes already use a property** (`e.project` + a project label, `server/consolidation/graph_tagging.py`), which fits since an episode belongs to one project. Only entities get project membership, through `IN_PROJECT`, and an entity can belong to several projects.
+- **Upkeep:** every promotion writes the edges, `tag_projects.py` recomputes them, and `merge_entities.py`, `retract_episodes.py` and `repair_p2b_episodes.py` each have to handle them. MS4e's `Workstream` label exists only to avoid clashing with `Project`. Notes and the Phase 4 wiki entities have no `IN_PROJECT` edges at all.
+
+**The options:**
+
+- **A. Keep the hub nodes.** Renaming or merging a slug changes one node, and a node can hold project metadata later. But the layer adds 33 hubs and about 2,090 edges that retrieval never reads, stores projects one way for episodes and another for entities, and becomes a risk if any traversal is ever untyped.
+- **B. Use `entity.project = [...]`.** One model for episodes and entities, a cheap `WHERE 'x' IN n.project` filter, no hub nodes, and fewer edge types for the maintenance tools. But a slug rename becomes a bulk `SET`, and project metadata would need a small registry. Analysis leaned B.
+
+**Separate question: does project help retrieval at all?** Only if ranking uses it, and then A and B are equivalent. Candidates:
+
+- a soft boost for results in the query's inferred project(s), which works fine with entities in several projects;
+- a project-bounded addition to the Phase 3 expansion;
+- an explicit `get_context(project=...)` parameter (ties to MS10 scopes).
+
+Test it as an MS8 replay policy (Hit@8 / MRR) before building. A recent person-and-contact lookup miss (2026-10-06) was missing data in CMF, not a ranking problem, so project tagging wouldn't have helped. The Gmail provider (MS11), person entities, and the entity-summary arm in Assembly refinements are the more relevant levers there.
+
+**Evidence that project-aware ranking could help (2026-10-06).** The replay drop at `now` after 10-02 (Hit@8 90.0% → 82.5%, MRR 0.515 → 0.434; see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)) is one project crowding out others. 219 new `claude-cowork-career-*` episodes now take a large share of the 130 slots that episodes added since 10-03 hold, out of 480 across the 60 cases.
+
+- **A6** (a dataviz decision) and **C1** (Interlock) lost their gold answers to career and other off-target episodes.
+- **C5, C15 and C19** slipped from rank 1.
+
+A soft boost for results in the query's inferred project(s), or a per-project cap on the memory slots, would target exactly this. Measure it on these cases first, after refreshing stale gold such as C16, whose new career episodes are valid answers.
+
+### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
+
+The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
+
+- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
+- **How, sequentially on scratch graphs (never production):**
+  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
+  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
+  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
+  - Any production change needs a new ruling from User, a backup first, and before/after counts.
+- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
+
+### Project-aware ranking (deferred out of MS9, 2026-10-07)
+
+Goal: stop one project from taking most of the 8 memory slots on a query about something else. The evidence is in the [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) item (A6, C1, C5, C15, C19). Test each variant as an MS8 replay policy before building; none is built.
+
+- **Soft boost.** Score bonus for episodes in the query's inferred project(s). Cannot hide a right answer, but depends on the guess.
+- **Per-project cap.** No project may hold more than N of the 8 slots. Needs no guess, but can cut a right answer when a question really is about one project (D1–D3 are exactly that), so consider a cap that applies only when the extra results score far below the top ones.
+- **Which signal (open, User to decide).** Keep **project** (a tag) and **workstream** (an extracted entity type, kept apart from `:Project` on purpose, see [FIX-GRAPH-PLAN.md](FIX-GRAPH-PLAN.md)) separate:
+  - *Project tag:* `e.project` is on 1,073 of 1,074 episodes (19 are `misc`), but only 147 episodes have an `IN_PROJECT` edge and 2,157 of 4,919 entities do, so ranking must read the property. Granularity is uneven: `career` is a whole area (238 episodes) while small slugs behave like workstreams.
+  - *Workstream entities:* finer (a company or an effort) and already followed by Phase 3's `MENTIONS` expansion, but only as good as extraction, and not measured.
+  - Run both variants in the replay and compare.
+- **Related.** `:Project` nodes vs. a property (same item above), and `get_context(project=...)` ties to [MS10](#ms10--distribution-and-ecosystem) scopes.
+
+### Phase 6: full ledger re-ingest into a fresh graph (paused, carried out of MS9, 2026-10-07)
+
+Optional post-MS9: rebuild from transcripts using the current extraction policies (`typed-recall` + debris filter) across all historical episodes. **Paused at 432 of 1,071 episodes (40.3%).** It was paused on 2026-10-05 10:55 CDT to free Spark for Public Preview Phase 2 grading. The isolated scratch graph `mem-fabric-rebuild-scratch` holds 432 committed episodes, 1,017 nodes, 2,756 edges and 721 facts, and can resume immediately with `scripts/rebuild_graph_from_ledger.py` (replay into a new graph name, or everything is skipped). Needs Spark for many hours and takes `spark_job.lock`.
+
 ### Found during MS6c Phase 1 (Cowork functional pass, 2026-09-16)
 
-- [ ] **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what User's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
-  - **Also found 2026-09-21 (review-by-conversation pass): `edit_memory`'s target search misses some already-promoted episodes entirely.** Every query tried (full statement text, short phrases, episode name, single keywords) returned "no matching episodes, entities, or facts found" for content `recall_mem` finds instantly. Not diagnosed. Right now there is no working MCP path to patch a promoted episode's content. A direct sqlite write fixes only the ledger's `derived_memories.statement`, not the graph node.
+- [x] **Fixed 2026-10-06 ([MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)): `new_content` now re-extracts the episode's facts, and the one polluted production episode was removed.** Original finding: **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what User's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
+- [ ] **Still open — also found 2026-09-21 (review-by-conversation pass): `edit_memory`'s target search misses some already-promoted episodes entirely.** Every query tried (full statement text, short phrases, episode name, single keywords) returned "no matching episodes, entities, or facts found" for content `recall_mem` finds instantly. Not diagnosed. Right now there is no working MCP path to patch a promoted episode's content. A direct sqlite write fixes only the ledger's `derived_memories.statement`, not the graph node.
 - [ ] **`search_wiki` hit a transient 502 (Cloudflare, `origin_bad_gateway`) from Cowork, succeeded on retry.** Same OAuth/tunnel path every client (including Claude Desktop) now goes through post-MS6c, so this is the same class of flakiness behind Gemini's "error 1076"s and the first silent-failure `remember()` attempt — worth keeping an eye on if it recurs, not yet frequent enough to chase down.
 
 ### Assembly refinements (deferred out of MS7)
@@ -259,7 +259,13 @@ Found while repairing Phase 2b. These four memories were promoted twice, once on
 | `claude-project-epsilon-005` / `claude-project-epsilon-030` |
 | `claude-project-epsilon-006` / `claude-project-epsilon-031` |
 
-- [ ] **Remove the 09-23 duplicate of each,** keeping the 09-13 node, which the eval gold and ledger are more likely to reference. Before deleting, check which node carries more `MENTIONS`/facts. `-005` has 10 mentions and `-030` has 0, but for `-004`/`-029` the newer node has more, so the choice is per pair, not always the newer one. Use `graphiti.remove_episode` (no LLM) on a backup-first, scratch-rehearsed run, like `scripts/repair_p2b_episodes.py remove-wrong`, then align the ledger.
+- [x] **Done 2026-10-06 — see the fold record below.** Original task: **Remove the 09-23 duplicate of each,** keeping the 09-13 node, which the eval gold and ledger are more likely to reference. Before deleting, check which node carries more `MENTIONS`/facts. `-005` has 10 mentions and `-030` has 0, but for `-004`/`-029` the newer node has more, so the choice is per pair, not always the newer one. Use `graphiti.remove_episode` (no LLM) on a backup-first, scratch-rehearsed run, like `scripts/repair_p2b_episodes.py remove-wrong`, then align the ledger.
+- [x] **Also `claude-cowork-interlock-005` (found 2026-10-06), folded the same day.** Two identical nodes, created 2026-10-04 00:10 and 00:13 (`f710c9a8…`, `0b030fc3…`), probably a retried batch in the extract@1.6 Phase 4 promotion. It is the only duplicate episode name in production; remove one the same way.
+- **Fold record (2026-10-06).** The four memories above were really `claude-career-navigator-004/-029`, `-005/-030`, `-006/-031` and `chatgpt-photo-006/-009`; the doc names were scrubbed placeholders. All 5 pairs were folded, not deleted. Each copy was extracted on its own and carried facts the other lacked, so the duplicate's facts and mentions moved onto the kept node before the duplicate was removed (`scripts/fold_duplicate_episodes.py`, ledger `imports/fixgraph/fold_duplicates_ledger.jsonl`).
+  - **Kept:** `-006` (C16 gold), `-005`, `photo-006`, `-029` (`-004` was empty), and interlock `0b030fc3` (14 facts vs 9).
+  - **Process:** rehearsed on `fixgraph-folddup`; production backed up to `mem-fabric-local.pre-folddup-20261006`.
+  - **Result:** −5 episodes, facts unchanged at 7,879, −18 redundant mentions; 0 duplicate contents or names left. The ledger's `promotions` rows now name the kept nodes.
+  - **Replay at `now`:** unchanged (Hit@8 82.5%, MRR 0.434; only A10 moved, 5 → 6).
 - [ ] **Find why they were promoted twice on 09-23.** All four were promoted within a minute (18:56). The 09-23 promotion pass didn't see the 09-13 promotions as already promoted, probably the same stale-ledger problem as Phase 2b, since 09-13 rows went to `mem-fabric-local-wiki` and not `mem-fabric-local`.
 
 ### Claude surface provenance, lost transcripts and Cowork capture (found 2026-10-02, MS9 Phase 5)
@@ -270,7 +276,7 @@ Found while repairing Phase 2b. These four memories were promoted twice, once on
 - [ ] **Cloud-session transcripts (deferred, User 2026-10-02).** At least 8 Code sessions ran in the cloud, and 6 Cowork sessions were handed off to it after starting locally; none of that is on disk.
 - [ ] **Recurring Cowork scheduled tasks (decided 2026-10-03: journal-only).** `project-epsilon-daily-schedule`, `daily-research-sweep`, `project-epsilon-dashboard-refresh` and `social-media-analytics` (~470 sessions, ~7 Spark-hours) stay unextracted; the 8 other channels were extracted. Open option: add `weekly-status-brief` to `CMF_COWORK_EXTRACT_SCHEDULED_TASKS` in the Cowork poller's plist so new briefs are extracted as they land.
 - [ ] **The 6 pre-existing `remember`-path test failures** (`test_mcp_contract_fixtures`, `test_ms4e_extraction_profile`), present since `6fa4056`'s naming automation; the same change family as the Phase 2b naming collisions.
-- **Relates to:** [MS9](#ms9--graph-quality-for-retrieval) (Phase 5 finding; the Phase 2b repair) and [Double-promoted memories](#double-promoted-memories-in-mem-fabric-local-found-2026-10-02-provenance-step-5a).
+- **Relates to:** [MS9](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07) (Phase 5 finding; the Phase 2b repair) and [Double-promoted memories](#double-promoted-memories-in-mem-fabric-local-found-2026-10-02-provenance-step-5a).
 
 ### extract@1.7: scoped thread candidates (approved 2026-10-03, build after the extract@1.6 review)
 

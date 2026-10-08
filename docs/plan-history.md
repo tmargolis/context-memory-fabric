@@ -856,7 +856,7 @@ Separately, `correct_memory` called `add_episode` with no instructions at all, s
 - [x] **4. Exit gate and default flip (2026-09-28).**
   - `.env` sets `CMF_EXTRACTION_PROFILE=typed-recall` and `CMF_ENTITY_DEBRIS_FILTER=1`, and the MCP server was restarted.
   - The `ms4e-*` scratch graphs were dropped.
-- [→] **5. Optional. Moved to [MS9 task 1b](plan-active.md#ms9--graph-quality-for-retrieval) (2026-09-30).** Run the Phase 3 report over all of `mem-fabric-local` and hand a noise-candidate CSV to [Entity/edge cleanup pass](plan-active.md#entityedge-cleanup-pass-for-the-cmf-graph-found-2026-09-20-reviewing-conversation-b23f6f7d). No deletions in MS4e.
+- [→] **5. Optional. Moved to [MS9 task 1b](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07) (2026-09-30).** Run the Phase 3 report over all of `mem-fabric-local` and hand a noise-candidate CSV to [Entity/edge cleanup pass](plan-active.md#entityedge-cleanup-pass-for-the-cmf-graph-found-2026-09-20-reviewing-conversation-b23f6f7d). No deletions in MS4e.
 
 ### Acceptance tests (Phase 3 sample, C or D against A)
 
@@ -1045,6 +1045,88 @@ Comparing production (`max_per_episode=2`) vs candidate (`max_per_episode=1`):
 **Does the transcript-tailer and hook-accelerant pattern extend cleanly to OpenAI Codex (Desktop & CLI)?**
 
 **Yes.** Built `server/adapters/codex/` with incremental JSONL reader, schema parser, project attribution, and SQLite queue store. Enforced local LLM consolidation and multi-process file locking. Hooks installer added `SessionStart` and `Stop` non-blocking hooks into `~/.codex/hooks.json`. Backbone 15-minute launchd poller (`local.cmf.codex-poller`) deployed and active. Real pilot (155 events) and live mobile session (3 events) verified end-to-end into reviewable proposals with zero graph side-effects. Gemini CLI dropped per user steer. (2026-09-30)
+
+---
+
+## MS9 — Graph quality for retrieval (2026-09-30 → 10-07)
+
+**🟢 Closed 2026-10-07 (started 2026-09-30; proposed 2026-09-29, resequenced ahead of Distribution the same day).** Full plan: [FIX-GRAPH-PLAN.md](FIX-GRAPH-PLAN.md).
+
+**Goal:** Improve Graphiti retrieval by fixing the graph's shape: merge duplicate entities, connect notes to episodes, and add real relationships over wiki text.
+
+**Why now:** Measured read-only on `mem-fabric-local` (2026-09-29): 1,791 entities are mentioned by episodes and 1,317 by notes, but only **98** by both, and the **1,219 wiki-only entities have zero `RELATES_TO` edges** (1,899 exist in total, all on episode-mentioned entities). Many wiki-only names duplicate an existing entity (`User Morgan` / `Morgan` vs `User`, `ACME` / `ACME Holdings`, `Jacobian lens` / `J-lens`, `Spark` vs `NVIDIA Spark`, `Model Context Protocol` vs `MCP`).
+
+### Phases
+
+- [x] **0.** Baseline and safety: backup and scratch copies, MS8/MS7 baselines, the 1,219 population, the tool-entity question. Done 2026-09-30: replay 92.5% / 0.507 at `now`, primary-channel answer score 1.60 (`get_context` 1.63 over 60, grades reviewed), 66 exact-name duplicate groups ([results](FIX-GRAPH-PLAN.md#phase-0-results-2026-09-30)).
+
+  **Phase 0 answer-eval baseline** (grades reviewed by User, 2026-09-30; primary-channel score: **1.60**, `get_context` **1.63** over 60). Detailed per-question tables (Groups A, B, C) and full notes archived in gitignored [docs/eval-results/ms9_eval_results.md](eval-results/ms9_eval_results.md#1-phase-0-answer-eval-baseline-60-questions).
+
+  | Set | memory | wiki | both |
+  |---|---|---|---|
+  | Group A (Memory) | **1.80** | 0.00 | 1.90 |
+  | Group B (Wiki) | 0.00 | **1.50** | 1.50 |
+  | Group C (Spanning) | 0.85 | 0.70 | **1.50** |
+  | All 60 | 0.88 | 0.73 | 1.63 |
+
+- [x] **1.** Duplicate-candidate report (read-only): auto / review / never tiers, reviewed in batches of ≤50. Done 2026-09-30: 61 auto clusters plus 57 reviewed (47 merge, 1 partial, 9 reject), so about 125 nodes to fold in Phase 2 ([results](FIX-GRAPH-PLAN.md#phase-1-results-2026-09-30)).
+- [x] **1b.** Noise-candidate report over all of `mem-fabric-local` (read-only). Done 2026-09-30: 318 flagged, but 258 carry 501 real facts, so nothing is deleted; the cleanup becomes 2b ([results](FIX-GRAPH-PLAN.md#phase-1b-results-2026-09-30)).
+- [x] **2.** Merge tool (edge properties copied, aliases kept, ledger) and a scratch-graph merge. Scratch done 2026-09-30: 125 duplicates folded, 1,899 facts kept, J-Space episodes reaching a note 1 → 28 of 49, retrieval unchanged within noise ([results](FIX-GRAPH-PLAN.md#phase-2-results-scratch-2026-09-30)). Production apply done 2026-09-30: guarded mode verified against backup, 4,111 → 3,986 nodes (-125), 9,835 → 9,781 edges (-54 duplicate structural edges), 1,899 facts kept; MS8 replay confirmed zero regressions across all 4 cutoffs (92.5% / 0.507 at now).
+- [x] **2b.** Re-extract the 138 debris-producing legacy episodes under `typed-recall` + the debris filter (retract each episode's old facts first, then re-add), scratch first, after the merges. Scratch done 2026-09-30: 138 episodes retracted (971 facts removed, 793 orphaned debris entities cleaned), 136 episodes re-extracted on `fixgraph-p2b` under `typed-recall` + debris filter; noise entities dropped 85% (318 → 49), fact-carrying debris dropped 94% (258 → 15), facts at risk dropped 95% (501 → 24). Production apply done 2026-10-01: backed up to `mem-fabric-local.pre-p2b-20261001` (3,987 nodes / 9,837 edges), promoted to `mem-fabric-local` (3,531 nodes / 8,473 edges, −456 junk entities, −1,364 edges), 136 re-extracted episodes ledgered; MS8 replay verified at `now` (Hit@8 92.1%, MRR 0.510, Wiki@8 90.0%) ([results](FIX-GRAPH-PLAN.md#phase-2b-results-production-2026-10-01)). **Production damage found and repaired 2026-10-02** (by the Claude-provenance work, before its episode rename): 2b had mapped episode names to memory_ids through stale pre-2026-09-12 ledger rows, so 14 episodes were retracted with a *different* memory re-added (14 memories lost, 14 duplicated) and 128 re-added episodes got new names, 76 colliding with untouched episodes. Repaired rehearsal → `fixgraph-p4` → production: wrong re-adds removed, the 14 lost memories re-extracted, all pre-2b names restored (0 duplicate names), 150 stale ledger names aligned to the graph. MS8 replay at `now` afterwards: gold problems 3 → 0 (A9, A15 now hit), memory-answerable 38 → 40, Hit@8 36/40, MRR 0.515 ([repair](FIX-GRAPH-PLAN.md#phase-2b-repair-production-2026-10-02)).
+- [x] **3.** Cheap linking at retrieval time through shared entities (continuous INF-weighted, no new edge type, no LLM). Done 2026-10-01: 1-hop cross-tier expansion in `server/retrieval_expansion.py` and `server/context.py` with INF damping ($1/\text{note\_freq}$); direct+expanded caps (wiki 5+3=8, mem 10+3=13) with full provenance path tracking. Group C eval: Wiki hits lifted 17/20 (85.0%) → 19/20 (95.0%) (+2 recovered: C4, C8), Memory hits 16/20 (80.0%) with 0 regressions ([results](FIX-GRAPH-PLAN.md#phase-3-results-production-2026-10-01)).
+- [-] **4.** Relationship extraction over wiki text:
+  - **Design spike & pilot (completed):** Option B design spike & pilot completed on scratch graph `fixgraph-p4` via `scripts/extract_wiki_relationships.py` (4,586 ledgered `RELATES_TO` wiki edges extracted under `typed-recall` with `source='wiki'`, zero Episodic node pollution).
+  - **Canonical promotion to production (completed):** Promoted all 4,586 wiki relationship edges into production `mem-fabric-local` with strict entity endpoint deduplication (safety backup `mem-fabric-local.pre-wiki-edges-20261005`; nodes 4,847 → 6,476 [+1,629 new canonical entities], edges 13,899 → 18,482, wiki edges 0 → 4,586, 0 duplicate entity names introduced).
+  - **Full-corpus scale-up across remaining notes (cancelled):** Cancelled on 2026-10-06. The 90+ hour compute requirement had diminishing returns since Phase 3's dynamic 1-hop expansion already bridged the gap for spanning queries.
+- [x] **5.** Cross-model comparison & Control Evaluation:
+  - **Recall Evaluation (36 questions)**: Siloed baselines confirmed near-zero native recall (Claude 0.0%, Gemini 0.0%, ChatGPT 2.8%). With CMF MCP active under natural un-coerced prompt, **all three major assistants** — **ChatGPT (GPT-5.6)**, **Claude (Opus 5.5)**, and **Gemini (3.8 Flash)** — achieved **100.0% complete recall (36/36, 0 DKs, 0 hallucinations, mean score 2.0/2.0)** across all 6 silos.
+  - **Control & Adversarial Evaluation (12 questions)**: Tested negative controls, false premises, and temporal supersession (`tests/fixtures/ms9_eval/control_queries.json`). Both Claude Opus and Gemini Flash/Pro achieved **100% correct rejection on pure negatives (0 hallucinations on non-existent events)**. Under false premises, Claude Opus and Gemini Pro actively refuted falsehoods with evidence, while Gemini Flash safely refused confirmation (`DK`).
+  - Detailed fixture outputs, silo breakdowns, and model response logs archived in gitignored [docs/eval-results/ms9_eval_results.md](eval-results/ms9_eval_results.md#2-phase-5-cross-model-recall-evaluation-36-questions).
+- [→] **6. (Optional Post-MS9):** Full ledger re-ingest / fresh graph rebuild from transcripts using current extraction policies (`typed-recall` + debris filter) across all historical episodes. **Paused at 432/1,071 episodes (40.3%)** (initially paused on 2026-10-05 10:55 CDT to free Spark for Public Preview Phase 2 grading; verified still paused as of 2026-10-06); isolated scratch graph `mem-fabric-rebuild-scratch` has 432 committed episodes, 1,017 nodes, 2,756 edges, 721 facts; ready to resume immediately. Carried to the [Backlog](plan-active.md#phase-6-full-ledger-re-ingest-into-a-fresh-graph-paused-carried-out-of-ms9-2026-10-07) at MS9 close.
+- [x] **7.** Close-out. (`:Project` nodes vs property moved to the [Backlog](plan-active.md#project-nodes-vs-entity-property-open-since-before-ms7b) 2026-10-06, to decide later.)
+  - [x] **`edit_memory` stale facts (2026-10-06).**
+    - **The fix.** `new_content` now re-extracts the episode on Spark. The new text is extracted under a temporary name; then the old episode is retracted by uuid with `server/providers/episode_retract.py` (the library form of `retract_episodes.py`) and the new one is renamed back. It refuses a query matching more than one episode, and refuses while Spark is busy. The MCP tool runs it in the background, and every edit is ledgered in `imports/state/edit_memory_ledger.jsonl`. Also fixed: the import-registry path had resolved under `server/`, so registry sync had never run.
+    - **What was polluted.** The journal shows only 2 content edits ever, both on 2026-09-16 MS6c test episodes. Only `gemini_verification_test_2026_09_16` was still in production, with 3 stale facts.
+    - **Rehearsal.** On `fixgraph-editfix` it re-extracted the episode correctly in 55 s.
+    - **Production cleanup.** Production backed up to `mem-fabric-local.pre-editfix-20261006`, and the synthetic episode retracted rather than re-extracted: −1 episode, −3 facts, −4 mentions, −2 orphaned entities, −2 `IN_PROJECT` edges (6,477 → 6,474 nodes, 18,506 → 18,497 edges).
+    - **Replay at `now`.** Unchanged against the backup: Hit@8 82.5%, MRR 0.434 → 0.435, Wiki@8 87.5% (`imports/replay/ms9-editfix-*.json`).
+  - [x] **Decisions log (2026-10-07).** The MS9 row in [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md#exit-gate-decisions-log) now answers the exit-gate question; MS9 moved here at close.
+    - **Replay drop at `now` explained (2026-10-06).** Hit@8 went 90.0% → 82.5% and MRR 0.515 → 0.434 between the Phase 2b repair (10-02) and 10-06.
+      - **The cause is episode volume, not the wiki edges.** The 10-04 replay, run right after the extract@1.6 Phase 4 promotion and before the wiki edges, already had 85.0% / 0.435. The `pre-wiki-edges-20261005` backup scores 82.5% / 0.422, and the wiki edges then *raised* MRR to 0.434. They do lower `provenance_rate` (1.00 → 0.68), because wiki facts have no episode behind them.
+      - **What changed:** 447 episodes arrived from 10-03 on, 219 of them `claude-cowork-career-*`. These new episodes now hold 130 of the 480 memory slots across the 60 cases.
+      - **Lost cases.** C1, C16 and A6 dropped out of the top 8; C5, C8, C15 and C19 slipped from rank 1.
+      - **Why, per case:**
+        - C16: the new career episodes answer it, so its gold list is stale.
+        - C1: diluted by a related but off-target episode.
+        - A6: displaced by unrelated career episodes, which is real noise.
+      - **Remedy:** refresh the stale gold, and consider project-aware ranking (backlog: Project nodes vs. entity property). Removing approved episodes is not the remedy.
+      - **Ruling (User, 2026-10-07): accept as episode-volume dilution and close MS9.** It is 3 of 40 memory cases (33 vs 36 hits), and C16 is stale gold, so 2 are real losses. "Removing approved episodes is not the remedy" stands, and no prune experiment will run. A merge experiment on the related career tailoring threads and project-aware ranking moved to the [Backlog](plan-active.md#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
+      - **Word-overlap check.** 237 `claude-cowork-career-*` episodes had no near-duplicate pairs (Jaccard ≥ 0.45), so the extractor had already de-duplicated them; the volume is distinct episodes that share vocabulary. Sibling clusters exist (one company's resume tailoring, a second requisition at another company, an employer-sections consolidation), which is what the merge experiment targets.
+      - **Eval extended.** Group `D-prune` (D1–D6) was added to the gitignored `ms7_eval/queries.json`, now 66 cases: D1–D3 are merge-sensitive tailoring clusters and D4–D6 are prune-sensitive single-fact decisions. Question text stays local; backups are `queries.json.bak-20261007` in `ms7_eval/` and `ms9_eval/`.
+  - [x] **Career project tags merged (2026-10-07).** The 19 `career-navigator` episodes (ChatGPT, Claude, Gemini; all about the job search) were retagged `career`, joining the Cowork `career` episodes (now 238); `career-navigator-dev` (54, plugin development) stays separate.
+    - **Graph:** backup `mem-fabric-local.pre-careermerge-20261007`; 19 episodes set to `project='career'` with the `career` label (`job_hunt` removed); 49 `IN_PROJECT` edges re-pointed from the `job_hunt` Project node to `career`, and the empty node deleted (6,469 → 6,468 nodes, 18,477 edges unchanged). Episode names are unchanged because they are IDs in the eval gold and the ledger.
+    - **Source of the slug:** the classifier bucket `career-navigator` in the gitignored `taxonomy.local.json` (job-search words) produced it, so the bucket is now `career` (display name "Career"), and `career-navigator-dev` reads "Career Navigator plugin development". `PROJECT_DISPLAY_OVERRIDES` is now empty by default, and `taxonomy.example.json` shows the rules, overrides and display-name sections.
+    - **Duplicate edges found and removed 2026-10-07:** re-checking the counts showed 13 entities had been in both `job_hunt` and `career`, so re-pointing the 49 edges left 13 parallel `IN_PROJECT` edges to `career` (574 edges, 561 distinct sources; the backup had none). Deleted one edge per pair: edges 18,477 → 18,464, `career` now 561 edges for 561 sources, and no duplicate `IN_PROJECT` edge on any project.
+    - **Ledger made durable (2026-10-07).** `tag_projects.py`, the inline tagging at promotion and a ledger replay all read `derived_memories.project`, which still said `career-navigator`, so a scratch test showed `tag_projects.py` undoing the merge. Backed up `journal.db` (`journal.db.pre-careermerge-20261007`) and updated 20 rows to `career` in one transaction: the 19 promoted episodes plus 1 unreviewed job-search item. The other 588 `career-navigator` rows are `rejected` history and stay as they are (the retag script's rule), and 12 Cowork rows from the plugin repo root are plugin work, so a blanket update would have been wrong. The approved review mirrors carry no project field. Re-running `tag_projects.py` on a scratch copy now leaves production's counts unchanged (6,468 nodes, 18,464 edges, `career` 238).
+    - **Alias hazard fixed (2026-10-07).** `CMF_PROJECT_ALIASES` maps `career-navigator` to `career-navigator-dev`, which is right for the plugin repo but wrong for the job-search Cowork folder inside it. Journaled events keep their original metadata, and the pipeline read `metadata["project"]` for Cowork and then applied the alias, so re-extracting from the journal (a rebuild, extract@1.7) would have tagged 614 job-search conversations as plugin development. The Cowork branch of `pipeline.py` now re-derives the project from the journaled folder and scheduled-task sidecar (`project_for_journaled_session`) before the alias. Checked on the real journal: the 611 `career-navigator/career` conversations and 3 under `career/CareerNavigator` resolve to `career`, and the 6 in the repo root stay `career-navigator-dev`. Two tests added.
+  - [x] **Test suite green (2026-10-07).** 887 passed, no failures. Fixed six failures left from the public-preview commit: a `driver` stub in the `remember` test double, and regenerated the `get_context` and `remember` contract fixtures (new `project` parameter, `get_context` defaults 10 memory / 5 wiki).
+
+### Acceptance
+
+1. No regression on MS8 Hit@8 / MRR or the MS7 answer eval at any phase; improvement is expected from Phases 2–4.
+2. Merges lose no edge properties, and every merge is ledgered and replayable.
+3. Production node/edge counts are checked before and after each write; scratch first, backup graph taken.
+4. Hand-graded precision on sampled new relationship edges (Phase 4) before any scale-up.
+
+### Exit gate
+
+**Did the graph get measurably better for retrieval without losing information?** **Answer (2026-10-07): yes, with one accepted cost.** Duplicate entities were folded (4,111 → 3,986 nodes) and debris-producing episodes re-extracted (noise entities down 85%); cheap linking lifted spanning Wiki hits 17/20 → 19/20; and the cross-model recall eval reached 36/36 for ChatGPT, Claude and Gemini with CMF. The accepted cost is the MS8 replay at `now`: Hit@8 92.5% → 82.5% and MRR 0.507 → 0.434, from 447 episodes added since 10-03 (219 Cowork career) crowding the top 8, not from the graph work. Baseline against final numbers, plus User's spot-check of merged entities and new edges.
+
+**Already done by MS4e (forward-only, 2026-09-28):** new episodes extract under `typed-recall` + the debris filter, thread merges are size-bounded, and all 634 episodes carry `content_embedding`. The 634 existing episodes were extracted under `legacy` and are untouched, so the graph this milestone fixes is still the pre-MS4e shape. Detail: [FIX-GRAPH-PLAN.md → What MS4e already did](FIX-GRAPH-PLAN.md#what-ms4e-already-did).
+
+**Absorbs:** the [entity/edge cleanup pass](plan-active.md#entityedge-cleanup-pass-for-the-cmf-graph-found-2026-09-20-reviewing-conversation-b23f6f7d) and MS4e Phase 5. **Effort:** 6–8 sessions. **Risk:** Medium (writes to the live graph, mitigated scratch-first).
+
+---
 
 ---
 
