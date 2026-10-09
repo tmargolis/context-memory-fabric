@@ -173,3 +173,75 @@ def test_bad_override_value_is_refused(env):
 
 def test_batch_json_serializes(env):
     json.dumps(_batch(env), default=str)
+
+
+def test_yes_applies_docs_and_starts_promotion(env, tmp_path):
+    batch = _batch(env)
+    ids = {i["label"]: i["item_id"] for i in batch["items"]}
+    rec.record(env["store"], batch["run_id"], [
+        {"label": "EP1", "verdict": "approve", "reason": "decision"},
+        {"label": "EP2", "verdict": "reject", "reason": "narration"},
+        {"label": "DOC1", "verdict": "approve", "reason": "snippet rewrite, approved anyway"},
+        {"label": "DOC2", "verdict": "approve", "reason": "new topic"},
+    ], proposals_dir=env["docs"])
+    out = rec.confirm(env["store"], batch["run_id"], reviewer="tester", review_db=env["db"], proposals_dir=env["docs"])
+    calls = []
+    live = rec.go_live(out, wiki_root=env["wiki"], proposals_dir=env["docs"], journal_db=env["db"],
+                       log_dir=tmp_path / "logs", spawn=lambda cmd, **kw: calls.append((cmd, kw)))
+    # DOC2 (a new page) is written; DOC1 trips the 30% guard and is reported, still approved.
+    assert live["applied"] == ["DOC2"]
+    assert len(live["apply_errors"]) == 1 and live["apply_errors"][0].startswith("DOC1:")
+    assert (env["wiki"] / "WIKI" / "projects" / "Acme" / "New-Page.md").exists()
+    assert get_proposal(ids["DOC2"], env["docs"]).status == "applied"
+    assert get_proposal(ids["DOC1"], env["docs"]).status == "approved"
+    assert (env["wiki"] / "WIKI" / "projects" / "Acme" / "Billing-Jobs.md").read_text() == LIVE_PAGE
+    # Only this run's approved episode goes to one detached promote process.
+    assert live["promoting"] == ["EP1"]
+    (cmd, kw), = calls
+    assert cmd[cmd.index("promote"):] == ["promote", "--apply", "--spark-slot", "--memory-id", ids["EP1"]]
+    assert cmd[cmd.index("--db") + 1] == str(env["db"])
+    assert kw["start_new_session"] is True
+    assert live["promote_log"].endswith(f"promote_{batch['run_id']}.log")
+
+
+def test_yes_applies_the_rebuild_not_the_original(env, tmp_path):
+    batch = _batch(env)
+    rebuild = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", LIVE_PAGE + "- the new fact\n",
+                                  "additive rebuild", wiki_root=env["wiki"], proposals_dir=env["docs"])
+    rec.record(env["store"], batch["run_id"], [
+        {"label": "DOC1", "verdict": "approve", "reason": "one new fact", "rebuild_proposal_id": rebuild.proposal_id},
+    ], proposals_dir=env["docs"])
+    out = rec.confirm(env["store"], batch["run_id"], reviewer="tester", review_db=env["db"], proposals_dir=env["docs"])
+    live = rec.go_live(out, wiki_root=env["wiki"], proposals_dir=env["docs"], log_dir=tmp_path,
+                       spawn=lambda *a, **k: pytest.fail("no episodes approved, nothing to promote"))
+    assert live["applied"] == ["DOC1"] and not live["apply_errors"] and live["promote_log"] is None
+    assert (env["wiki"] / "WIKI" / "projects" / "Acme" / "Billing-Jobs.md").read_text().endswith("- the new fact\n")
+
+
+def test_cli_promote_named_episodes_waits_for_spark(monkeypatch):
+    import contextlib
+    from argparse import Namespace
+
+    from server.review import cli
+
+    slots = iter(["lock held by another job", None])
+    order = []
+
+    @contextlib.contextmanager
+    def fake_slot(db):
+        busy = next(slots)
+        order.append("slot-busy" if busy else "slot")
+        yield busy
+
+    async def fake_promote(*a, memory_id, dry_run, **kw):
+        order.append(("promote", memory_id, dry_run))
+        return {"promoted": [memory_id]}
+
+    monkeypatch.setattr("server.adapters.spark_lock.spark_slot", fake_slot)
+    monkeypatch.setattr(cli.actions, "promote_approved", fake_promote)
+    monkeypatch.setattr(cli, "SPARK_RETRY_SECONDS", 0)
+    args = Namespace(apply=True, spark_slot=True, db=None)
+    import asyncio
+    result = asyncio.run(cli._promote_one(args, None, None, None, None, None, "m1", None))
+    assert result == {"promoted": ["m1"]}
+    assert order == ["slot-busy", "slot", ("promote", "m1", False)]

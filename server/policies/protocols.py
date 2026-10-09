@@ -86,7 +86,8 @@ class PolicyContext:
     existing_project_folders: Optional[list[str]] = None
     # Whole-corpus durable knowledge discovery (2026-09-24, Upstream Wiki Grounding).
     # Relevant documents discovered across the whole corpus via search_corpus()
-    # before evaluating the window: [{"target_path": ..., "title": ..., "snippet": ...}].
+    # before evaluating the window: [{"target_path": ..., "title": ..., "snippet": ...,
+    # "current_content": <the whole live page>}].
     # Allows ExtractPolicyV1 to update existing wiki docs instead of inventing
     # redundant duplicate pages.
     relevant_wiki_docs: Optional[list[dict[str, Any]]] = None

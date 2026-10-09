@@ -876,7 +876,7 @@ async def apply_doc_proposal(
 
     WHEN TO USE:
     - Use once a proposal has been reviewed and approved via review_doc_proposal, to
-      actually apply it. Always dry-run first.
+      actually apply it. A dry run is optional, for a preview of what would be written.
 
     CRITICAL SAFETY CONTRACT:
     - Refuses any proposal not already 'approved'.
@@ -1704,7 +1704,7 @@ async def record_review_recommendations(
 
     CRITICAL SAFETY CONTRACT:
     - Recommendations change nothing: no review verdict, memory or wiki write. Only
-      confirm_review_recommendations, at the user's request, records verdicts.
+      confirm_review_recommendations, at the user's yes, records verdicts and makes them live.
     """
     from server.review.recommendations import RecommendationStore, record
 
@@ -1774,31 +1774,46 @@ async def confirm_review_recommendations(
         Field(description="Who is confirming. Defaults to CMF_REVIEWER, else the OS login name."),
     ] = None,
 ) -> str:
-    """Record the user's verdicts for a nightly review run: its recommendations, with their changes.
+    """Confirm a nightly review run and make it live: record the verdicts, apply the approved docs,
+    and start promoting the approved episodes. One call does all three.
 
     WHEN TO USE:
-    - Only when the user says to confirm a run ("confirm", "confirm but EP3 approve and skip DOC1").
-      Never on your own initiative.
+    - Only when the user says yes to a run ("yes", "confirm", "yes but EP3 approve and skip DOC1").
+      That one yes covers the verdicts, the doc applies and the promotion: don't ask again, and
+      don't call apply_doc_proposal or promote_approved_episodes afterwards. Never on your own initiative.
 
     CRITICAL SAFETY CONTRACT:
-    - Records review verdicts only, through the same functions a person uses. It never promotes an
-      episode or writes the wiki: promote_approved_episodes and apply_doc_proposal stay separate.
-    - Flagged items without an override, and skipped items, stay in the queue.
+    - Verdicts go through the same functions a person uses. Flagged items without an override, and
+      skipped items, stay in the queue.
     - For a doc with a drafted rebuild, approve approves the rebuild and rejects the original.
+    - Approved docs are written to the wiki (no dry run) and committed there. A doc the apply guards
+      refuse (its page changed since, or it would remove over 30% of the page) is reported and stays
+      approved, unapplied.
+    - Approved episodes are promoted by a background process, one at a time and each waiting for
+      the Spark slot (1-4 minutes apiece); its log path is in the reply.
     """
-    from server.review.recommendations import RecommendationStore, confirm
+    from server.review.recommendations import RecommendationStore, confirm, go_live
 
     try:
         with RecommendationStore() as store:
             result = confirm(store, run_id, overrides=overrides, skip=skip, reviewer=reviewer)
     except ValueError as e:
         return f"Could not confirm: {e}"
+    live = go_live(result)
+    if live["applied"]:
+        invalidate_corpus_cache()
     lines = [f"Confirmed run `{result['run_id']}`."]
     for key, title in (("approved", "Approved"), ("rejected", "Rejected"), ("left_in_queue", "Left in the queue"),
                        ("already_decided", "Already decided earlier"), ("errors", "Errors")):
         if result[key]:
             lines.append(f"- **{title}:** {', '.join(result[key])}")
-    lines.append("Next: promote approved episodes (promote_approved_episodes) and apply approved docs (apply_doc_proposal) when you're ready.")
+    if live["applied"]:
+        lines.append(f"- **Written to the wiki:** {', '.join(live['applied'])}")
+    if live["apply_errors"]:
+        lines.append("- **Not applied (still approved, needs a look):** " + "; ".join(live["apply_errors"]))
+    if live["promoting"]:
+        lines.append(f"- **Promoting in the background:** {', '.join(live['promoting'])}, one at a time "
+                     f"(1-4 minutes each). Progress: `{live['promote_log']}`.")
     return "\n".join(lines)
 
 

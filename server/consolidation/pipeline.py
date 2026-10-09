@@ -256,16 +256,27 @@ def _retrieve_relevant_wiki_docs(
         if not query:
             return []
 
+        from server.proposals import get_corpus_root
+
         results = search_corpus(query=query, root_path=wiki_root, max_results=max_results)
+        root = wiki_root if wiki_root is not None else get_corpus_root()
         docs: list[dict[str, Any]] = []
         for r in results:
             if not r.relative_path:
                 continue
+            # The whole live page, not just the matched snippet: an update is a
+            # whole-page rewrite, and one written from a 300-char snippet drops
+            # most of the page. ExtractPolicy decides what fits in the prompt.
+            try:
+                current = (Path(root) / r.relative_path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                current = None
             docs.append({
                 "target_path": r.relative_path,
                 "filename": r.filename,
                 "title": r.filename.replace(".md", "").replace("-", " "),
                 "snippet": (r.matched_snippet or "")[:300],
+                "current_content": current,
             })
         return docs
     except Exception:

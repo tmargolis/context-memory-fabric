@@ -2,7 +2,7 @@
 
 CMF's background pollers stage new **episodes** (EP) and **doc proposals** (DOC) all day. Nothing reaches your memory or wiki until it's reviewed. The nightly review does the first pass for you: a scheduled task in the AI app of your choice reviews the day's items at 11:11 PM, recommends a verdict for each, and leaves you a summary to confirm in the morning.
 
-It only **recommends**. Nothing changes until you confirm, and confirming records the verdicts only: promoting episodes into memory and writing docs into the wiki stay separate steps you run when you're ready.
+It only **recommends**. Nothing changes until you say yes. One yes does everything: it records the verdicts, writes the approved docs into the wiki and promotes the approved episodes into memory. There is no separate promote or apply step and no dry run; the summary is what you approve.
 
 ## What you need
 
@@ -31,9 +31,13 @@ During the scheduled run, never call confirm_review_recommendations, review_epis
 
 Open the task's latest run in that app. The summary has two tables, **Episodes (EP)** and **Doc proposals (DOC)**, with flagged items first, each with the recommended verdict and the reason. Then reply in that chat:
 
-- **"Confirm."** Records every recommendation as a verdict.
-- **"Confirm, but EP3 approve, DOC2 reject, skip EP7."** Changes a few first; a flagged item needs a verdict from you or it stays in the queue.
-- Then, when you want them live: "promote the approved episodes" (`promote_approved_episodes`) and "apply the approved docs" (`apply_doc_proposal`, dry run first).
+- **"Yes."** Accepts every recommendation and makes it live.
+- **"Yes, but EP3 approve, DOC2 reject, skip EP7."** Changes a few first; a flagged item needs a verdict from you or it stays in the queue.
+
+What a yes does (`confirm_review_recommendations`):
+
+- Approved docs are written to the wiki right away and committed in its git repo. A doc whose page changed since the proposal was made, or that would remove more than 30% of its page, is not written; the reply names it and it stays approved for you to look at.
+- Approved episodes are promoted by a background process on the machine running CMF, one at a time (1–4 minutes each on Spark), each waiting its turn for the Spark slot so it doesn't collide with the pollers. It keeps going after the chat or app closes. The reply gives its log, `imports/review/promote_<run_id>.log`. An episode that fails stays approved; `python -m server.review.cli promote --apply` retries everything approved but not yet promoted.
 
 From any other chat or app, `list_review_recommendations` shows the latest unconfirmed run again, and `confirm_review_recommendations` confirms it. Items a run has recommended on aren't offered to the next run; a night with nothing new reports so. Each run covers at most 50 items, oldest first; a backlog is worked through over several nights.
 

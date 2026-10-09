@@ -113,6 +113,17 @@ logger = logging.getLogger(__name__)
 # wiki doc, its target_path is preserved verbatim without force-relocating it.
 EXTRACT_POLICY_VERSION = "1.6"
 
+# Existing pages are shown in full (2026-10-09): an update is a whole-page
+# rewrite, and 1.6 wrote them from a 300-char snippet (wiki pages) or a
+# 1,500-char cut (its own earlier proposals), dropping most of the page. A
+# page goes in whole when it is at most PAGE_FULL_MAX_CHARS and fits the
+# budget shared by every page in one prompt (~12-14K tokens of the Spark model's
+# 64K-token context, leaving room for the window and the reply); otherwise it is
+# shown as a snippet marked full_content_shown=false, and the prompt forbids
+# updating it. 24K chars covers ~96% of wiki pages.
+PAGE_FULL_MAX_CHARS = 24_000
+PAGE_CONTEXT_BUDGET_CHARS = 48_000
+
 _RESPONSE_FORMAT_MARKER = "Respond with JSON only:"
 assert _RESPONSE_FORMAT_MARKER in _SYSTEM, (
     "ReasoningEpisodePolicyV1's _SYSTEM prompt no longer contains the expected "
@@ -135,9 +146,11 @@ AVOID DUPLICATE PAGES. Before proposing a new document, check EXISTING WIKI DOCU
 (searched across the entire corpus) and ALREADY PROPOSED DOCS below. If this window's durable
 knowledge belongs as an update, extension, or revision to an existing document, REUSE that
 exact "target_path" rather than inventing a new file name. Write "proposed_content" as the
-complete updated page incorporating both existing material and the new additions. Only
-propose a new "target_path" when the subject is genuinely distinct and does not belong in
-any existing wiki document.
+complete updated page incorporating both existing material and the new additions: start from
+the page's "current_content" and keep everything in it that is still true. A page shown with
+"full_content_shown": false has only a snippet here -- never propose an update to it; put that
+knowledge in "episodes" instead. Only propose a new "target_path" when the subject is
+genuinely distinct and does not belong in any existing wiki document.
 
 USE THE EXISTING FOLDER STRUCTURE. Every durable page lives under "WIKI/projects/<Project-Name>/"
 (Title-Case-Hyphenated project folder, e.g. "WIKI/projects/Context-Memory-Fabric/"). If EXISTING
@@ -529,13 +542,22 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
                 d = t.to_context_dict() if hasattr(t, "to_context_dict") else dict(t)
                 lines.append(json.dumps(d, default=str))
 
+        # One budget for every page shown in full; this conversation's own proposals first.
+        budget = [PAGE_CONTEXT_BUDGET_CHARS]
+
+        def _page(content: Optional[str], snippet: Optional[str]) -> dict:
+            if content and len(content) <= min(PAGE_FULL_MAX_CHARS, budget[0]):
+                budget[0] -= len(content)
+                return {"current_content": content}
+            return {"snippet": snippet or (content or "")[:300], "full_content_shown": False}
+
         doc_pages = context.open_doc_pages or []
         if doc_pages:
             lines.append("")
             lines.append("--- ALREADY PROPOSED DOCS THIS CONVERSATION (reuse target_path if this window continues one) ---")
             for p in doc_pages[:20]:
-                snippet = (p.get("proposed_content") or "")[:1500]
-                lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement"), "current_content": snippet}, default=str))
+                lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement"),
+                                         **_page(p.get("proposed_content"), None)}, default=str))
 
         folders = context.existing_project_folders or []
         if folders:
@@ -548,7 +570,8 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             lines.append("")
             lines.append("--- EXISTING WIKI DOCUMENTATION (searched across entire corpus; reuse/update target_path instead of creating duplicates) ---")
             for d in wiki_docs[:10]:
-                lines.append(json.dumps(d, default=str))
+                shown = {k: v for k, v in d.items() if k not in ("snippet", "current_content")}
+                lines.append(json.dumps({**shown, **_page(d.get("current_content"), d.get("snippet"))}, default=str))
         return "\n".join(lines)
 
     def _to_doc_candidate(

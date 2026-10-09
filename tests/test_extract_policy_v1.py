@@ -535,6 +535,57 @@ class TestWholeCorpusWikiGrounding(unittest.TestCase):
             paths = [d["target_path"] for d in docs]
             # Confirms retrieval finds matching docs across the corpus
             self.assertTrue(any("J-Space-Analysis.md" in p for p in paths))
+            # ...and carries the whole live page, not just the matched snippet.
+            hit = next(d for d in docs if d["target_path"].endswith("J-Space-Analysis.md"))
+            self.assertEqual(hit["current_content"], doc_file.read_text(encoding="utf-8"))
+
+    def test_existing_pages_shown_in_full_within_budget(self):
+        import json
+
+        from server.policies import extract
+
+        policy = ExtractPolicyV1(generate_fn=FakeModel())
+        small = "# Small\n\n" + "fact line\n" * 50
+        too_big = "# Big\n\n" + "x" * (extract.PAGE_FULL_MAX_CHARS + 1)
+        own = "# Own proposal\n\n" + "y" * 2000 + "\nTAIL-OF-OWN-PROPOSAL\n"
+        context = PolicyContext(
+            open_doc_pages=[{"target_path": "WIKI/projects/A/Own.md", "statement": "s", "proposed_content": own}],
+            relevant_wiki_docs=[
+                {"target_path": "WIKI/projects/A/Small.md", "title": "Small", "snippet": "fact line",
+                 "current_content": small},
+                {"target_path": "WIKI/projects/A/Big.md", "title": "Big", "snippet": "big snippet",
+                 "current_content": too_big},
+            ],
+        )
+        prompt = policy._build_prompt([ev("e1", "hello")], context)
+        rows = {json.loads(l)["target_path"]: json.loads(l) for l in prompt.splitlines() if l.startswith('{"target_path"')}
+        # 1.6 cut its own proposals at 1,500 chars and wiki pages at a 300-char snippet.
+        self.assertEqual(rows["WIKI/projects/A/Own.md"]["current_content"], own)
+        self.assertEqual(rows["WIKI/projects/A/Small.md"]["current_content"], small)
+        self.assertNotIn("snippet", rows["WIKI/projects/A/Small.md"])
+        big = rows["WIKI/projects/A/Big.md"]
+        self.assertEqual(big, {"target_path": "WIKI/projects/A/Big.md", "title": "Big", "snippet": "big snippet",
+                               "full_content_shown": False})
+        self.assertIn("never propose an update to it", prompt)
+
+    def test_page_budget_is_shared_across_pages(self):
+        import json
+
+        from server.policies import extract
+
+        policy = ExtractPolicyV1(generate_fn=FakeModel())
+        page = "z" * (extract.PAGE_FULL_MAX_CHARS - 10)
+        n = extract.PAGE_CONTEXT_BUDGET_CHARS // len(page) + 1
+        context = PolicyContext(relevant_wiki_docs=[
+            {"target_path": f"WIKI/projects/A/P{i}.md", "title": f"P{i}", "snippet": "s", "current_content": page}
+            for i in range(n)
+        ])
+        prompt = policy._build_prompt([ev("e1", "hello")], context)
+        rows = [json.loads(l) for l in prompt.splitlines() if l.startswith('{"target_path"')]
+        full = [r for r in rows if "current_content" in r]
+        self.assertEqual(len(full), n - 1)
+        self.assertLessEqual(sum(len(r["current_content"]) for r in full), extract.PAGE_CONTEXT_BUDGET_CHARS)
+        self.assertIs(rows[-1]["full_content_shown"], False)
 
 
 if __name__ == "__main__":

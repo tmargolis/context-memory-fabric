@@ -12,7 +12,7 @@
     python -m server.review.cli sample-audit <batch_id> [-n 100]
     python -m server.review.cli revert-batch <batch_id> [--apply]
     python -m server.review.cli expand-evidence <memory_id> --event-ids ID [ID ...] --reason "..." [--apply]
-    python -m server.review.cli promote [--apply] [--limit N]
+    python -m server.review.cli promote [--apply] [--limit N] [--memory-id ID ... [--spark-slot]]
     python -m server.review.cli correct-memory <memory_id> --content "..." --reason "..." [--apply]
     python -m server.review.cli delete-memory <memory_id> --reason "..." [--apply]
 
@@ -41,6 +41,8 @@ from server.review.explain import explain
 from server.policies.reasoning_episode import REASONING_POLICY_VERSION
 from server.review.queue import review_queue
 from server.review.store import ReviewStore
+
+SPARK_RETRY_SECONDS = 60
 
 
 def _print_json(obj: object) -> None:
@@ -266,12 +268,35 @@ def cmd_promote(args: argparse.Namespace) -> int:
 
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs, PromotionStore(args.db) as ps, \
             SqliteEventStore(args.db) as js:
-        result = asyncio.run(
-            actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply, limit=args.limit,
-                                      wait_through_rate_limit=not args.no_wait, tag_fn=get_default_tag_fn())
-        )
-    _print_json(result)
+        if not args.memory_id:
+            result = asyncio.run(
+                actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply, limit=args.limit,
+                                          wait_through_rate_limit=not args.no_wait, tag_fn=get_default_tag_fn())
+            )
+            _print_json(result)
+            return 0
+        # Named episodes (the nightly review's confirm): one at a time, each
+        # printed as it finishes, optionally waiting for the Spark slot first.
+        for memory_id in args.memory_id:
+            result = asyncio.run(_promote_one(args, cs, js, ps, rs, remember, memory_id, get_default_tag_fn()))
+            _print_json({"memory_id": memory_id, **result})
+            sys.stdout.flush()
     return 0
+
+
+async def _promote_one(args, cs, js, ps, rs, remember, memory_id, tag_fn) -> dict:
+    if not args.spark_slot:
+        return await actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply,
+                                              memory_id=memory_id, tag_fn=tag_fn)
+    from server.adapters.spark_lock import spark_slot
+
+    while True:
+        with spark_slot(args.db) as busy:
+            if not busy:
+                return await actions.promote_approved(cs, js, ps, rs, remember, dry_run=not args.apply,
+                                                      memory_id=memory_id, tag_fn=tag_fn)
+        print(f"Spark busy ({busy}); retrying in {SPARK_RETRY_SECONDS}s", file=sys.stderr, flush=True)
+        await asyncio.sleep(SPARK_RETRY_SECONDS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -365,6 +390,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_prom = sub.add_parser("promote", help="Promote approved episodes into the graph")
     p_prom.add_argument("--apply", action="store_true")
     p_prom.add_argument("--limit", type=int, default=None)
+    p_prom.add_argument("--memory-id", action="append", default=[],
+                        help="Promote only this approved episode (repeatable); each is promoted and reported in turn")
+    p_prom.add_argument("--spark-slot", action="store_true",
+                        help="With --memory-id: wait for the shared Spark slot before each episode")
     p_prom.add_argument("--no-wait", action="store_true",
                          help="Stop immediately on a rate-limit wall instead of sleeping through it (old behavior)")
     p_prom.set_defaults(func=cmd_promote)

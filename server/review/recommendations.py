@@ -10,9 +10,11 @@ reviews what the pollers staged, using CMF's MCP tools:
    flag recommendations and returns the morning summary: EP and DOC tables,
    flagged items first, and how to confirm. A recommendation changes nothing
    in the review queue, memory or the wiki.
-3. In the morning the user confirms in that chat. `confirm` is the only step
-   that records real verdicts, through the same review functions a person
-   uses. Promotion and doc applies stay separate steps.
+3. In the morning the user confirms in that chat with one "yes". `confirm`
+   records the verdicts through the same review functions a person uses, then
+   `go_live` applies the approved docs and starts promoting the approved
+   episodes in a background process (one at a time, each holding the Spark
+   slot), so nothing else needs confirming.
 
 A doc update that would rewrite more than 30% of its live page is a cue to
 compare, not a reason to reject: the task may draft an additive rebuild with
@@ -338,9 +340,9 @@ def format_summary(store: RecommendationStore, run_id: str) -> str:
         for r in docs:
             rebuild = f" Rebuild drafted as `{r['rebuild_proposal_id']}`." if r["rebuild_proposal_id"] else ""
             out.append(f"| {r['label']} | `{r['summary']}` | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)}{rebuild} |")
-    out += ["", f"To confirm: `confirm_review_recommendations(run_id=\"{run_id}\")`, or say e.g. "
-            "\"confirm, but EP3 approve and skip DOC1\". Flagged items stay in the queue unless you give them a verdict. "
-            "Confirming records the verdicts only; promotion and doc applies stay separate."]
+    out += ["", f"Say **yes** to confirm (`confirm_review_recommendations(run_id=\"{run_id}\")`), or e.g. "
+            "\"yes, but EP3 approve and skip DOC1\". Flagged items stay in the queue unless you give them a verdict. "
+            "Confirming makes them live: approved docs are written to the wiki and approved episodes are promoted into memory."]
     return "\n".join(out)
 
 
@@ -383,6 +385,8 @@ def confirm(
         raise ValueError("Overrides must be approve or reject: " + ", ".join(bad))
 
     done: dict[str, list[str]] = {"approved": [], "rejected": [], "left_in_queue": [], "already_decided": [], "errors": []}
+    # What this call approved, for go_live: a doc's id is its rebuild's when one was drafted.
+    approved_items: list[dict[str, str]] = []
     with ReviewStore(review_db) as rs:
         for r in store.recommendations(run_id):
             label, item_id = r["label"], r["item_id"]
@@ -412,10 +416,13 @@ def confirm(
                 continue
             store.decide(run_id, item_id, "confirmed" if final == r["verdict"] else "overridden", final)
             done["approved" if final == "approve" else "rejected"].append(label)
+            if final == "approve":
+                approved_items.append({"label": label, "item_type": r["item_type"],
+                                       "item_id": (r["rebuild_proposal_id"] or item_id) if r["item_type"] == "doc" else item_id})
 
     if not any(r["status"] == "pending" and r["verdict"] != "flag" for r in store.recommendations(run_id)):
         store.mark_confirmed(run_id)
-    return {"run_id": run_id, **done}
+    return {"run_id": run_id, **done, "approved_items": approved_items}
 
 
 def _confirm_doc(item_id, rebuild_id, final, reviewer, reason, proposals_dir, get_proposal, review_proposal) -> None:
@@ -435,3 +442,63 @@ def _confirm_doc(item_id, rebuild_id, final, reviewer, reason, proposals_dir, ge
         rebuilt = get_proposal(rebuild_id, proposals_dir)
         if rebuilt is not None and rebuilt.status == "pending_review":
             review_proposal(rebuild_id, "rejected", reviewer=reviewer, notes=reason, proposals_dir=proposals_dir)
+
+
+# --- go live ----------------------------------------------------------------------
+
+PROMOTE_LOG_DIR = DEFAULT_JOURNAL_PATH.parent.parent / "review"
+
+
+def go_live(
+    confirmed: dict[str, Any],
+    *,
+    wiki_root: Optional[Path] = None,
+    proposals_dir: Optional[Path] = None,
+    journal_db: Optional[Path] = None,
+    log_dir: Optional[Path] = None,
+    spawn: Any = None,
+) -> dict[str, Any]:
+    """Make what `confirm` just approved live: apply the docs, start promoting the episodes.
+
+    Docs are applied here (a file write and a wiki commit each). A doc the
+    apply guards refuse is reported and stays approved for a manual look.
+    Episodes go to a detached `server.review.cli promote` process, since each
+    one takes 1-4 minutes on Spark: it promotes them one at a time, waits for
+    the Spark slot before each, and outlives the chat that confirmed.
+    """
+    from server.proposals import apply_proposal, get_proposal
+
+    out: dict[str, Any] = {"applied": [], "apply_errors": [], "promoting": [], "promote_log": None}
+    for item in confirmed.get("approved_items", []):
+        if item["item_type"] != "doc":
+            continue
+        try:
+            proposal = get_proposal(item["item_id"], proposals_dir)
+            if proposal is None:
+                raise ValueError(f"proposal {item['item_id']} not found")
+            apply_proposal(item["item_id"], expected_sha256=proposal.proposed_sha256, dry_run=False,
+                           wiki_root=wiki_root, proposals_dir=proposals_dir)
+            out["applied"].append(item["label"])
+        except Exception as exc:  # one bad doc must not stop the rest
+            out["apply_errors"].append(f"{item['label']}: {exc}")
+
+    episodes = [i for i in confirmed.get("approved_items", []) if i["item_type"] == "episode"]
+    if episodes:
+        import subprocess
+        import sys
+
+        log_dir = Path(log_dir) if log_dir is not None else PROMOTE_LOG_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"promote_{confirmed['run_id']}.log"
+        cmd = [sys.executable, "-m", "server.review.cli"]
+        if journal_db is not None:
+            cmd += ["--db", str(journal_db)]
+        cmd += ["promote", "--apply", "--spark-slot"]
+        for i in episodes:
+            cmd += ["--memory-id", i["item_id"]]
+        with open(log_path, "a", encoding="utf-8") as log:
+            (spawn or subprocess.Popen)(cmd, cwd=str(Path(__file__).resolve().parents[2]), stdout=log,
+                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+        out["promoting"] = [i["label"] for i in episodes]
+        out["promote_log"] = str(log_path)
+    return out
