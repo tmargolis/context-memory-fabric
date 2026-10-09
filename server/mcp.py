@@ -12,7 +12,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Optional, cast
+from typing import Annotated, Optional
 from urllib.parse import urlparse
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
@@ -133,7 +133,7 @@ if _oauth_issuer_url and _oauth_password:
     _oauth_issuer_url = _oauth_issuer_url.rstrip("/")
     oauth_provider = CMFOAuthProvider(consent_base_url=_oauth_issuer_url, consent_password=_oauth_password)
     _auth_settings = AuthSettings(
-        issuer_url=cast(str, _oauth_issuer_url),
+        issuer_url=_oauth_issuer_url,
         # Must match the actual resource path (the /mcp endpoint), not just
         # the bare issuer -- the SDK derives the RFC 9728
         # protected-resource-metadata route from this URL's path
@@ -142,7 +142,7 @@ if _oauth_issuer_url and _oauth_password:
         # /.well-known/oauth-protected-resource instead of
         # /.well-known/oauth-protected-resource/mcp, which is what clients
         # doing RFC 9728 discovery against the /mcp endpoint request.
-        resource_server_url=cast(str, f"{_oauth_issuer_url}/mcp"),
+        resource_server_url=f"{_oauth_issuer_url}/mcp",
         client_registration_options=ClientRegistrationOptions(enabled=True),
         revocation_options=RevocationOptions(enabled=True),
     )
@@ -201,7 +201,7 @@ if oauth_provider is not None:
 
     @app.custom_route("/oauth/consent", methods=["GET", "POST"])
     async def oauth_consent(request: Request):
-        provider = cast(CMFOAuthProvider, oauth_provider)
+        provider = oauth_provider
 
         if request.method == "GET":
             request_id = request.query_params.get("request_id", "")
