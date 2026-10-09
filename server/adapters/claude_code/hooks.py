@@ -134,3 +134,84 @@ def install_sentinel_hooks(
 def check_sentinel_fired(sentinel_log: Optional[Path] = None) -> bool:
     sentinel_log = sentinel_log or (Path.home() / ".claude" / "cmf-hook-sentinel.log")
     return sentinel_log.exists() and sentinel_log.stat().st_size > 0
+
+
+def _nudge_command() -> str:
+    from server.adapters.capture_nudge import hook_command
+
+    return hook_command("claude_code")
+
+
+def _has_nudge(event_hooks: list[Any]) -> bool:
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
+    return any(
+        NUDGE_MARKER in entry_hook.get("command", "")
+        for entry in event_hooks
+        for entry_hook in entry.get("hooks", [])
+    )
+
+
+def install_nudge(settings_path: Optional[Path] = None) -> dict[str, Any]:
+    """Add the capture-nudge Stop hook (server.adapters.capture_nudge).
+    Unlike the worker hook it runs synchronously, since its stdout decision
+    is the point; it only reads and writes a small state file. Idempotent;
+    backs the settings file up first."""
+    settings_path = settings_path or DEFAULT_SETTINGS_PATH
+    settings: dict[str, Any] = {}
+    backup_path: Optional[Path] = None
+    if settings_path.exists():
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = settings_path.with_suffix(f".json.bak-{timestamp}")
+        shutil.copy2(settings_path, backup_path)
+
+    stop_hooks = settings.setdefault("hooks", {}).setdefault("Stop", [])
+    if _has_nudge(stop_hooks):
+        return {"installed": False, "already_present": True, "settings_path": str(settings_path)}
+
+    stop_hooks.append({"matcher": "", "hooks": [{"type": "command", "command": _nudge_command(), "timeout": 10}]})
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return {
+        "installed": True,
+        "already_present": False,
+        "settings_path": str(settings_path),
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+
+
+def uninstall_nudge(settings_path: Optional[Path] = None) -> dict[str, Any]:
+    """Remove only the capture-nudge Stop entry; prune Stop if it empties."""
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
+    settings_path = settings_path or DEFAULT_SETTINGS_PATH
+    if not settings_path.exists():
+        return {"removed": False, "settings_path": str(settings_path)}
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    hooks_block = settings.get("hooks", {})
+    stop_hooks = hooks_block.get("Stop", [])
+    kept = [
+        e for e in stop_hooks
+        if not any(NUDGE_MARKER in h.get("command", "") for h in e.get("hooks", []))
+    ]
+    if len(kept) == len(stop_hooks):
+        return {"removed": False, "settings_path": str(settings_path)}
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = settings_path.with_suffix(f".json.bak-{timestamp}")
+    shutil.copy2(settings_path, backup_path)
+    if kept:
+        hooks_block["Stop"] = kept
+    else:
+        hooks_block.pop("Stop", None)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return {"removed": True, "settings_path": str(settings_path), "backup_path": str(backup_path)}
+
+
+def nudge_installed(settings_path: Optional[Path] = None) -> bool:
+    settings_path = settings_path or DEFAULT_SETTINGS_PATH
+    if not settings_path.exists():
+        return False
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    return _has_nudge(settings.get("hooks", {}).get("Stop", []))

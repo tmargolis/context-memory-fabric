@@ -295,3 +295,83 @@ def generate_launchd_plist(
 </dict>
 </plist>
 """
+
+
+def _has_nudge(event_hooks: Any) -> bool:
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
+    return isinstance(event_hooks, list) and any(
+        NUDGE_MARKER in h.get("command", "") for h in event_hooks if isinstance(h, dict)
+    )
+
+
+def install_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
+    """Add the capture-nudge Stop hook (server.adapters.capture_nudge),
+    synchronous because Codex acts on its stdout decision. Codex runs it
+    only after the hook is trusted via `/hooks` in the CLI. Idempotent;
+    backs hooks.json up first."""
+    from server.adapters.capture_nudge import hook_command
+
+    path = hooks_path or DEFAULT_HOOKS_PATH
+    config: dict[str, Any] = {}
+    backup_path: Optional[Path] = None
+    if path.exists():
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Could not parse existing {path}: {exc}") from exc
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = path.with_suffix(f".json.bak-{timestamp}")
+        shutil.copy2(path, backup_path)
+
+    stop_hooks = config.get("Stop")
+    if not isinstance(stop_hooks, list):
+        stop_hooks = []
+        config["Stop"] = stop_hooks
+    if _has_nudge(stop_hooks):
+        return {"installed": False, "already_present": True, "hooks_path": str(path)}
+
+    stop_hooks.append({"type": "command", "command": hook_command("codex"), "timeout": 10})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return {
+        "installed": True,
+        "already_present": False,
+        "hooks_path": str(path),
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+
+
+def uninstall_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
+    """Remove only the capture-nudge Stop entry; prune Stop if it empties."""
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
+    path = hooks_path or DEFAULT_HOOKS_PATH
+    if not path.exists():
+        return {"removed": False, "hooks_path": str(path)}
+    config = json.loads(path.read_text(encoding="utf-8"))
+    stop_hooks = config.get("Stop")
+    if not _has_nudge(stop_hooks):
+        return {"removed": False, "hooks_path": str(path)}
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = path.with_suffix(f".json.bak-{timestamp}")
+    shutil.copy2(path, backup_path)
+    kept = [h for h in stop_hooks if not (isinstance(h, dict) and NUDGE_MARKER in h.get("command", ""))]
+    if kept:
+        config["Stop"] = kept
+    else:
+        config.pop("Stop", None)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return {"removed": True, "hooks_path": str(path), "backup_path": str(backup_path)}
+
+
+def nudge_installed(hooks_path: Optional[Path] = None) -> bool:
+    path = hooks_path or DEFAULT_HOOKS_PATH
+    if not path.exists():
+        return False
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False
+    return _has_nudge(config.get("Stop"))

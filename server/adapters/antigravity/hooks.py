@@ -83,3 +83,49 @@ def install_hooks(hooks_path: Optional[Path] = None) -> dict[str, Any]:
     hooks_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     return {"installed": True, "already_present": False, "hooks_path": str(hooks_path)}
+
+
+# The capture nudge (server.adapters.capture_nudge) gets its own top-level
+# hook name, so installing or removing it never touches the worker hook.
+NUDGE_HOOK_NAME = "cmf-capture-nudge"
+
+
+def install_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
+    """Add the capture-nudge Stop hook. Synchronous: Antigravity acts on its
+    stdout `decision`. Idempotent."""
+    from server.adapters.capture_nudge import hook_command
+
+    hooks_path = hooks_path or DEFAULT_HOOKS_PATH
+    config: dict[str, Any] = {}
+    if hooks_path.exists():
+        config = json.loads(hooks_path.read_text(encoding="utf-8"))
+    if nudge_installed(hooks_path):
+        return {"installed": False, "already_present": True, "hooks_path": str(hooks_path)}
+
+    config[NUDGE_HOOK_NAME] = {
+        "Stop": [{"type": "command", "command": hook_command("antigravity"), "timeout": 10}]
+    }
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return {"installed": True, "already_present": False, "hooks_path": str(hooks_path)}
+
+
+def uninstall_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
+    hooks_path = hooks_path or DEFAULT_HOOKS_PATH
+    if not hooks_path.exists():
+        return {"removed": False, "hooks_path": str(hooks_path)}
+    config = json.loads(hooks_path.read_text(encoding="utf-8"))
+    if config.pop(NUDGE_HOOK_NAME, None) is None:
+        return {"removed": False, "hooks_path": str(hooks_path)}
+    hooks_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return {"removed": True, "hooks_path": str(hooks_path)}
+
+
+def nudge_installed(hooks_path: Optional[Path] = None) -> bool:
+    hooks_path = hooks_path or DEFAULT_HOOKS_PATH
+    if not hooks_path.exists():
+        return False
+    config = json.loads(hooks_path.read_text(encoding="utf-8"))
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
+    return any(NUDGE_MARKER in h.get("command", "") for h in config.get(NUDGE_HOOK_NAME, {}).get("Stop", []))

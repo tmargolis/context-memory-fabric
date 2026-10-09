@@ -97,7 +97,7 @@ The path from a fresh clone to captured, reviewed and recalled memory, with your
 1. **Install and start FalkorDB** (local source installation, steps 1–3 below).
 2. **Configure `.env`** (step 4): providers and keys from [Model Providers](#model-providers); `FALKORDB_DATABASE`; `LLM_WIKI_PATH` pointing at your notes, or empty to run without a wiki; on Linux or Windows, `CMF_PROJECT_ROOTS` naming the folders your projects live in.
 3. **Run the server and connect your clients** (step 5 and [Connecting Your MCP Client](#connecting-your-mcp-client)).
-4. **Turn on background capture** of your Claude Code and Codex sessions ([Background Capture](#background-capture)).
+4. **Turn on capture** of your coding sessions ([Background Capture](#background-capture)): capture checkpoints (the agent saves what was decided; nothing reads your transcripts), transcript pollers, or both.
 5. **Tell your AI assistants how to use CMF:** paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into each app's custom instructions.
 6. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
 
@@ -255,7 +255,27 @@ In Cursor Settings → Features → MCP:
 
 ## Background Capture
 
-CMF can capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
+There are two ways to get your coding sessions into CMF. They can run together.
+
+### Capture checkpoints (no transcript reading)
+
+A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turns, to call `capture_session` with whatever was decided or concluded since the last checkpoint. The agent chooses what to keep, and nothing reads your transcripts. Instructions alone ([INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md)) rarely get an agent to save anything on its own; the hook supplies the trigger.
+
+```bash
+.venv/bin/python3 -m server.adapters.capture_nudge install --harness all   # or claude_code / codex / antigravity
+.venv/bin/python3 -m server.adapters.capture_nudge status
+.venv/bin/python3 -m server.adapters.capture_nudge uninstall --harness all
+```
+
+- The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 6), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
+- **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing.
+- **Each nudge costs one extra agent step**, and the session must have CMF connected. Without it the agent just finishes.
+- Antigravity has no pre-compaction hook, and Claude Code's and Codex's can't prompt the agent, so a very long session is covered only by the periodic nudges.
+- Chat apps without hooks (Claude Desktop chat, Cowork, ChatGPT) rely on the instructions block, plus a nightly review.
+
+### Transcript pollers
+
+CMF can also capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
 
 Before turning them on:
 - **Set `CMF_CAPTURE_LLM_PROVIDER`.** The pollers extract with it, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it to the provider whose key you have. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
@@ -295,6 +315,8 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
 | `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
+| `CMF_NUDGE_MIN_TURNS` | No | `6` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](#capture-checkpoints-no-transcript-reading)). |
+| `CMF_NUDGE_MIN_MINUTES` | No | `30` | Or nudge after this many minutes, once there are at least 2 replies. |
 | `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |
 | `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |
 | `CMF_OPENAI_MODEL` | No | `gpt-5.5` | OpenAI model for extraction. |

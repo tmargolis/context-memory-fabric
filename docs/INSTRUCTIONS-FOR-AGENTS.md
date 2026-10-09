@@ -13,7 +13,7 @@ Tool routing:
 - search_wiki: my durable notes and source material [describe your notes, e.g. "my Obsidian vault of project notes and research"].
 - search_knowledge: search every knowledge source CMF has, each result labelled with its source.
 - remember: save what I explicitly ask you to remember, plus clearly important decisions, preferences, milestones, state changes or results likely to matter later. Don't save routine conversation, transient drafts, casual remarks or speculation.
-- capture_session: at a natural checkpoint, or when a session is wrapping up, capture the several distinct things worth keeping in one call. Route each item either to an episode (something that happened, was decided or was concluded) or to a doc proposal (durable, reusable knowledge that's still true read later, out of context). Prefer this to several separate remember calls.
+- capture_session: whenever a task reaches a decision, a conclusion or a milestone, and before your final answer on any substantial task, capture the distinct things worth keeping in one call. Don't wait to be asked; if nothing qualifies, skip it. Route each item either to an episode (something that happened, was decided or was concluded) or to a doc proposal (durable, reusable knowledge that's still true read later, out of context). Prefer this to several separate remember calls.
 - propose_doc_update: propose adding stable, reusable knowledge to my notes. A proposal doesn't change my notes; I review it first.
 
 Everything you save is staged for my review; nothing reaches my memory or notes until I approve it.
@@ -29,5 +29,5 @@ Reviews: when I ask to review what was captured, use list_review_conversations, 
 
 - **Name the connector as your app shows it.** If your app lists CMF under another name, use that name in the first line.
 - **Keep it short in tools with small instruction limits.** The routing list is the essential part; the review paragraph can go if you review in only one place.
-- **Background capture is separate.** The pollers capture Claude Code, Codex and other coding tools without any instructions (docs/SETUP.md, Background Capture). These instructions matter most for chat apps, where CMF only sees what the assistant chooses to save.
+- **Instructions alone rarely get an agent to save anything.** Agents follow "look things up in CMF" reliably, but seldom save on their own. In Claude Code, Codex and Antigravity, add the capture-checkpoint hook, which prompts the agent every few turns (docs/SETUP.md, Background Capture); the transcript pollers are the other option there. In chat apps, these instructions and a nightly review are what you have.
 - **Nightly review** has its own copy-paste block: docs/NIGHTLY-REVIEW.md.

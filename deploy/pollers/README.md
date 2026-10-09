@@ -11,6 +11,8 @@ CMF captures your coding sessions by polling their transcripts on disk. Each pol
 
 The default install is `claude-code` and `codex`.
 
+The pollers read every transcript in full. To capture without reading transcripts, use capture checkpoints, a Stop hook that makes the agent itself call `capture_session` ([docs/SETUP.md, Background Capture](../../docs/SETUP.md#background-capture)). The two can run together.
+
 ## Before you install
 
 1. **Set up CMF first** (docs/SETUP.md): the virtualenv (`uv sync`), FalkorDB, and a `.env`. The jobs run the repo's own interpreter, `.venv/bin/python3` (Windows: `.venv\Scripts\python.exe`), from the repo folder, so they read the same `.env`.
