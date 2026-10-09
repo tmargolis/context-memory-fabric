@@ -4,7 +4,7 @@ stdio never reaches this middleware -- it has no HTTP layer, so a client
 connected via stdio is trusted by process ownership alone, same as today.
 This module exists because streamable-http/sse otherwise accept any request
 that reaches the port with zero auth: once the server is reachable over a
-network (including a Tailscale Funnel -- see docs/CLIENTS.md), anyone who
+network (including a VPN -- see docs/CLIENTS.md), anyone who
 can send it a request can call every tool, including
 remember/edit_memory/reconcile_memories/import_chatgpt_exports/
 promote_auto_accepted_memories -- full read/write access to the memory graph.

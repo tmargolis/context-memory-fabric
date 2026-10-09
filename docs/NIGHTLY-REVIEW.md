@@ -6,7 +6,7 @@ It only **recommends**. Nothing changes until you say yes. One yes does everythi
 
 ## What you need
 
-- **CMF connected to that app** as an MCP connector (docs/CLIENTS.md). A scheduled task usually runs in the provider's cloud, not on your computer, so the app must reach CMF over the internet: the streamable-HTTP server with OAuth behind a tunnel or Tailscale (docs/CLIENTS.md, "Running the Server Standalone"). An app that runs on your own machine can use the local server.
+- **CMF connected to that app** as an MCP connector (docs/CLIENTS.md). A scheduled task usually runs in the provider's cloud, not on your computer, so the app must reach CMF over the internet: the streamable-HTTP server with OAuth behind a tunnel or VPN (docs/CLIENTS.md, "Running the Server Standalone"). An app that runs on your own machine can use the local server.
 - **A plan with scheduled tasks** in that app (notes below).
 - **Optional: your own review rules.** CMF's generic rules are in `server/review/review_rules.md`. Put your own in a Markdown file outside the repo and point `CMF_REVIEW_RULES_PATH` at it in `.env`, for example which notes belong in which wiki folder, or which topics are always episodes and never pages. They are appended to the generic rules on every run.
 

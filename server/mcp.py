@@ -1911,7 +1911,7 @@ def main():
 
         # The SDK's own DNS-rebinding-protection default only trusts
         # Host: 127.0.0.1/localhost -- correct for a bare local server, but
-        # it rejects every request once something (Tailscale Funnel, a
+        # it rejects every request once something (VPN, a
         # tunnel, a reverse proxy) sits in front with a different public
         # hostname in the Host header (421 Misdirected Request). When
         # CMF_MCP_ISSUER_URL is set, that's exactly the hostname clients

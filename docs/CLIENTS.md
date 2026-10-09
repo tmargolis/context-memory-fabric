@@ -34,7 +34,7 @@ Instead of letting each client spawn its own `stdio` subprocess (§1–3), you c
 
    If `FALKORDB_DATABASE` isn't set anywhere (`.env` or inline), `resolve_target_database()` (`server/providers/memory_graphiti.py`) falls back to `default_db` — a deliberate non-production sandbox, not one of the real graphs (e.g. `mem-fabric-local-ep`, `mem-fabric-local-wiki`), so a client with no explicit config can't silently read or write production data.
 
-4. Point each client at `http://localhost:8000/mcp` (or a tunneled/Tailscale URL — see §4) instead of giving it a `command`/`args` subprocess to spawn.
+4. Point each client at `http://localhost:8000/mcp` (or a tunneled/VPN URL — see §4) instead of giving it a `command`/`args` subprocess to spawn.
 
 5. Stop it: `pgrep -fl "server.mcp"` (filter out unrelated processes that merely mention the project path in an argument, e.g. shell/editor background tasks) then `kill <pid>`.
 
@@ -56,7 +56,7 @@ CMF_MCP_OAUTH_PASSWORD=$(openssl rand -hex 16) \
   > cmf-mcp.log 2>&1 &
 ```
 
-- **`CMF_MCP_ISSUER_URL` must exactly match wherever the server is publicly reachable** (your Tailscale Funnel hostname, a tunnel URL, etc. — no trailing slash). Every client validates this against the server's own metadata; a mismatch breaks the flow, not just a formality. If you change how the server is exposed, this has to change too.
+- **`CMF_MCP_ISSUER_URL` must exactly match wherever the server is publicly reachable** (your VPN Funnel hostname, a tunnel URL, etc. — no trailing slash). Every client validates this against the server's own metadata; a mismatch breaks the flow, not just a formality. If you change how the server is exposed, this has to change too.
 - **`CMF_MCP_OAUTH_PASSWORD` is the actual security boundary.** Both `/register` and `/authorize` are unauthenticated by spec (any client, including someone else's, can reach as far as the consent page) — this password is what a human has to know to actually approve a new client and get it a working access token. Save it somewhere durable; you'll type it once per client. **Generate it with `openssl rand -hex 16` (or longer); don't pick a memorable one.** That strength is a requirement, not a suggestion: the consent endpoint has **no rate limiting and no lockout**, so the password's own entropy is the only thing that keeps an online brute-force attempt from succeeding. 128 random bits makes guessing infeasible no matter how many attempts are made; a dictionary word or short passphrase doesn't. If you suspect it has leaked, change it and restart the server. Already-issued tokens keep working until they expire or are revoked, so also delete the rows in `oauth_access_tokens`/`oauth_refresh_tokens` to force every client to re-consent.
 
 **What happens when a client connects**, for all three:
@@ -86,7 +86,7 @@ CMF_MCP_AUTH_TOKEN=$(openssl rand -hex 32) uv run --directory /path/to/context-m
 
 Send it as a standard bearer header: `Authorization: Bearer <token>`.
 
-If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs a warning on startup and runs unauthenticated — fine for a `127.0.0.1`-only run during local development, not for anything exposed further (see the Tailscale warning in §4).
+If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs a warning on startup and runs unauthenticated — fine for a `127.0.0.1`-only run during local development, not for anything exposed further (see the VPN warning in §4).
 
 ---
 
@@ -144,7 +144,7 @@ If you'd rather connect to an already-running server instance (see §0) instead 
 
 1. Start the server per §0, with `--transport streamable-http` (preferred) or `--transport sse` (legacy).
 2. In Claude Desktop, go to **Settings > Connectors > Add custom connector**.
-3. Set the remote MCP server URL to `http://localhost:8000/mcp` (streamable-http) or `http://localhost:8000/sse` (SSE) — or a tunneled/Tailscale HTTPS URL if the server isn't running on the same machine (see §4).
+3. Set the remote MCP server URL to `http://localhost:8000/mcp` (streamable-http) or `http://localhost:8000/sse` (SSE) — or a tunneled/VPN HTTPS URL if the server isn't running on the same machine (see §4).
 
 Since Claude Desktop's connector flow is OAuth-only with no field for a static header, use §0's OAuth setup (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) if you want this connection authenticated — it'll self-register via DCR and walk you through the consent page automatically.
 
@@ -225,7 +225,7 @@ Cloud-hosted clients (ChatGPT's connector, Gemini's web app, etc.) run outside y
 
 1. Start the server per §0 with `--transport streamable-http` (or `sse`).
 2. Expose the port via one of:
-   - **Tailscale Funnel** (see below, if your tailnet is already set up) — quickest if you're already on Tailscale.
+   - **VPN Funnel** (see below, if your tailnet is already set up) — quickest if you're already on VPN.
    - A reverse proxy, Cloudflare Tunnel, or other HTTPS gateway.
 3. Configure the remote MCP connector URL in the client's developer settings, per the client-specific steps below. Both share one tunnel — no separate infra needed per client.
 
