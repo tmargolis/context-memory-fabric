@@ -1374,3 +1374,25 @@ Full review of the queue left by the extract@1.6 backfill; brief and rules from 
 - **MS8 replay spot check:** verified (`scripts/replay_eval.py`; Hit@8=0.850 static, 0.875 with gold updates; zero production regressions).
 - **Session captured & promoted:** recorded as `antigravity-misc-001` and `antigravity-misc-002`.
 
+
+### B01 — Tracked-file privacy (closed 2026-10-10)
+
+Finite deliverable. Inventory, code/test/doc sanitization, and a local-denylist guard belong together. Complete only after all three are verified. No Spark required.
+
+#### Scrub personal mentions from tracked files (found 2026-10-03, review-queue cleanup)
+
+Code, tests, docs and commit history pushed to GitHub name User's own projects, scheduled tasks, folders, people and graph episode names (test fixtures, docstring examples, plan and result docs). From 2026-10-03 on, new code uses placeholder names and keeps real mappings in the gitignored `.env` (`CMF_COWORK_SCHEDULED_TASK_PROJECTS`, `CMF_PROJECT_ALIASES`).
+
+- [x] **Scope narrowed (User, 2026-10-10):** project names, the author's name and machine names may stay public. What must stay out of tracked files is job-search details (target companies, recruiters and other contacts, compensation) and network identifiers (LAN IP, tailnet name/hostnames). A broader 37-file rename done 2026-10-09 was rolled back the same day; the rollback record is in the gitignored `imports/rollback/2026-10-10/`.
+- [x] **Inventory** (2026-10-10): no job-search details or contacts in tracked files. The LAN IP and the tailnet hostname were scrubbed (`docs/CLIENTS.md`, `tests/fixtures/ms4e/entity_gold.json`, `tests/test_ms4e_entity_quality.py`), and two company names were made generic in `docs/FALKORDB-QUERIES.md`.
+- [x] **Guard:** `scripts/check_private_mentions.py` against the gitignored `privacy-denylist.local.json`, run by `tests/test_private_mentions.py` (a no-op pass on clones without a denylist). See [PRIVACY-CHECK.md](PRIVACY-CHECK.md).
+
+### B02 — Manual review merge tooling (closed 2026-10-10)
+
+Finite deliverable. Complete the MCP merge operation, lineage, proposal mirrors, constituent verdicts, size enforcement, and isolated tests together. No inference is needed when the caller supplies the merged statement. This stages reviewed-memory changes; the promoted-graph merge experiment belongs to B08 and is not implied by this tool.
+
+#### Manual episode merge tooling (found 2026-09-21, review-by-conversation)
+
+The review pass merged same-conversation episodes 3 times via hand-rolled sqlite3 scripts. The resolved parts, including the ~20-point / ~3,600-char size limit, are under [Recall coverage for manually merged episodes](#recall-coverage-for-manually-merged-episodes-found-2026-09-21-review-by-conversation-manual-merge) above.
+
+- [x] **Done 2026-10-09/10: `merge_episodes` MCP tool** (`server/review/merge.py`, `tests/test_manual_merge.py`; live after the next server restart). Original task: **A real `merge_episodes` MCP tool.** It would wrap: insert the consolidated `derived_memories` row, set `supersedes`/`superseded_by`, write the `episode-proposals/` mirror file (hand-inserted rows have none, so `get_episode_proposal` can't see them), bulk-reject the constituents, and enforce the size limit up front.

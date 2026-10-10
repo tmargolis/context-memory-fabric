@@ -99,49 +99,33 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ## Backlog
 
-Two unrelated piles, previously kept as separate top-level sections (the corpus one used to sit at the top of this file) — merged here since neither is an active milestone with its own exit gate.
+Execution groups reorganized 2026-10-09. Rank and close **whole groups**, not individual checkboxes. Existing findings, completed work, decisions, and deferrals are preserved below; the original section headings remain linkable. Grouping is not implementation approval or evidence that an old operational count is still current.
 
-### Corpus & review backlog (found 2026-09-11, closed out same day)
+The first four are the proposed low-Spark shortlist, ordered by completion feasibility and value. **B04 is conditional on diagnosis, not a promised quick fix.** B03 needs a date-policy decision and approved graph updates. B15 may be a prerequisite for live checks. No group is complete merely because its code is written when its scope includes migration, deployment, or operational verification.
 
-MS6b's governance tooling ([plan-history.md](plan-history.md#ms6b--governance)) surfaced this once `explain --graph`, `correct-memory`, and the review CLI could actually be pointed at the corpus. Measured directly against the live journal, not the MS6a/MS3.5-era estimates (several bulk actions and ongoing capture had moved these numbers since 2026-09-08):
+| Group | Complete scope | Planning disposition |
+|---|---|---|
+| B01 | Tracked-file privacy | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b01--tracked-file-privacy-closed-2026-10-10) |
+| B02 | Manual review merge tooling | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b02--manual-review-merge-tooling-closed-2026-10-10) |
+| [B03](#b03--wiki-date-provenance-and-use) | Wiki date provenance and use | Shortlist 3; no bulk inference; operational approval |
+| [B04](#b04--client-correction-and-transport-reliability) | Client correction and transport reliability | Shortlist 4, conditional; low compute, uncertain diagnosis |
+| [B05](#b05--codex-hook-lifecycle-verification) | Codex hook lifecycle verification | Interactive completion gate |
+| [B06](#b06--recurring-review-operations-and-outstanding-promotions) | Recurring review operations and outstanding promotions | Ongoing operations plus 1–3 hours of pending promotion |
+| [B07](#b07--promotion-reliability-and-identity) | Promotion reliability and identity | Uncertain reproduction/compute |
+| [B08](#b08--project-organization-and-retrieval-dilution) | Project organization and retrieval dilution | Decision, migration, and replay package |
+| [B09](#b09--entity-extraction-quality-and-residual-graph-cleanup) | Entity extraction quality and residual graph cleanup | Reconcile completed work; remaining scope uncertain |
+| [B10](#b10--extraction-policy-17) | Extraction policy 1.7 | Full policy package; inference replay |
+| [B11](#b11--context-retrieval-and-assembly) | Context retrieval and assembly | Broad retrieval package; embedding/evaluation |
+| [B12](#b12--capture-coverage-and-historical-source-recovery) | Capture coverage and historical source recovery | Access/coverage decisions and historical processing |
+| [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
+| [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
+| [B15](#b15--test-graph-compatibility) | Test graph compatibility | Verify state; possible validation prerequisite |
 
-- [ ] **The corpus is growing, not static.** The reasoning-episode pool alone grew from 1,243 rows (the 2026-09-05/06 reprocess) to 1,310 by 2026-09-11 — capture (MCP-boundary + imports) kept running after the 2026-09-08 review pass. A recurring/periodic tier-1 review pass is probably the more accurate framing going forward, rather than treating any fixed count as a target to eventually finish. `uv run python -m server.review.cli queue --tier 1` shows what's currently outstanding. **Current recurring pile (2026-09-28), all ongoing capture since the MS4b/MS4b-antigravity batches closed:** 78 `claude_code` episodes (~12 conversations, 2026-09-23 → 09-27; mostly `context-memory-fabric`, 14 `project-epsilon`, 8 with NULL `project`), 51 `antigravity` episodes, and 23 pending doc proposals. Review via `list_review_conversations(harness=..., policy_name="extract", include_tier2_only=True)`. **2026-10-03:** after the Cowork backfill the pending pile was 1,189 episodes and 319 doc proposals across all harnesses; the extract@1.6 review cleared its tier-1 and doc part the same day (see the Phase 4 item below). `claude_code` rows before 2026-10-02 are now `claude_desktop_code`. `scripts/review_priority_report.py [--harness …]` orders it priority / maybe / low from User's review history (decision/plan/rejected_alternative with ≥3 evidence turns first) without rejecting anything.
-- [ ] **49 approved episodes never promoted (found 2026-10-09).** User approved them 2026-10-03 → 10-08 (manual review, not a nightly run), but they never reached the graph. The nightly review's one-yes promotion only covers its own run's items, so these need their own pass: `uv run python -m server.review.cli promote` to preview, then `promote --apply` (one at a time on Spark, 1–4 minutes each, so ~1–3 hours; it doesn't take the Spark slot, so run it when the pollers are quiet).
-- **Sourced from three transcript adapters now:** MS4b (Claude Code), MS4b-antigravity (both closed 2026-09-28), and MS4d (Codex, closed 2026-09-30). MS4c (OpenClaw) remains on hold; Gemini CLI dropped. The extending-the-backfill-beyond-CMF item closed as a side effect of the poller's first 872-conversation sweep.
-- **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
+### B03 — Wiki date provenance and use
 
-### Auth hardening (deferred out of MS6c, 2026-09-16)
+Finite deliverable. Date derivation, source labels, existing-note population, seed/sweep upkeep, replay pruning, and context age display must all be completed. The initial-import fallback still needs the recorded user decision. No bulk inference; graph writes require approval. These dates support B11 but do not implement its query modes or conflict policy.
 
-Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pull/6) and consciously merged without fixing (User, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`. Four of the five items were closed 2026-09-28 ([plan-history.md](plan-history.md#auth-hardening-deferred-out-of-ms6c-2026-09-16-closed-2026-09-28)); the one left is deliberately deferred.
-
-- [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
-
-### Wiki entity-extraction quality (found 2026-09-17, closing MS7b)
-
-Surfaced while visually inspecting the pruned `mem-fabric-local` graph in FalkorDB Browser — a real gap in `build_wiki_entities.py`'s heading+lede decomposition, not fixable by editing the graph directly:
-
-- [ ] **Topic-level entities never form when no section heading names the topic.** `WIKI/art-projects/Cityscapes/Cityscape-View the shadows.md` — all 13 section headings are camera-technique-specific (`TS-E Mechanical Setup`, `Shift-Stitch Configuration`, `Post-Processing Pipeline (Photoshop / ACR)`, ...); none contains the word "Cityscape," so the note never links to the `Cityscapes`/`cityscape` entities that exist from other notes in the same folder. Root cause: Phase 2's original finding that note titles match only 2% of entities (documented in [MS7b](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13)) meant titles were deliberately excluded as a decomposition source — correct call in aggregate, but it leaves notes like this one topic-orphaned. Compounding: `cityscape` (domain) and `Cityscapes` (project) are themselves near-duplicates Phase 4's merge pass never caught, since `_norm()` doesn't handle singular/plural.
-- [ ] **Per-section decomposition can attribute a concept to the wrong section, fragmenting it.** Same note: `Tilt` and `Shift` were both extracted from the section titled **"Zero/Static Configuration"** — specifically the section about using *neither* — while the actual `Tilt Configuration` section produced `Scheimpflug` instead, and a third section produced `Tilt-Shift` as a separate tool entity. Three sections, three fragments of one lens concept, none cross-linked.
-- **Options, not yet chosen between:** (a) re-run `build_wiki_entities.py` with the note title/folder path added to each section's decomposition context; (b) extend Phase 4's merge pass beyond literal near-duplicates to catch singular/plural and compound-vs-parts cases; (c) accept it as a known cost of this approach and fix only manually, case by case. Whichever is chosen, `mem-fabric-local`'s current ~1,219 entities mentioned by a note but by no episode/fact/project were deliberately left unpruned specifically so this evidence isn't destroyed before a fix is decided.
-
-### Entity/edge cleanup pass for the CMF graph (found 2026-09-20, reviewing conversation b23f6f7d)
-
-Surfaced visually inspecting `mem-fabric-local` in FalkorDB Browser after promoting the "review by conversation" batch's approved episodes — the same graph-quality question the item above raises for wiki-derived entities, but from the episode-extraction side and scoped as an actual cleanup pass rather than a root-cause fix:
-
-- [ ] **Near-duplicate entities from qwen-122b extraction** (e.g. "MemPalace-like memory substrate layer" vs. "memory palace layer", "Obsidian URI schemes" vs. "Obsidian") need merging, not just cosmetic renaming. Mechanically: redirect every `MENTIONS`/`RELATES_TO`/`IN_PROJECT` edge from the duplicate onto the canonical node (`MATCH (dup)<-[r:MENTIONS]-(ep) MERGE (ep)-[:MENTIONS]->(canonical) DELETE r`, same pattern each direction/edge type), then delete the duplicate. **Not a bare `MERGE`-and-delete**: graphiti's edges carry real content (`fact` text, embeddings, `valid_at`/`created_at`) that a fresh bare edge won't have — properties must be copied onto the new edge first, or the redirect silently drops the fact each edge represents. No candidate list built yet.
-- [ ] **Confirmed unsafe to judge by eyeballing the graph.** Two entities that looked orphaned by visual inspection (`100MB limit`, `120-second OpenClaw timeouts`) both turned out to be real, correctly-connected data on closer query — `100MB limit` is a genuine fact from an unrelated Obsidian-project episode (`gemini-obsidian-009`) that surfaces in CMF's view only because it shares the `GitHub` entity (projects are many-to-many by `tag_projects.py`'s own design); `120-second OpenClaw timeouts` had two mentioning episodes, one from this very CMF batch, just not visible in a dense 127-node force layout. Any cleanup pass needs to query connectivity directly, not read the rendered graph.
-- [ ] **The real candidate set is graph-wide zero-`MENTIONS` entities — measured at 1,219**, which is very likely the same population the "Wiki entity-extraction quality" item above already names (`~1,219 entities mentioned by a note but by no episode/fact/project`) — worth confirming they're the same set before treating this as two separate backlog items. Even a zero-`MENTIONS` entity can carry real `RELATES_TO` fact text (as `100MB limit` shows) — "safe to delete" here means "won't break graph structure or dangling references," not "zero information loss." Needs a categorization pass (genuine standalone facts vs. junk — config values, restated instructions, extraction artifacts) before deleting anything, not a bulk sweep.
-- **Planned in [MS9 — Graph quality for retrieval](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)** (2026-09-29): the merge tool, the candidate report and the wiki-only entity categorization live there.
-- **Forward fix:** [MS4e](plan-history.md#ms4e--entity-extraction-quality-forward-only-2026-09-28) stops new noise at extraction time. Its optional Phase 5 report, this item's candidate list, moved to MS9 task 1b.
-- **Relates to:** [Wiki entity-extraction quality](#wiki-entity-extraction-quality-found-2026-09-17-closing-ms7b) (root-cause side of the same noise) and [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) (paused partly *because of* this same noise).
-
-### Manual episode merge tooling (found 2026-09-21, review-by-conversation)
-
-The review pass merged same-conversation episodes 3 times via hand-rolled sqlite3 scripts. The resolved parts, including the ~20-point / ~3,600-char size limit, are in [plan-history.md → Backlog — closed items](plan-history.md#backlog--closed-items).
-
-- [ ] **A real `merge_episodes` MCP tool.** It would wrap: insert the consolidated `derived_memories` row, set `supersedes`/`superseded_by`, write the `episode-proposals/` mirror file (hand-inserted rows have none, so `get_episode_proposal` can't see them), bulk-reject the constituents, and enforce the size limit up front.
-
-### Wiki Note dates (found 2026-09-29, MS8 fidelity)
+#### Wiki Note dates (found 2026-09-29, MS8 fidelity)
 
 MS7b's `Note` nodes carry no dates (`scripts/seed_wiki_graph.py` seeds them once from registries that have none). Replay snapshots therefore prune notes by the wiki export, and `get_context` can't say how old a note is.
 
@@ -154,14 +138,87 @@ MS7b's `Note` nodes carry no dates (`scripts/seed_wiki_graph.py` seeds them once
   - **`updated_at`:** the last commit that touched the file. It's exact since Auto-sync resumed on 2026-09-11. Inside the 2026-08-31 → 09-11 watcher outage it's only as good as the hand-made commits.
   - **Not disk birth time in general:** it's reset by rewrites and syncs (`Print-Framing-Now-And-Then.md`: disk 05-27, git first-add 04-23).
 - [ ] **Use them.** Replay snapshots prune notes by `created_at`, and `get_context` shows a note's age next to it, which feeds the staleness signals under Assembly refinements.
+- **Attempt rolled back 2026-10-10:** a 2026-10-09 implementation switched replay to `created_at` while production Notes have none (0 of 434), so replay stopped pruning future notes; it also moved `resolve_note_dates` with a regex patch that broke `extract_wiki_relationships.py`. Redo from a plan: replay keeps the `wiki_paths` filter until the seeder has backfilled dates, and `resolve_note_dates` moves to one shared module on purpose.
 
-### Promotion hang with no error output (found 2026-09-21, reviewing conversation `8406b5c3`)
+### B04 — Client correction and transport reliability
+
+Keep the full MS6c functional-pass group together: the completed stale-fact correction, open edit-target lookup, and open cross-client 502 finding. Complete only when lookup is verified and the transport finding has a supported resolution or an explicitly accepted monitoring disposition. A lookup fix alone does not close this group. Low expected Spark usage, but diagnostic effort and reproducibility are uncertain.
+
+#### Found during MS6c Phase 1 (Cowork functional pass, 2026-09-16)
+
+- [x] **Fixed 2026-10-06 ([MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)): `new_content` now re-extracts the episode's facts, and the one polluted production episode was removed.** Original finding: **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what User's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
+- [ ] **Still open (attempt rolled back 2026-10-10: matching episodes through fact text found candidates but widened what a commit writes to every fact-linked episode; redo so fact matches are shown as candidates and a write needs an exact name or uuid) — also found 2026-09-21 (review-by-conversation pass): `edit_memory`'s target search misses some already-promoted episodes entirely.** Every query tried (full statement text, short phrases, episode name, single keywords) returned "no matching episodes, entities, or facts found" for content `recall_mem` finds instantly. Not diagnosed. Right now there is no working MCP path to patch a promoted episode's content. A direct sqlite write fixes only the ledger's `derived_memories.statement`, not the graph node.
+- [ ] **`search_wiki` hit a transient 502 (Cloudflare, `origin_bad_gateway`) from Cowork, succeeded on retry.** Same OAuth/tunnel path every client (including Claude Desktop) now goes through post-MS6c, so this is the same class of flakiness behind Gemini's "error 1076"s and the first silent-failure `remember()` attempt — worth keeping an eye on if it recurs, not yet frequent enough to chase down.
+
+### B05 — Codex hook lifecycle verification
+
+Installer repair, local configuration repair, trust, and real lifecycle firing form one group. The existing completed work remains completed. Closure requires the remaining interactive trust/lifecycle verification; manual nudges alone are insufficient. Related to B12 capture coverage, but it has its own local acceptance gate.
+
+#### Codex hook configuration repair (2026-10-09)
+
+- [x] Correct installer output to the nested Codex `hooks`/event/group/handler schema; migrate legacy flat files with backups and preserve matcher groups and non-CMF handlers. Hook/nudge and Codex worker regression tests: 33 passed.
+- [x] Repair the local `~/.codex/hooks.json`, preserving all three CMF commands and backing up the original. Bundled Codex CLI 0.160.0 `hooks/list` loaded all three with zero errors/warnings; each is enabled but untrusted.
+- [ ] Verify user trust and real lifecycle firing through `/hooks`; the prior installation check and manual nudge test did not establish this.
+
+### B06 — Recurring review operations and outstanding promotions
+
+Manage the recurring queue, scheduled review, confirmation/apply behavior, and the 49 already-approved promotions together. The recurring queue is an ongoing operation, not a permanently finishable checkbox. A finite activation pass needs a dated queue cutoff and end-to-end verification. The recorded 49 promotions alone require about 1–3 Spark hours. The test-graph mismatch has moved to B15. The schedule checkbox and later real-run record must be reconciled against the actual chosen harness before creating any duplicate task.
+
+#### Corpus & review backlog (found 2026-09-11, closed out same day)
+
+MS6b's governance tooling ([plan-history.md](plan-history.md#ms6b--governance)) surfaced this once `explain --graph`, `correct-memory`, and the review CLI could actually be pointed at the corpus. Measured directly against the live journal, not the MS6a/MS3.5-era estimates (several bulk actions and ongoing capture had moved these numbers since 2026-09-08):
+
+- [ ] **The corpus is growing, not static.** The reasoning-episode pool alone grew from 1,243 rows (the 2026-09-05/06 reprocess) to 1,310 by 2026-09-11 — capture (MCP-boundary + imports) kept running after the 2026-09-08 review pass. A recurring/periodic tier-1 review pass is probably the more accurate framing going forward, rather than treating any fixed count as a target to eventually finish. `uv run python -m server.review.cli queue --tier 1` shows what's currently outstanding. **Current recurring pile (2026-09-28), all ongoing capture since the MS4b/MS4b-antigravity batches closed:** 78 `claude_code` episodes (~12 conversations, 2026-09-23 → 09-27; mostly `context-memory-fabric`, 14 `project-epsilon`, 8 with NULL `project`), 51 `antigravity` episodes, and 23 pending doc proposals. Review via `list_review_conversations(harness=..., policy_name="extract", include_tier2_only=True)`. **2026-10-03:** after the Cowork backfill the pending pile was 1,189 episodes and 319 doc proposals across all harnesses; the extract@1.6 review cleared its tier-1 and doc part the same day (see the Phase 4 item below). `claude_code` rows before 2026-10-02 are now `claude_desktop_code`. `scripts/review_priority_report.py [--harness …]` orders it priority / maybe / low from User's review history (decision/plan/rejected_alternative with ≥3 evidence turns first) without rejecting anything.
+- [ ] **49 approved episodes never promoted (found 2026-10-09).** User approved them 2026-10-03 → 10-08 (manual review, not a nightly run), but they never reached the graph. The nightly review's one-yes promotion only covers its own run's items, so these need their own pass: `uv run python -m server.review.cli promote` to preview, then `promote --apply` (one at a time on Spark, 1–4 minutes each, so ~1–3 hours; it doesn't take the Spark slot, so run it when the pollers are quiet).
+- **Sourced from three transcript adapters now:** MS4b (Claude Code), MS4b-antigravity (both closed 2026-09-28), and MS4d (Codex, closed 2026-09-30). MS4c (OpenClaw) remains on hold; Gemini CLI dropped. The extending-the-backfill-beyond-CMF item closed as a side effect of the poller's first 872-conversation sweep.
+
+#### Nightly auto-review of poller output (User, 2026-10-08)
+
+**Built 2026-10-08.** A scheduled task in the harness of the user's choice (Claude, ChatGPT, Gemini Spark, Antigravity) runs nightly at 11:11 PM, reviews what the pollers staged, records recommended verdicts, and leaves an EP/DOC summary in its own chat; the user confirms there in the morning. Setup is one copy-paste block: [docs/NIGHTLY-REVIEW.md](NIGHTLY-REVIEW.md). Generic agent instructions for using CMF at all: [docs/INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md).
+
+- [x] **CMF side:** `server/review/recommendations.py` (tables `review_runs`, `review_recommendations` in the journal) and 4 MCP tools: `get_review_batch` (rules + up to 50 unreviewed tier-1 EPs and DOCs, with the overwrite check per doc update), `record_review_recommendations` (stores approve / reject / flag and returns the morning summary, so the task needs no extra call), `list_review_recommendations`, `confirm_review_recommendations` (the only step that records verdicts; overrides and skips; a drafted doc rebuild is approved and its original rejected together).
+- [x] **One yes makes it live (User, 2026-10-09):** the first real run (Antigravity, `rr_20261009_080529_ce07e5`) needed a confirm and then a separate promote/apply. Now `confirm_review_recommendations` also applies the approved docs (no dry run; the summary is what the user approves) and starts a detached `server.review.cli promote --apply --spark-slot --memory-id …` for the approved episodes, one at a time, each waiting for the Spark slot; log in `imports/review/promote_<run_id>.log`. A doc the apply guards refuse is reported and stays approved.
+- [x] **Rules:** generic `server/review/review_rules.md`, plus `CMF_REVIEW_RULES_PATH` for the operator's own (this deployment: `~/.config/cmf/review-rules.md`, from User's calibrated review rulings).
+- [x] **Doc rebuilds (User: draft them too):** for an update that trips the 30% check, the task compares it with the live page and either rejects it as covered or files an additive rebuild with `propose_doc_update` and recommends that.
+- [x] **Dry run on the real queue (2026-10-08):** run `rr_20261008_231202_e091fe`, 23 EP + 7 DOC: 6 approve, 21 reject, 3 flag; waiting for User's confirmation.
+- [ ] **Create the scheduled task** in User's harness by pasting the block from NIGHTLY-REVIEW.md, after the MCP server restarts with the new tools.
+- [ ] **Open:** per-harness behaviour is from each vendor's docs as of 2026-10-08, untested except Claude; ChatGPT Plus/Pro may not allow a custom connector's write tools.
+
+### B07 — Promotion reliability and identity
+
+Request tracing/root cause for the silent hang and the cause of double promotion belong together as promotion reliability work. Preserve the completed duplicate-fold record. Finish the outstanding diagnoses and any necessary prevention/verification; instrumentation alone does not close the hang. Spark usage is uncertain until reproduction is understood.
+
+#### Promotion hang with no error output (found 2026-09-21, reviewing conversation `8406b5c3`)
 
 `promote_approved_episodes` hung with **zero log output** on thread `ms7b-implementation-priority`. It reproduced twice across fresh server restarts, with the Spark tunnel healthy and `lms ps` showing the model `IDLE`, so the request apparently never reached LM Studio. A clean retry on 2026-09-22 promoted it ([plan-history.md](plan-history.md#backlog--closed-items)). Restarting the CMF server abandons a stuck coroutine safely.
 
 - [ ] **Not root-caused.** Content length isn't the explanation. Reproduce with request-level tracing (log immediately before the `openai_generic_client` call, not just around it) to tell whether the hang is in Graphiti's pre-processing or in the HTTP call to LM Studio.
 
-### Project nodes vs. entity property (open since before MS7b)
+#### Double-promoted memories in `mem-fabric-local` (found 2026-10-02, provenance step 5a)
+
+Found while repairing Phase 2b. These four memories were promoted twice, once on 2026-09-13 and again on 2026-09-23. Each now has two episode nodes with the same content and memory_id but different names and separately extracted facts. They predate Phase 2b and don't collide on names. The ledger can record only one name per (memory, graph), so its row names one of the two nodes.
+
+| memory's nodes (2026-09-13 / 2026-09-23) |
+|---|
+| `chatgpt-photo-006` / `chatgpt-photo-009` |
+| `claude-project-epsilon-004` / `claude-project-epsilon-029` |
+| `claude-project-epsilon-005` / `claude-project-epsilon-030` |
+| `claude-project-epsilon-006` / `claude-project-epsilon-031` |
+
+- [x] **Done 2026-10-06 — see the fold record below.** Original task: **Remove the 09-23 duplicate of each,** keeping the 09-13 node, which the eval gold and ledger are more likely to reference. Before deleting, check which node carries more `MENTIONS`/facts. `-005` has 10 mentions and `-030` has 0, but for `-004`/`-029` the newer node has more, so the choice is per pair, not always the newer one. Use `graphiti.remove_episode` (no LLM) on a backup-first, scratch-rehearsed run, like `scripts/repair_p2b_episodes.py remove-wrong`, then align the ledger.
+- [x] **Also `claude-cowork-interlock-005` (found 2026-10-06), folded the same day.** Two identical nodes, created 2026-10-04 00:10 and 00:13 (`f710c9a8…`, `0b030fc3…`), probably a retried batch in the extract@1.6 Phase 4 promotion. It is the only duplicate episode name in production; remove one the same way.
+- **Fold record (2026-10-06).** The four memories above were really `claude-career-navigator-004/-029`, `-005/-030`, `-006/-031` and `chatgpt-photo-006/-009`; the doc names were scrubbed placeholders. All 5 pairs were folded, not deleted. Each copy was extracted on its own and carried facts the other lacked, so the duplicate's facts and mentions moved onto the kept node before the duplicate was removed (`scripts/fold_duplicate_episodes.py`, ledger `imports/fixgraph/fold_duplicates_ledger.jsonl`).
+  - **Kept:** `-006` (C16 gold), `-005`, `photo-006`, `-029` (`-004` was empty), and interlock `0b030fc3` (14 facts vs 9).
+  - **Process:** rehearsed on `fixgraph-folddup`; production backed up to `mem-fabric-local.pre-folddup-20261006`.
+  - **Result:** −5 episodes, facts unchanged at 7,879, −18 redundant mentions; 0 duplicate contents or names left. The ledger's `promotions` rows now name the kept nodes.
+  - **Replay at `now`:** unchanged (Hit@8 82.5%, MRR 0.434; only A10 moved, 5 → 6).
+- [ ] **Find why they were promoted twice on 09-23.** All four were promoted within a minute (18:56). The 09-23 promotion pass didn't see the 09-13 promotions as already promoted, probably the same stale-ledger problem as Phase 2b, since 09-13 rows went to `mem-fabric-local-wiki` and not `mem-fabric-local`.
+
+### B08 — Project organization and retrieval dilution
+
+One coordinated group: settle the project representation, classify/migrate old slugs, evaluate project-aware ranking, and evaluate related-episode rollups. Preserve the separate experimental comparisons, replay gates, and prohibition on pruning approved episodes. Ranking success alone does not close the representation, migration, or merge questions. Requires user decisions, graph rehearsals, and measured inference/replay work; not a low-compute quick completion.
+
+#### Project nodes vs. entity property (open since before MS7b)
 
 User's question, not yet settled: do `:Project`/`IN_PROJECT` nodes and edges (33 `Project` nodes and 2,090 `IN_PROJECT` edges in `mem-fabric-local` as of 2026-09-30 (1,946 from entities, 144 from episodes, 0 from notes), built by `tag_projects.py`) earn their place as first-class graph structure, or would `entity.project = ["proj1", "proj2"]` as a plain property serve the same purpose more simply? Paused rather than decided — visualizing the current graph in FalkorDB Browser showed the project layer isn't wrong, just not obviously pulling its weight next to the noise from the wiki-only entity layer above. Revisit once the extraction-quality items above are resolved, since they're currently confounding how legible the project layer looks.
 
@@ -191,31 +248,15 @@ Test it as an MS8 replay policy (Hit@8 / MRR) before building. A recent person-a
 
 A soft boost for results in the query's inferred project(s), or a per-project cap on the memory slots, would target exactly this. Measure it on these cases first, after refreshing stale gold such as C16, whose new career episodes are valid answers.
 
-### Nightly auto-review of poller output (User, 2026-10-08)
+#### Promoted-episode project-slug migration (found 2026-10-03, extract@1.6 review)
 
-**Built 2026-10-08.** A scheduled task in the harness of the user's choice (Claude, ChatGPT, Gemini Spark, Antigravity) runs nightly at 11:11 PM, reviews what the pollers staged, records recommended verdicts, and leaves an EP/DOC summary in its own chat; the user confirms there in the morning. Setup is one copy-paste block: [docs/NIGHTLY-REVIEW.md](NIGHTLY-REVIEW.md). Generic agent instructions for using CMF at all: [docs/INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md).
+The review split the old `project-epsilon` project into a job-search project and a plugin-development project, and folded several near-duplicate slugs together (mappings live in the gitignored `.env`: `CMF_PROJECT_ALIASES`, `CMF_PROJECT_FOLDER_MAP`, `CMF_COWORK_SCHEDULED_TASK_PROJECTS`). Pending items were retagged with `scripts/retag_review_projects.py`; episodes already **promoted** still carry the old slugs in FalkorDB and the journal (as of 2026-10-03: 89 job-search/plugin, 114 vault, 26 finance).
 
-- [x] **CMF side:** `server/review/recommendations.py` (tables `review_runs`, `review_recommendations` in the journal) and 4 MCP tools: `get_review_batch` (rules + up to 50 unreviewed tier-1 EPs and DOCs, with the overwrite check per doc update), `record_review_recommendations` (stores approve / reject / flag and returns the morning summary, so the task needs no extra call), `list_review_recommendations`, `confirm_review_recommendations` (the only step that records verdicts; overrides and skips; a drafted doc rebuild is approved and its original rejected together).
-- [x] **One yes makes it live (User, 2026-10-09):** the first real run (Antigravity, `rr_20261009_080529_ce07e5`) needed a confirm and then a separate promote/apply. Now `confirm_review_recommendations` also applies the approved docs (no dry run; the summary is what the user approves) and starts a detached `server.review.cli promote --apply --spark-slot --memory-id …` for the approved episodes, one at a time, each waiting for the Spark slot; log in `imports/review/promote_<run_id>.log`. A doc the apply guards refuse is reported and stays approved.
-- [x] **Rules:** generic `server/review/review_rules.md`, plus `CMF_REVIEW_RULES_PATH` for the operator's own (this deployment: `~/.config/cmf/review-rules.md`, from User's calibrated review rulings).
-- [x] **Doc rebuilds (User: draft them too):** for an update that trips the 30% check, the task compares it with the live page and either rejects it as covered or files an additive rebuild with `propose_doc_update` and recommends that.
-- [x] **Dry run on the real queue (2026-10-08):** run `rr_20261008_231202_e091fe`, 23 EP + 7 DOC: 6 approve, 21 reject, 3 flag; waiting for User's confirmation.
-- [ ] **Create the scheduled task** in User's harness by pasting the block from NIGHTLY-REVIEW.md, after the MCP server restarts with the new tools.
-- [ ] **Open:** per-harness behaviour is from each vendor's docs as of 2026-10-08, untested except Claude; ChatGPT Plus/Pro may not allow a custom connector's write tools.
+- [ ] Inventory and classify the promoted episodes; User approves the table.
+- [ ] Dry-run retag script for graph tags + `derived_memories.project` + approved mirrors; rehearse on a graph copy, back up, apply with approval, MS8 replay.
+- [ ] Decide on episode names that embed an old slug (recommend: keep them as identifiers).
 
-### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
-
-The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
-
-- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
-- **How, sequentially on scratch graphs (never production):**
-  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
-  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
-  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
-  - Any production change needs a new ruling from User, a backup first, and before/after counts.
-- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
-
-### Project-aware ranking (deferred out of MS9, 2026-10-07)
+#### Project-aware ranking (deferred out of MS9, 2026-10-07)
 
 Goal: stop one project from taking most of the 8 memory slots on a query about something else. The evidence is in the [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) item (A6, C1, C5, C15, C19). Test each variant as an MS8 replay policy before building; none is built.
 
@@ -227,17 +268,73 @@ Goal: stop one project from taking most of the 8 memory slots on a query about s
   - Run both variants in the replay and compare.
 - **Related.** `:Project` nodes vs. a property (same item above), and `get_context(project=...)` ties to [MS10](#ms10--distribution-and-ecosystem) scopes.
 
-### Phase 6: full ledger re-ingest into a fresh graph (paused, carried out of MS9, 2026-10-07)
+#### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
 
-Optional post-MS9: rebuild from transcripts using the current extraction policies (`typed-recall` + debris filter) across all historical episodes. **Paused at 432 of 1,071 episodes (40.3%).** It was paused on 2026-10-05 10:55 CDT to free Spark for Public Preview Phase 2 grading. The isolated scratch graph `mem-fabric-rebuild-scratch` holds 432 committed episodes, 1,017 nodes, 2,756 edges and 721 facts, and can resume immediately with `scripts/rebuild_graph_from_ledger.py` (replay into a new graph name, or everything is skipped). Needs Spark for many hours and takes `spark_job.lock`.
+The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
 
-### Found during MS6c Phase 1 (Cowork functional pass, 2026-09-16)
+- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
+- **How, sequentially on scratch graphs (never production):**
+  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
+  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
+  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
+  - Any production change needs a new ruling from User, a backup first, and before/after counts.
+- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
 
-- [x] **Fixed 2026-10-06 ([MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)): `new_content` now re-extracts the episode's facts, and the one polluted production episode was removed.** Original finding: **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what User's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
-- [ ] **Still open — also found 2026-09-21 (review-by-conversation pass): `edit_memory`'s target search misses some already-promoted episodes entirely.** Every query tried (full statement text, short phrases, episode name, single keywords) returned "no matching episodes, entities, or facts found" for content `recall_mem` finds instantly. Not diagnosed. Right now there is no working MCP path to patch a promoted episode's content. A direct sqlite write fixes only the ledger's `derived_memories.statement`, not the graph node.
-- [ ] **`search_wiki` hit a transient 502 (Cloudflare, `origin_bad_gateway`) from Cowork, succeeded on retry.** Same OAuth/tunnel path every client (including Claude Desktop) now goes through post-MS6c, so this is the same class of flakiness behind Gemini's "error 1076"s and the first silent-failure `remember()` attempt — worth keeping an eye on if it recurs, not yet frequent enough to chase down.
+### B09 — Entity extraction quality and residual graph cleanup
 
-### Assembly refinements (deferred out of MS7)
+Keep the extraction causes and resulting cleanup together to avoid repeatedly repairing the same artifacts. Reconcile the September findings with completed MS9 work, identify the remaining population, choose the extraction approach, and validate any approved repair. Historical counts are not a current deletion list. Compute and scope remain uncertain; no bulk cleanup is authorized by this grouping.
+
+#### Wiki entity-extraction quality (found 2026-09-17, closing MS7b)
+
+Surfaced while visually inspecting the pruned `mem-fabric-local` graph in FalkorDB Browser — a real gap in `build_wiki_entities.py`'s heading+lede decomposition, not fixable by editing the graph directly:
+
+- [ ] **Topic-level entities never form when no section heading names the topic.** `WIKI/art-projects/Cityscapes/Cityscape-View the shadows.md` — all 13 section headings are camera-technique-specific (`TS-E Mechanical Setup`, `Shift-Stitch Configuration`, `Post-Processing Pipeline (Photoshop / ACR)`, ...); none contains the word "Cityscape," so the note never links to the `Cityscapes`/`cityscape` entities that exist from other notes in the same folder. Root cause: Phase 2's original finding that note titles match only 2% of entities (documented in [MS7b](plan-history.md#ms7b--wiki-derived-entity-layer--enriched-episode-bodies-experiment-2026-09-13)) meant titles were deliberately excluded as a decomposition source — correct call in aggregate, but it leaves notes like this one topic-orphaned. Compounding: `cityscape` (domain) and `Cityscapes` (project) are themselves near-duplicates Phase 4's merge pass never caught, since `_norm()` doesn't handle singular/plural.
+- [ ] **Per-section decomposition can attribute a concept to the wrong section, fragmenting it.** Same note: `Tilt` and `Shift` were both extracted from the section titled **"Zero/Static Configuration"** — specifically the section about using *neither* — while the actual `Tilt Configuration` section produced `Scheimpflug` instead, and a third section produced `Tilt-Shift` as a separate tool entity. Three sections, three fragments of one lens concept, none cross-linked.
+- **Options, not yet chosen between:** (a) re-run `build_wiki_entities.py` with the note title/folder path added to each section's decomposition context; (b) extend Phase 4's merge pass beyond literal near-duplicates to catch singular/plural and compound-vs-parts cases; (c) accept it as a known cost of this approach and fix only manually, case by case. Whichever is chosen, `mem-fabric-local`'s current ~1,219 entities mentioned by a note but by no episode/fact/project were deliberately left unpruned specifically so this evidence isn't destroyed before a fix is decided.
+
+#### Entity/edge cleanup pass for the CMF graph (found 2026-09-20, reviewing conversation b23f6f7d)
+
+**Status reconciliation (2026-10-09):** The findings below are the original September record. The claim that no candidate list exists is superseded by [MS9 tasks 1, 1b, 2 and 2b](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07): candidate reports, 125 duplicate merges, and the legacy-episode cleanup were completed, with the subsequent damage repaired. Do not repeat that completed pass. Establish which extraction-quality findings remain before scheduling another cleanup; the original checkboxes below are retained as historical findings, not a fresh execution checklist.
+
+Surfaced visually inspecting `mem-fabric-local` in FalkorDB Browser after promoting the "review by conversation" batch's approved episodes — the same graph-quality question the item above raises for wiki-derived entities, but from the episode-extraction side and scoped as an actual cleanup pass rather than a root-cause fix:
+
+- [ ] **Near-duplicate entities from qwen-122b extraction** (e.g. "MemPalace-like memory substrate layer" vs. "memory palace layer", "Obsidian URI schemes" vs. "Obsidian") need merging, not just cosmetic renaming. Mechanically: redirect every `MENTIONS`/`RELATES_TO`/`IN_PROJECT` edge from the duplicate onto the canonical node (`MATCH (dup)<-[r:MENTIONS]-(ep) MERGE (ep)-[:MENTIONS]->(canonical) DELETE r`, same pattern each direction/edge type), then delete the duplicate. **Not a bare `MERGE`-and-delete**: graphiti's edges carry real content (`fact` text, embeddings, `valid_at`/`created_at`) that a fresh bare edge won't have — properties must be copied onto the new edge first, or the redirect silently drops the fact each edge represents. No candidate list built yet.
+- [ ] **Confirmed unsafe to judge by eyeballing the graph.** Two entities that looked orphaned by visual inspection (`100MB limit`, `120-second OpenClaw timeouts`) both turned out to be real, correctly-connected data on closer query — `100MB limit` is a genuine fact from an unrelated Obsidian-project episode (`gemini-obsidian-009`) that surfaces in CMF's view only because it shares the `GitHub` entity (projects are many-to-many by `tag_projects.py`'s own design); `120-second OpenClaw timeouts` had two mentioning episodes, one from this very CMF batch, just not visible in a dense 127-node force layout. Any cleanup pass needs to query connectivity directly, not read the rendered graph.
+- [ ] **The real candidate set is graph-wide zero-`MENTIONS` entities — measured at 1,219**, which is very likely the same population the "Wiki entity-extraction quality" item above already names (`~1,219 entities mentioned by a note but by no episode/fact/project`) — worth confirming they're the same set before treating this as two separate backlog items. Even a zero-`MENTIONS` entity can carry real `RELATES_TO` fact text (as `100MB limit` shows) — "safe to delete" here means "won't break graph structure or dangling references," not "zero information loss." Needs a categorization pass (genuine standalone facts vs. junk — config values, restated instructions, extraction artifacts) before deleting anything, not a bulk sweep.
+- **Planned in [MS9 — Graph quality for retrieval](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)** (2026-09-29): the merge tool, the candidate report and the wiki-only entity categorization live there.
+- **Forward fix:** [MS4e](plan-history.md#ms4e--entity-extraction-quality-forward-only-2026-09-28) stops new noise at extraction time. Its optional Phase 5 report, this item's candidate list, moved to MS9 task 1b.
+- **Relates to:** [Wiki entity-extraction quality](#wiki-entity-extraction-quality-found-2026-09-17-closing-ms7b) (root-cause side of the same noise) and [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) (paused partly *because of* this same noise).
+
+### B10 — Extraction policy 1.7
+
+Keep the entire approved policy package intact: scoped threads, prompt/routing/date/privacy rules, additive document proposals and guard transition, duplicate handling, and scratch replay. The additive-proposal change also updates B06 nightly-review behavior. Do not close this group by shipping only its easiest prompt or merge subtask. Its planned replay requires inference.
+
+#### extract@1.7: scoped thread candidates (approved 2026-10-03, build after the extract@1.6 review)
+
+extract@1.6 reuses thread labels across unrelated conversations: `open_threads()` hands the model the 20 most recently active open threads corpus-wide, `thread_key` is a required string, and the prompt never says what a thread is. 47 of 509 keys span more than one conversation; the worst spans 123 conversations in 5 projects. Spot checks show thread *merges* are coherent within a conversation; it is the *label* that is borrowed. The label is not promoted into graph text (the promotion parser stops at `| thread=`).
+
+- [ ] **A. Scope candidates:** this conversation's threads plus same-project open threads seen recently (default 14 days). Additive `reasoning_threads.projects_json` column, backfilled from `derived_memories`.
+- [ ] **B. Prompt:** define a thread (one specific decision or problem); reuse an open key only on a clear continuation, otherwise mint a new specific key; show each candidate's project and latest statement.
+- [ ] **Replay check first:** a fixed sample of ~20 conversations replayed under 1.6 and 1.7 in a scratch journal (no promotion). Compare keys spanning >1 project (target ~0), reuse rate of the top-5 keys, merges per conversation, plus a 10-merge spot check each.
+- [ ] **Collect review findings here** that should also go into 1.7.
+  - Doc routing: new project folders under `WIKI/projects/` must be Title-Case and reuse an existing folder's casing (1.6 used the lowercase project slug; 134 pending paths normalized 2026-10-03 with `scripts/normalize_proposal_paths.py`).
+  - **Destructive updates (critical):** the model sees only a ~300-char snippet of an existing page (`_retrieve_relevant_wiki_docs`) but is told to write the complete page, so 43 of 45 pending 1.6 updates would remove >50% of their page. 1.7 must give the model the full live page for a target it updates, or switch updates to section-level additions merged by code. *Full page done 2026-10-09 ahead of 1.7 (no version bump):* `_retrieve_relevant_wiki_docs` reads each hit's whole page and the prompt shows it (and the model's own earlier proposals, previously cut at 1,500 chars) in full, up to 24K chars a page (~96% of pages) and 48K per prompt (the 122B runs at a 64K-token context); a page that doesn't fit is a snippet marked `full_content_shown: false` that the prompt forbids updating. **Fold into 1.7 (User, 2026-10-09): make proposals additive by construction and drop the 30% check.** For an existing page the model writes only the new material and code merges it into the live page (`create_doc_proposal(mode="append")`, under a matching heading or at the end); `capture_session` defaults to append, `propose_doc_update` keeps full replace for deliberate edits. Then remove the 30% guard and `force` from `apply_proposal`, `trips_overwrite_check` from the review batch, step 4 of the nightly task block, and the rebuild path in `confirm`. Keep the stale-base sha check. Two pending 1.6 updates still trip the check (2026-10-09); redraft them additively or reject before the guard goes. Since 2026-10-03 `apply_doc_proposal` refuses updates removing >30% of a page's lines unless `force=True`; the 45 pending updates are triaged and rebuilt non-destructively in review. **The 30% check is a flag, not a reject rule (User, 2026-10-08):** when it trips, compare the proposal with the live page; reject only if the page already holds everything relevant, otherwise rebuild it as an additive update. Whatever reviews proposals (a person, the nightly auto-review below, or 1.7 itself) should run that comparison instead of stopping at the refusal.
+  - Unmerged duplicate singles: in some conversations, window-level episodes repeat verbatim as numbered parts of that conversation's thread merge without having been merged away (astro: 7 of 11). The merge should reject every child it absorbs, including children from re-runs.
+  - Doc targets: new topics belong on new pages, not inserted into an existing page as a whole-file rewrite (both OpenClaw.md proposals were unrelated topics). Writing into `RAW/` is allowed (User, 2026-10-03: they are his own memories), keeping each RAW page's own frontmatter schema.
+  - Frontmatter dates: `created`/`updated` must come from the source transcript dates (America/Chicago), never the extraction date; 1.6 used the extraction day as `updated` and guessed `created`. Every created or edited page needs complete frontmatter (title, created, updated, status, source when known, tags).
+  - Eval privacy: 1.6 doc proposals quoted eval question text and gold answers into wiki pages (found in batch 7). Extraction should treat `tests/fixtures/ms7_eval/` content as private: case IDs and scores only.
+  - Near-duplicate pages within one conversation: one CMF session proposed 8 overlapping FalkorDB Browser pages under different titles, and another proposed 4 graph-repair procedure pages. 1.7 should see its own earlier proposals in the conversation and update those instead of minting new titles.
+  - Career routing (User, 2026-10-03): a role/application and a per-person outreach note are **episodes**, not doc proposals. One overview page explains what a weekly market brief contains; dated briefs never become pages. Personal job-search pages belong under `WIKI/Job-Search/`, plugin pages under `WIKI/projects/Career-Navigator/`, and art work under its `WIKI/art-projects/` series page.
+  - Resume rules: never write a wiki copy as if it were the source; the canonical rules are `profile.md` and ExperienceLibrary `resume_writing_note` fields.
+  - Duplicate doc targets across conversations: each `update` is a full-file rewrite on the same base, so only one can ever apply; 18 paths / 52 proposals were consolidated by hand in Phase 2.2. 1.7 (or the pipeline) should see other conversations' pending proposals for the same target.
+- [x] **After User completes the 1.6 review:** dry-run script that closes over-broad open threads (e.g. spanning >10 conversations) in `reasoning_threads` -- status only, no episode/merge/review-queue change; apply with User's approval. *Done 2026-10-04: `scripts/close_overbroad_threads.py` closed 12 attractor threads spanning >10 conversations (896 open, 507 resolved).*
+- Rejected: merge-time statement similarity (lexical overlap did not separate attractor-key merges from the rest, 0.114 vs 0.114). Not doing: relabeling existing 1.6 rows.
+
+### B11 — Context retrieval and assembly
+
+Keep all assembly refinements together: semantic wiki retrieval, conflict/staleness signals, omissions, intent and time modes, templates, token budgets, explanations, reranking, entity summaries/history if adopted, and residual eval cases. B03 supplies note dates; B08 owns project-specific experiments. Deferred/conditional options keep their existing status. This is a broad group with corpus embedding and evaluation costs, not a small zero-Spark task.
+
+#### Assembly refinements (deferred out of MS7)
 
 Out of MS7 with the exit gate met (`get_context` at 80% of a complete answer, beating every single-provider baseline — [plan-history.md](plan-history.md#ms7--context-assembly-quality)). These push the number higher but were not blockers. Roughly in value order:
 
@@ -261,27 +358,11 @@ Out of MS7 with the exit gate met (`get_context` at 80% of a complete answer, be
   - **If adopted, add summary history:** a journal table of (entity, old summary, new summary, episode, time), written by `postprocess_episode`. It gives the replay the summary as of a cut-off, and gives `explain` the episode behind each change.
 - [ ] **Residual eval misses.** A1 — `gemini-openclaw-002` (the friend's-Spark decision) is retrieved by neither the edge nor the vector arm; needs the extraction gap closed or a broader vector recall. B7 — `+memory` regressed 1→0 after the vector arm (wiki-domain query, `+both` unaffected); accepted. C6 — see `search_wiki` semantic retrieval above.
 
-### Double-promoted memories in `mem-fabric-local` (found 2026-10-02, provenance step 5a)
+### B12 — Capture coverage and historical source recovery
 
-Found while repairing Phase 2b. These four memories were promoted twice, once on 2026-09-13 and again on 2026-09-23. Each now has two episode nodes with the same content and memory_id but different names and separately extracted facts. They predate Phase 2b and don't collide on names. The ledger can record only one name per (memory, graph), so its row names one of the two nodes.
+Group local transcript recovery, remote/Cowork capture and attribution, scheduled-task capture policy, and missing Gemini export records. Preserve the completed provenance/test records and all user deferrals. Source access and capture choices must be resolved; the Gemini item includes review and promotion, not merely journaling. Historical recovery/extraction may be substantial.
 
-| memory's nodes (2026-09-13 / 2026-09-23) |
-|---|
-| `chatgpt-photo-006` / `chatgpt-photo-009` |
-| `claude-project-epsilon-004` / `claude-project-epsilon-029` |
-| `claude-project-epsilon-005` / `claude-project-epsilon-030` |
-| `claude-project-epsilon-006` / `claude-project-epsilon-031` |
-
-- [x] **Done 2026-10-06 — see the fold record below.** Original task: **Remove the 09-23 duplicate of each,** keeping the 09-13 node, which the eval gold and ledger are more likely to reference. Before deleting, check which node carries more `MENTIONS`/facts. `-005` has 10 mentions and `-030` has 0, but for `-004`/`-029` the newer node has more, so the choice is per pair, not always the newer one. Use `graphiti.remove_episode` (no LLM) on a backup-first, scratch-rehearsed run, like `scripts/repair_p2b_episodes.py remove-wrong`, then align the ledger.
-- [x] **Also `claude-cowork-interlock-005` (found 2026-10-06), folded the same day.** Two identical nodes, created 2026-10-04 00:10 and 00:13 (`f710c9a8…`, `0b030fc3…`), probably a retried batch in the extract@1.6 Phase 4 promotion. It is the only duplicate episode name in production; remove one the same way.
-- **Fold record (2026-10-06).** The four memories above were really `claude-career-navigator-004/-029`, `-005/-030`, `-006/-031` and `chatgpt-photo-006/-009`; the doc names were scrubbed placeholders. All 5 pairs were folded, not deleted. Each copy was extracted on its own and carried facts the other lacked, so the duplicate's facts and mentions moved onto the kept node before the duplicate was removed (`scripts/fold_duplicate_episodes.py`, ledger `imports/fixgraph/fold_duplicates_ledger.jsonl`).
-  - **Kept:** `-006` (C16 gold), `-005`, `photo-006`, `-029` (`-004` was empty), and interlock `0b030fc3` (14 facts vs 9).
-  - **Process:** rehearsed on `fixgraph-folddup`; production backed up to `mem-fabric-local.pre-folddup-20261006`.
-  - **Result:** −5 episodes, facts unchanged at 7,879, −18 redundant mentions; 0 duplicate contents or names left. The ledger's `promotions` rows now name the kept nodes.
-  - **Replay at `now`:** unchanged (Hit@8 82.5%, MRR 0.434; only A10 moved, 5 → 6).
-- [ ] **Find why they were promoted twice on 09-23.** All four were promoted within a minute (18:56). The 09-23 promotion pass didn't see the 09-13 promotions as already promoted, probably the same stale-ledger problem as Phase 2b, since 09-13 rows went to `mem-fabric-local-wiki` and not `mem-fabric-local`.
-
-### Claude surface provenance, lost transcripts and Cowork capture (found 2026-10-02, MS9 Phase 5)
+#### Claude surface provenance, lost transcripts and Cowork capture (found 2026-10-02, MS9 Phase 5)
 
 **Done 2026-10-03; record in [plan-history.md](plan-history.md#claude-surface-provenance-and-cowork-capture-found-2026-10-02-closed-2026-10-03)**, working checklist in [CLAUDE-HARNESS-PROVENANCE-PLAN.md](CLAUDE-HARNESS-PROVENANCE-PLAN.md). In short: harness now comes from each transcript line's `entrypoint` (`claude_code` / `claude_desktop_code` / `claude_cowork`); eval and temp-dir runs are out of the journal; the Phase 2b episode damage it uncovered in `mem-fabric-local` is repaired and the Code-tab episodes are renamed `claude-desktop-code-*`; Cowork has an adapter, a 15-minute poller and a full backfill (964 conversations journaled, 460 extracted); all pollers share one Spark slot. Still open:
 
@@ -292,49 +373,38 @@ Found while repairing Phase 2b. These four memories were promoted twice, once on
 - [x] **The 6 pre-existing `remember`-path test failures** (`test_mcp_contract_fixtures`, `test_ms4e_extraction_profile`), present since `6fa4056`'s naming automation. *No longer failing as of 2026-10-08 (full non-live suite: 898 passed, 0 failed), after MS9's close-out test repairs.*
 - **Relates to:** [MS9](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07) (Phase 5 finding; the Phase 2b repair) and [Double-promoted memories](#double-promoted-memories-in-mem-fabric-local-found-2026-10-02-provenance-step-5a).
 
-### extract@1.7: scoped thread candidates (approved 2026-10-03, build after the extract@1.6 review)
-
-extract@1.6 reuses thread labels across unrelated conversations: `open_threads()` hands the model the 20 most recently active open threads corpus-wide, `thread_key` is a required string, and the prompt never says what a thread is. 47 of 509 keys span more than one conversation; the worst spans 123 conversations in 5 projects. Spot checks show thread *merges* are coherent within a conversation; it is the *label* that is borrowed. The label is not promoted into graph text (the promotion parser stops at `| thread=`).
-
-- [ ] **A. Scope candidates:** this conversation's threads plus same-project open threads seen recently (default 14 days). Additive `reasoning_threads.projects_json` column, backfilled from `derived_memories`.
-- [ ] **B. Prompt:** define a thread (one specific decision or problem); reuse an open key only on a clear continuation, otherwise mint a new specific key; show each candidate's project and latest statement.
-- [ ] **Replay check first:** a fixed sample of ~20 conversations replayed under 1.6 and 1.7 in a scratch journal (no promotion). Compare keys spanning >1 project (target ~0), reuse rate of the top-5 keys, merges per conversation, plus a 10-merge spot check each.
-- [ ] **Collect review findings here** that should also go into 1.7.
-  - Doc routing: new project folders under `WIKI/projects/` must be Title-Case and reuse an existing folder's casing (1.6 used the lowercase project slug; 134 pending paths normalized 2026-10-03 with `scripts/normalize_proposal_paths.py`).
-  - **Destructive updates (critical):** the model sees only a ~300-char snippet of an existing page (`_retrieve_relevant_wiki_docs`) but is told to write the complete page, so 43 of 45 pending 1.6 updates would remove >50% of their page. 1.7 must give the model the full live page for a target it updates, or switch updates to section-level additions merged by code. *Full page done 2026-10-09 ahead of 1.7 (no version bump):* `_retrieve_relevant_wiki_docs` reads each hit's whole page and the prompt shows it (and the model's own earlier proposals, previously cut at 1,500 chars) in full, up to 24K chars a page (~96% of pages) and 48K per prompt (the 122B runs at a 64K-token context); a page that doesn't fit is a snippet marked `full_content_shown: false` that the prompt forbids updating. **Fold into 1.7 (User, 2026-10-09): make proposals additive by construction and drop the 30% check.** For an existing page the model writes only the new material and code merges it into the live page (`create_doc_proposal(mode="append")`, under a matching heading or at the end); `capture_session` defaults to append, `propose_doc_update` keeps full replace for deliberate edits. Then remove the 30% guard and `force` from `apply_proposal`, `trips_overwrite_check` from the review batch, step 4 of the nightly task block, and the rebuild path in `confirm`. Keep the stale-base sha check. Two pending 1.6 updates still trip the check (2026-10-09); redraft them additively or reject before the guard goes. Since 2026-10-03 `apply_doc_proposal` refuses updates removing >30% of a page's lines unless `force=True`; the 45 pending updates are triaged and rebuilt non-destructively in review. **The 30% check is a flag, not a reject rule (User, 2026-10-08):** when it trips, compare the proposal with the live page; reject only if the page already holds everything relevant, otherwise rebuild it as an additive update. Whatever reviews proposals (a person, the nightly auto-review below, or 1.7 itself) should run that comparison instead of stopping at the refusal.
-  - Unmerged duplicate singles: in some conversations, window-level episodes repeat verbatim as numbered parts of that conversation's thread merge without having been merged away (astro: 7 of 11). The merge should reject every child it absorbs, including children from re-runs.
-  - Doc targets: new topics belong on new pages, not inserted into an existing page as a whole-file rewrite (both OpenClaw.md proposals were unrelated topics). Writing into `RAW/` is allowed (User, 2026-10-03: they are his own memories), keeping each RAW page's own frontmatter schema.
-  - Frontmatter dates: `created`/`updated` must come from the source transcript dates (America/Chicago), never the extraction date; 1.6 used the extraction day as `updated` and guessed `created`. Every created or edited page needs complete frontmatter (title, created, updated, status, source when known, tags).
-  - Eval privacy: 1.6 doc proposals quoted eval question text and gold answers into wiki pages (found in batch 7). Extraction should treat `tests/fixtures/ms7_eval/` content as private: case IDs and scores only.
-  - Near-duplicate pages within one conversation: one CMF session proposed 8 overlapping FalkorDB Browser pages under different titles, and another proposed 4 graph-repair procedure pages. 1.7 should see its own earlier proposals in the conversation and update those instead of minting new titles.
-  - Career routing (User, 2026-10-03): a role/application and a per-person outreach note are **episodes**, not doc proposals. One overview page explains what a weekly market brief contains; dated briefs never become pages. Personal job-search pages belong under `WIKI/Job-Search/`, plugin pages under `WIKI/projects/Career-Navigator/`, and art work under its `WIKI/art-projects/` series page.
-  - Resume rules: never write a wiki copy as if it were the source; the canonical rules are `profile.md` and ExperienceLibrary `resume_writing_note` fields.
-  - Duplicate doc targets across conversations: each `update` is a full-file rewrite on the same base, so only one can ever apply; 18 paths / 52 proposals were consolidated by hand in Phase 2.2. 1.7 (or the pipeline) should see other conversations' pending proposals for the same target.
-- [x] **After User completes the 1.6 review:** dry-run script that closes over-broad open threads (e.g. spanning >10 conversations) in `reasoning_threads` -- status only, no episode/merge/review-queue change; apply with User's approval. *Done 2026-10-04: `scripts/close_overbroad_threads.py` closed 12 attractor threads spanning >10 conversations (896 open, 507 resolved).*
-- Rejected: merge-time statement similarity (lexical overlap did not separate attractor-key merges from the rest, 0.114 vs 0.114). Not doing: relabeling existing 1.6 rows.
-
-### Promoted-episode project-slug migration (found 2026-10-03, extract@1.6 review)
-
-The review split the old `project-epsilon` project into a job-search project and a plugin-development project, and folded several near-duplicate slugs together (mappings live in the gitignored `.env`: `CMF_PROJECT_ALIASES`, `CMF_PROJECT_FOLDER_MAP`, `CMF_COWORK_SCHEDULED_TASK_PROJECTS`). Pending items were retagged with `scripts/retag_review_projects.py`; episodes already **promoted** still carry the old slugs in FalkorDB and the journal (as of 2026-10-03: 89 job-search/plugin, 114 vault, 26 finance).
-
-- [ ] Inventory and classify the promoted episodes; User approves the table.
-- [ ] Dry-run retag script for graph tags + `derived_memories.project` + approved mirrors; rehearse on a graph copy, back up, apply with approval, MS8 replay.
-- [ ] Decide on episode names that embed an old slug (recommend: keep them as identifiers).
-
-### Scrub personal mentions from tracked files (found 2026-10-03, review-queue cleanup)
-
-Code, tests, docs and commit history pushed to GitHub name User's own projects, scheduled tasks, folders, people and graph episode names (test fixtures, docstring examples, plan and result docs). From 2026-10-03 on, new code uses placeholder names and keeps real mappings in the gitignored `.env` (`CMF_COWORK_SCHEDULED_TASK_PROJECTS`, `CMF_PROJECT_ALIASES`).
-
-- [ ] **Inventory** tracked files for personal project, task, folder and person names; decide per file whether to genericize, move to a gitignored local file (as `tests/fixtures/ms7_eval/` already is), or keep.
-- [ ] **Genericize tests and code first**, then docs. Rewriting already-pushed history is a separate decision.
-- [ ] **Guard:** a pre-commit or test check against a local, gitignored denylist so new mentions don't creep back.
-
-### Gemini Apps records missing from the April Takeout (found 2026-10-08, export cleanup)
+#### Gemini Apps records missing from the April Takeout (found 2026-10-08, export cleanup)
 
 The only Gemini import ran on 2026-09-04, from the September Takeout (`Takeout 3`). The older April 22 export (`Takeout 5`, unpacked 2026-09-08) was never imported, and 226 of its 4,452 Gemini Apps records (Oct 2024 to Apr 2026) have no matching event in the journal, apparently because Google left them out of the later export. Matching was done by timestamp. The exports moved to the NAS on 2026-10-08: `/Volumes/nas-data/docs/Takeout`.
 
 - [ ] **Run `journal_gemini_apps_export` (`server/importers/gemini.py`) on `Takeout 5/My Activity/Gemini Apps/MyActivity.json`** from the NAS copy. It has no CLI; call it from Python as the original import did. Event IDs are a hash of content plus conversation ID, so the ~4,200 records already in the journal should come back as `*_deduped`. Check that before trusting it: `*_journaled` should be about 226 prompts plus their responses, not thousands. Then run the normal review and promotion pass on the new rows.
 - Not imported from any export and not planned: AI Mode (107 records in `Takeout 3`, 88 in `Takeout 5`), NotebookLM (480 files), Workspace Studio, gems/scheduled actions, and the attachments in `Takeout 4`. Each would need its own importer.
+
+### B13 — Historical graph rebuild
+
+Optional and paused. Preserve the existing checkpoint and original scope; do not resume merely because the backlog is regrouped. Many Spark hours, so excluded from the current low-compute shortlist.
+
+#### Phase 6: full ledger re-ingest into a fresh graph (paused, carried out of MS9, 2026-10-07)
+
+Optional post-MS9: rebuild from transcripts using the current extraction policies (`typed-recall` + debris filter) across all historical episodes. **Paused at 432 of 1,071 episodes (40.3%).** It was paused on 2026-10-05 10:55 CDT to free Spark for Public Preview Phase 2 grading. The isolated scratch graph `mem-fabric-rebuild-scratch` holds 432 committed episodes, 1,017 nodes, 2,756 edges and 721 facts, and can resume immediately with `scripts/rebuild_graph_from_ledger.py` (replay into a new graph name, or everything is skipped). Needs Spark for many hours and takes `spark_job.lock`.
+
+### B14 — OAuth audience preservation
+
+Deliberately deferred by the user. Retain the completed hardening context and the remaining refresh-token resource issue together. No Spark needed, but low compute does not override the explicit deferral or make this a current high-priority selection.
+
+#### Auth hardening (deferred out of MS6c, 2026-09-16)
+
+Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pull/6) and consciously merged without fixing (User, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`. Four of the five items were closed 2026-09-28 ([plan-history.md](plan-history.md#auth-hardening-deferred-out-of-ms6c-2026-09-16-closed-2026-09-28)); the one left is deliberately deferred.
+
+- [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
+
+### B15 — Test graph compatibility
+
+Separate infrastructure prerequisite, previously buried under recurring review. Verify whether the reported dimension mismatch still exists before proposing a compatible test-graph rebuild. Complete with approved isolated graph preparation and a bounded live check; never change dimensions on an existing graph in place. This may gate live validation of other groups and needs explicit operational approval.
+
+#### Test graph vector-dimension mismatch (carried from corpus review)
+
+- **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
 
 ---
 
