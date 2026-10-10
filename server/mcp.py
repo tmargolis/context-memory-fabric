@@ -1628,6 +1628,55 @@ async def bulk_review_episodes(
     return "\n".join(lines)
 
 
+@app.tool(
+    title="Merge Staged Episodes",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def merge_episodes(
+    memory_ids: Annotated[
+        list[str],
+        Field(description="2–20 memory_ids of pending or deferred staged episodes, all from the same conversation."),
+    ],
+    statement: Annotated[
+        str,
+        Field(description="The merged episode text, written by the caller: at most 3600 characters and 20 listed points."),
+    ],
+    reason: Annotated[
+        str,
+        Field(description="Why these episodes are being merged; recorded on the replacement and on each constituent's rejection."),
+    ],
+    reviewer: Annotated[
+        Optional[str],
+        Field(description="Who is merging. Defaults to CMF_REVIEWER, else the OS login name."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        Field(description="True (default) previews the merge; False writes it and stages the replacement for review."),
+    ] = True,
+) -> str:
+    """Merge 2–20 pending/deferred episodes from one conversation using caller-written text.
+
+    Preview by default; dry_run=False supersedes/rejects constituents and stages
+    the replacement for human review. No inference or promotion. Text is limited
+    to 3600 characters and 20 listed points. Approved candidates and any promotion
+    history are refused because promotion may already be in flight. All evidence
+    must share a harness/conversation and project assignments must agree. Identical
+    retries reuse the replacement and repair failed proposal mirrors. Read the
+    resulting proposal before approving it; merging is not approval.
+    """
+    from server.review.merge import merge_episodes as merge_candidates
+
+    with ReviewStore() as review_store:
+        result = merge_candidates(review_store, memory_ids, statement,
+                                  reviewer or default_reviewer(), reason, dry_run)
+    return json.dumps(result, indent=2)
+
+
 # --- Nightly auto-review (2026-10-08): recommend, then the user confirms ----------
 
 

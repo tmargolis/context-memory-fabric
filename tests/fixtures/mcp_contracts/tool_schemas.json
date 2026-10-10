@@ -1742,5 +1742,78 @@
       "idempotent_hint": false,
       "open_world_hint": false
     }
+  },
+  "merge_episodes": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": false,
+      "title": null
+    },
+    "description": "Merge 2\u201320 pending/deferred episodes from one conversation using caller-written text.\n\n    Preview by default; dry_run=False supersedes/rejects constituents and stages\n    the replacement for human review. No inference or promotion. Text is limited\n    to 3600 characters and 20 listed points. Approved candidates and any promotion\n    history are refused because promotion may already be in flight. All evidence\n    must share a harness/conversation and project assignments must agree. Identical\n    retries reuse the replacement and repair failed proposal mirrors. Read the\n    resulting proposal before approving it; merging is not approval.\n    ",
+    "input_schema": {
+      "properties": {
+        "memory_ids": {
+          "description": "2\u201320 memory_ids of pending or deferred staged episodes, all from the same conversation.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Memory Ids",
+          "type": "array"
+        },
+        "statement": {
+          "description": "The merged episode text, written by the caller: at most 3600 characters and 20 listed points.",
+          "title": "Statement",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why these episodes are being merged; recorded on the replacement and on each constituent's rejection.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who is merging. Defaults to CMF_REVIEWER, else the OS login name.",
+          "title": "Reviewer"
+        },
+        "dry_run": {
+          "default": true,
+          "description": "True (default) previews the merge; False writes it and stages the replacement for review.",
+          "title": "Dry Run",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memory_ids",
+        "statement",
+        "reason"
+      ],
+      "title": "merge_episodesArguments",
+      "type": "object"
+    },
+    "name": "merge_episodes",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "merge_episodesOutput",
+      "type": "object"
+    },
+    "title": "Merge Staged Episodes"
   }
 }

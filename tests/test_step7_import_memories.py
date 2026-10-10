@@ -427,6 +427,8 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "record_review_recommendations",
             "list_review_recommendations",
             "confirm_review_recommendations",
+            # Manual review merge (2026-10-09)
+            "merge_episodes",
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

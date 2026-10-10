@@ -91,7 +91,8 @@ class TestMCPContractFixtures(unittest.TestCase):
         # the provider-neutral knowledge tools).
         # 29 as of the nightly auto-review (2026-10-08: get_review_batch,
         # record/list/confirm_review_recommendations).
-        self.assertEqual(len(self.expected), 29)
+        # 30 as of merge_episodes (2026-10-09, manual review merge).
+        self.assertEqual(len(self.expected), 30)
 
 
 if __name__ == "__main__":

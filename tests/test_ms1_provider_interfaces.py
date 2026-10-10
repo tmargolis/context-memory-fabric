@@ -137,8 +137,9 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # search_knowledge and propose_knowledge_change (MS5; registered
         # regardless of LLM_WIKI_PATH, since other providers may be configured) +
         # 4 nightly-review tools (2026-10-08: get_review_batch,
-        # record/list/confirm_review_recommendations).
-        self.assertEqual(len(names), 29)
+        # record/list/confirm_review_recommendations) + merge_episodes
+        # (2026-10-09, manual review merge).
+        self.assertEqual(len(names), 30)
 
 
 if __name__ == "__main__":
