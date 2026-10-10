@@ -21,12 +21,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import logging
 from pathlib import Path
 import shutil
 from typing import Any, Optional
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_HOOKS_PATH = Path.home() / ".codex" / "hooks.json"
 DEFAULT_LOG_PATH = Path.home() / ".codex" / "cmf-codex-worker.log"
@@ -70,191 +67,176 @@ def build_hook_entry(
     }
 
 
+def _load_config(path: Path) -> dict[str, Any]:
+    """Read and normalize legacy flat entries without changing the source file.
+
+    Codex expects {"hooks": {event: [{"hooks": [handler]}]}}. Preserve
+    matcher groups and metadata; refuse malformed input instead of dropping it.
+    """
+    config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError("Hooks configuration must be an object")
+    events = config.setdefault("hooks", {})
+    if not isinstance(events, dict):
+        raise ValueError("hooks must be an object")
+    for event in list(config):
+        if event in ("hooks", "description"):
+            continue
+        legacy = config[event]
+        if not isinstance(legacy, list):
+            raise ValueError(f"Unexpected hooks configuration field: {event}")
+        existing = events.setdefault(event, [])
+        if not isinstance(existing, list):
+            raise ValueError(f"Hook event {event} must be an array")
+        existing.extend(legacy)
+        del config[event]
+    for event, groups in events.items():
+        if not isinstance(groups, list):
+            raise ValueError(f"Hook event {event} must be an array")
+        normalized = []
+        for group in groups:
+            if not isinstance(group, dict):
+                raise ValueError(f"Hook group for {event} must be an object")
+            if "type" in group and "hooks" not in group:
+                group = {"hooks": [group]}
+            if not isinstance(group.get("hooks"), list) or any(
+                not isinstance(handler, dict) for handler in group["hooks"]
+            ):
+                raise ValueError(f"Hook group for {event} needs a hooks array")
+            normalized.append(group)
+        events[event] = normalized
+    return config
+
+
+def _save_config(path: Path, config: dict[str, Any]) -> Optional[Path]:
+    backup = None
+    if path.exists():
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = path.with_suffix(f".json.bak-{timestamp}")
+        shutil.copy2(path, backup)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return backup
+
+
+def _handlers(groups: list[dict[str, Any]]):
+    for group in groups:
+        yield from group["hooks"]
+
+
+def _has_marker(groups: list[dict[str, Any]], marker: str) -> bool:
+    return any(marker in h.get("command", "") for h in _handlers(groups))
+
+
+def _remove_markers(events: dict[str, Any], markers: tuple[str, ...]) -> list[str]:
+    removed = []
+    for event, groups in list(events.items()):
+        kept_groups = []
+        changed = False
+        for group in groups:
+            kept = [h for h in group["hooks"] if not any(
+                marker in h.get("command", "") for marker in markers
+            )]
+            if len(kept) == len(group["hooks"]):
+                kept_groups.append(group)
+            else:
+                changed = True
+                if kept:
+                    kept_groups.append({**group, "hooks": kept})
+        if changed:
+            removed.append(event)
+            if kept_groups:
+                events[event] = kept_groups
+            else:
+                del events[event]
+    return removed
+
+
 def install_hooks(
     hooks_path: Optional[Path] = None,
     events: tuple[str, ...] = ("SessionStart", "Stop"),
     repo_root: Optional[Path] = None,
     log_path: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """Merge CMF hook entries into hooks.json under root event keys.
-
-    Backs up the file first (timestamped .bak-<timestamp>).
-    Preserves all existing user hooks and unrelated event keys.
-    """
+    """Merge worker handlers into Codex's nested schema, migrating legacy files."""
     path = hooks_path or DEFAULT_HOOKS_PATH
-    config: dict[str, Any] = {}
-    backup_path: Optional[Path] = None
-
-    if path.exists():
-        try:
-            config = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            raise ValueError(f"Could not parse existing {path}: {exc}") from exc
-
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup_path = path.with_suffix(f".json.bak-{timestamp}")
-        shutil.copy2(path, backup_path)
-
-    installed = []
-    already_present = []
-
+    config = _load_config(path)
+    installed, already_present = [], []
     for event in events:
-        event_hooks = config.setdefault(event, [])
-        if not isinstance(event_hooks, list):
-            logger.warning("Event %s in %s is not a list; replacing with empty list", event, path)
-            event_hooks = []
-            config[event] = event_hooks
-
-        if any(HOOK_MARKER in h.get("command", "") for h in event_hooks if isinstance(h, dict)):
+        groups = config["hooks"].setdefault(event, [])
+        if _has_marker(groups, HOOK_MARKER):
             already_present.append(event)
-            continue
-
-        entry = build_hook_entry(repo_root=repo_root, log_path=log_path)
-        event_hooks.append(entry)
-        installed.append(event)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-
+        else:
+            groups.append({"hooks": [build_hook_entry(repo_root, log_path)]})
+            installed.append(event)
+    backup = _save_config(path, config)
     return {
-        "installed": installed,
-        "already_present": already_present,
-        "hooks_path": str(path),
-        "backup_path": str(backup_path) if backup_path else None,
+        "installed": installed, "already_present": already_present,
+        "hooks_path": str(path), "backup_path": str(backup) if backup else None,
     }
 
 
-def uninstall_hooks(
-    hooks_path: Optional[Path] = None,
-) -> dict[str, Any]:
-    """Remove CMF hook entries from hooks.json.
-
-    Backs up the file first. Preserves all other entries.
-    """
+def uninstall_hooks(hooks_path: Optional[Path] = None) -> dict[str, Any]:
+    """Remove only worker/sentinel handlers, preserving other grouped handlers."""
     path = hooks_path or DEFAULT_HOOKS_PATH
     if not path.exists():
         return {"uninstalled": [], "hooks_path": str(path), "backup_path": None}
-
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(f"Could not parse existing {path}: {exc}") from exc
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = path.with_suffix(f".json.bak-{timestamp}")
-    shutil.copy2(path, backup_path)
-
-    uninstalled = []
-    keys_to_delete = []
-
-    for event, hooks in list(config.items()):
-        if not isinstance(hooks, list):
-            continue
-        original_len = len(hooks)
-        filtered = [
-            h for h in hooks
-            if not (isinstance(h, dict) and (HOOK_MARKER in h.get("command", "") or SENTINEL_MARKER in h.get("command", "")))
-        ]
-        if len(filtered) < original_len:
-            uninstalled.append(event)
-            if filtered:
-                config[event] = filtered
-            else:
-                keys_to_delete.append(event)
-
-    for k in keys_to_delete:
-        config.pop(k, None)
-
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-
-    return {
-        "uninstalled": uninstalled,
-        "hooks_path": str(path),
-        "backup_path": str(backup_path),
-    }
+    config = _load_config(path)
+    removed = _remove_markers(config["hooks"], (HOOK_MARKER, SENTINEL_MARKER))
+    backup = _save_config(path, config)
+    return {"uninstalled": removed, "hooks_path": str(path), "backup_path": str(backup)}
 
 
 def install_sentinel_hooks(
     hooks_path: Optional[Path] = None,
     sentinel_log: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """Install a lightweight sentinel hook to test whether Codex triggers hooks."""
+    """Install lightweight, grouped hooks that record lifecycle execution."""
     path = hooks_path or DEFAULT_HOOKS_PATH
     s_log = sentinel_log or DEFAULT_SENTINEL_LOG
-
-    config: dict[str, Any] = {}
-    if path.exists():
-        config = json.loads(path.read_text(encoding="utf-8"))
-
-    command = f'sh -c \'echo "{{}}" && date +%Y-%m-%dT%H:%M:%S%z >> {s_log}\' # {SENTINEL_MARKER}'
+    config = _load_config(path)
+    command = f"sh -c 'echo \"{{}}\" && date +%Y-%m-%dT%H:%M:%S%z >> {s_log}' # {SENTINEL_MARKER}"
     installed = []
-
     for event in ("SessionStart", "Stop"):
-        event_hooks = config.setdefault(event, [])
-        if any(SENTINEL_MARKER in h.get("command", "") for h in event_hooks if isinstance(h, dict)):
-            continue
-        event_hooks.append({
-            "type": "command",
-            "command": command,
-            "timeout": 5,
-        })
-        installed.append(event)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        groups = config["hooks"].setdefault(event, [])
+        if not _has_marker(groups, SENTINEL_MARKER):
+            groups.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
+            installed.append(event)
+    _save_config(path, config)
     return {"installed": installed, "sentinel_log": str(s_log), "hooks_path": str(path)}
 
 
 def check_sentinel_fired(sentinel_log: Optional[Path] = None) -> bool:
-    """Check if the sentinel hook logged any executions."""
     s_log = sentinel_log or DEFAULT_SENTINEL_LOG
     return s_log.exists() and s_log.stat().st_size > 0
 
 
 def get_hooks_status(hooks_path: Optional[Path] = None) -> dict[str, Any]:
-    """Inspect current hook installation status."""
+    """Inspect installation; distinguish legacy configuration needing migration."""
     path = hooks_path or DEFAULT_HOOKS_PATH
+    status = {"hooks_path": str(path), "file_exists": path.exists(),
+              "cmf_hooks_installed": False, "events_configured": {}}
     if not path.exists():
-        return {
-            "hooks_path": str(path),
-            "file_exists": False,
-            "cmf_hooks_installed": False,
-            "events_configured": {},
-        }
-
+        return status
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return {
-            "hooks_path": str(path),
-            "file_exists": True,
-            "error": f"Invalid JSON: {exc}",
-            "cmf_hooks_installed": False,
-            "events_configured": {},
-        }
-
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        config = _load_config(path)
+    except (ValueError, OSError) as exc:
+        return {**status, "error": str(exc)}
     cmf_events = []
-    events_summary = {}
-
-    for event, hooks in config.items():
-        if isinstance(hooks, list):
-            has_cmf = any(HOOK_MARKER in h.get("command", "") for h in hooks if isinstance(h, dict))
-            has_sentinel = any(SENTINEL_MARKER in h.get("command", "") for h in hooks if isinstance(h, dict))
-            if has_cmf:
-                cmf_events.append(event)
-            events_summary[event] = {
-                "total_handlers": len(hooks),
-                "has_cmf_worker": has_cmf,
-                "has_sentinel": has_sentinel,
-            }
-
-    return {
-        "hooks_path": str(path),
-        "file_exists": True,
-        "cmf_hooks_installed": len(cmf_events) > 0,
-        "cmf_events": cmf_events,
-        "events_configured": events_summary,
-    }
+    summary = {}
+    for event, groups in config["hooks"].items():
+        has_cmf = _has_marker(groups, HOOK_MARKER)
+        if has_cmf:
+            cmf_events.append(event)
+        summary[event] = {
+            "total_handlers": len(list(_handlers(groups))),
+            "has_cmf_worker": has_cmf,
+            "has_sentinel": _has_marker(groups, SENTINEL_MARKER),
+        }
+    return {**status, "cmf_hooks_installed": bool(cmf_events),
+            "cmf_events": cmf_events, "events_configured": summary,
+            "requires_migration": raw != config}
 
 
 def generate_launchd_plist(
@@ -297,81 +279,41 @@ def generate_launchd_plist(
 """
 
 
-def _has_nudge(event_hooks: Any) -> bool:
-    from server.adapters.capture_nudge import NUDGE_MARKER
-
-    return isinstance(event_hooks, list) and any(
-        NUDGE_MARKER in h.get("command", "") for h in event_hooks if isinstance(h, dict)
-    )
-
-
 def install_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
-    """Add the capture-nudge Stop hook (server.adapters.capture_nudge),
-    synchronous because Codex acts on its stdout decision. Codex runs it
-    only after the hook is trusted via `/hooks` in the CLI. Idempotent;
-    backs hooks.json up first."""
-    from server.adapters.capture_nudge import hook_command
+    """Install a synchronous Stop nudge; trust remains a user action in /hooks."""
+    from server.adapters.capture_nudge import NUDGE_MARKER, hook_command
 
     path = hooks_path or DEFAULT_HOOKS_PATH
-    config: dict[str, Any] = {}
-    backup_path: Optional[Path] = None
-    if path.exists():
-        try:
-            config = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            raise ValueError(f"Could not parse existing {path}: {exc}") from exc
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup_path = path.with_suffix(f".json.bak-{timestamp}")
-        shutil.copy2(path, backup_path)
-
-    stop_hooks = config.get("Stop")
-    if not isinstance(stop_hooks, list):
-        stop_hooks = []
-        config["Stop"] = stop_hooks
-    if _has_nudge(stop_hooks):
-        return {"installed": False, "already_present": True, "hooks_path": str(path)}
-
-    stop_hooks.append({"type": "command", "command": hook_command("codex"), "timeout": 10})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return {
-        "installed": True,
-        "already_present": False,
-        "hooks_path": str(path),
-        "backup_path": str(backup_path) if backup_path else None,
-    }
+    config = _load_config(path)
+    groups = config["hooks"].setdefault("Stop", [])
+    present = _has_marker(groups, NUDGE_MARKER)
+    if not present:
+        groups.append({"hooks": [{"type": "command", "command": hook_command("codex"), "timeout": 10}]})
+    # Save even if present: a legacy flat configuration still needs migration.
+    backup = _save_config(path, config)
+    return {"installed": not present, "already_present": present,
+            "hooks_path": str(path), "backup_path": str(backup) if backup else None}
 
 
 def uninstall_nudge(hooks_path: Optional[Path] = None) -> dict[str, Any]:
-    """Remove only the capture-nudge Stop entry; prune Stop if it empties."""
+    """Remove only capture-nudge handlers, preserving matcher groups and metadata."""
     from server.adapters.capture_nudge import NUDGE_MARKER
 
     path = hooks_path or DEFAULT_HOOKS_PATH
     if not path.exists():
         return {"removed": False, "hooks_path": str(path)}
-    config = json.loads(path.read_text(encoding="utf-8"))
-    stop_hooks = config.get("Stop")
-    if not _has_nudge(stop_hooks):
-        return {"removed": False, "hooks_path": str(path)}
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = path.with_suffix(f".json.bak-{timestamp}")
-    shutil.copy2(path, backup_path)
-    kept = [h for h in stop_hooks if not (isinstance(h, dict) and NUDGE_MARKER in h.get("command", ""))]
-    if kept:
-        config["Stop"] = kept
-    else:
-        config.pop("Stop", None)
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return {"removed": True, "hooks_path": str(path), "backup_path": str(backup_path)}
+    config = _load_config(path)
+    removed = _remove_markers(config["hooks"], (NUDGE_MARKER,))
+    backup = _save_config(path, config)
+    return {"removed": bool(removed), "hooks_path": str(path), "backup_path": str(backup)}
 
 
 def nudge_installed(hooks_path: Optional[Path] = None) -> bool:
+    from server.adapters.capture_nudge import NUDGE_MARKER
+
     path = hooks_path or DEFAULT_HOOKS_PATH
-    if not path.exists():
-        return False
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
+        config = _load_config(path)
+    except (ValueError, OSError):
         return False
-    return _has_nudge(config.get("Stop"))
+    return _has_marker(config["hooks"].get("Stop", []), NUDGE_MARKER)

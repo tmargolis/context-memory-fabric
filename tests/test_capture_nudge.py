@@ -141,13 +141,13 @@ def test_codex_nudge_coexists_with_worker_hook(tmp_path):
     codex_hooks.install_hooks(hooks_path=path)
     assert codex_hooks.install_nudge(path)["installed"] is True
     assert codex_hooks.install_nudge(path)["already_present"] is True
-    stop = json.loads(path.read_text())["Stop"]
+    stop = json.loads(path.read_text())["hooks"]["Stop"]
     assert len(stop) == 2
-    assert stop[1]["command"].endswith(f"--harness codex # {NUDGE_MARKER}")
+    assert stop[1]["hooks"][0]["command"].endswith(f"--harness codex # {NUDGE_MARKER}")
 
     codex_hooks.uninstall_nudge(path)
-    stop = json.loads(path.read_text())["Stop"]
-    assert len(stop) == 1 and codex_hooks.HOOK_MARKER in stop[0]["command"]
+    stop = json.loads(path.read_text())["hooks"]["Stop"]
+    assert len(stop) == 1 and codex_hooks.HOOK_MARKER in stop[0]["hooks"][0]["command"]
 
 
 def test_antigravity_nudge_has_its_own_hook_name(tmp_path):

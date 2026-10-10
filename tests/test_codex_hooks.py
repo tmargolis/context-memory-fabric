@@ -2,7 +2,7 @@
 
 Covers:
 1. Idempotent hooks installer:
-   - Merges SessionStart and Stop under hooks.json root keys
+   - Merges SessionStart and Stop under hooks.json nested groups
    - Creates timestamped backup before modification
    - Preserves existing user hooks and unrelated keys
    - Re-running is a no-op (does not duplicate)
@@ -60,12 +60,12 @@ def test_install_hooks_fresh_and_idempotent(tmp_path):
     assert res1["already_present"] == []
     assert hooks_file.exists()
 
-    data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    data = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
     assert "SessionStart" in data
     assert "Stop" in data
     assert len(data["SessionStart"]) == 1
     assert len(data["Stop"]) == 1
-    cmd = data["Stop"][0]["command"]
+    cmd = data["Stop"][0]["hooks"][0]["command"]
     assert HOOK_MARKER in cmd
     assert 'echo "{}"' in cmd
     assert "tail --once" in cmd
@@ -75,7 +75,7 @@ def test_install_hooks_fresh_and_idempotent(tmp_path):
     assert res2["installed"] == []
     assert res2["already_present"] == ["SessionStart", "Stop"]
 
-    data2 = json.loads(hooks_file.read_text(encoding="utf-8"))
+    data2 = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
     assert len(data2["SessionStart"]) == 1
     assert len(data2["Stop"]) == 1
 
@@ -105,7 +105,7 @@ def test_install_and_uninstall_preserves_user_hooks(tmp_path):
 
     # Install CMF hooks
     install_hooks(hooks_path=hooks_file)
-    installed_data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    installed_data = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
 
     # User's other event key preserved
     assert "UserPromptSubmit" in installed_data
@@ -113,19 +113,19 @@ def test_install_and_uninstall_preserves_user_hooks(tmp_path):
 
     # Stop now has 2 entries: user's and CMF's
     assert len(installed_data["Stop"]) == 2
-    assert installed_data["Stop"][0]["command"] == "/usr/local/bin/user-notifier.sh"
-    assert HOOK_MARKER in installed_data["Stop"][1]["command"]
+    assert installed_data["Stop"][0]["hooks"][0]["command"] == "/usr/local/bin/user-notifier.sh"
+    assert HOOK_MARKER in installed_data["Stop"][1]["hooks"][0]["command"]
 
     # Now uninstall CMF hooks
     unres = uninstall_hooks(hooks_path=hooks_file)
     assert "Stop" in unres["uninstalled"]
     assert "SessionStart" in unres["uninstalled"]
 
-    uninstalled_data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    uninstalled_data = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
     # User's Stop hook and UserPromptSubmit hook are preserved exactly
     assert "UserPromptSubmit" in uninstalled_data
     assert len(uninstalled_data["Stop"]) == 1
-    assert uninstalled_data["Stop"][0]["command"] == "/usr/local/bin/user-notifier.sh"
+    assert uninstalled_data["Stop"][0]["hooks"][0]["command"] == "/usr/local/bin/user-notifier.sh"
     # SessionStart was empty so it was pruned
     assert "SessionStart" not in uninstalled_data
 
@@ -141,8 +141,8 @@ def test_sentinel_hooks_lifecycle(tmp_path):
     res = install_sentinel_hooks(hooks_path=hooks_file, sentinel_log=sentinel_log)
     assert res["installed"] == ["SessionStart", "Stop"]
 
-    data = json.loads(hooks_file.read_text(encoding="utf-8"))
-    assert any(SENTINEL_MARKER in h["command"] for h in data["Stop"])
+    data = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
+    assert any(SENTINEL_MARKER in h["command"] for group in data["Stop"] for h in group["hooks"])
 
     # Simulate sentinel firing (writing a line to log)
     sentinel_log.write_text("2026-09-30T10:00:00+0000\n", encoding="utf-8")
@@ -150,7 +150,7 @@ def test_sentinel_hooks_lifecycle(tmp_path):
 
     # Uninstall removes sentinel too
     uninstall_hooks(hooks_path=hooks_file)
-    data_after = json.loads(hooks_file.read_text(encoding="utf-8"))
+    data_after = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
     assert "Stop" not in data_after
     assert "SessionStart" not in data_after
 
@@ -301,3 +301,49 @@ def test_polling_recovers_missed_hooks(tmp_path):
             pending = tail_store.get_pending_extractions()
             assert len(pending) == 1
             assert pending[0]["conversation_id"] == "conv-missed-hook"
+
+
+def test_migrate_legacy_nudge_without_duplicate(tmp_path):
+    from server.adapters.capture_nudge import NUDGE_MARKER
+    from server.adapters.codex.hooks import install_nudge, nudge_installed
+
+    path = tmp_path / "hooks.json"
+    legacy = {"Stop": [{"type": "command", "command": f"echo test # {NUDGE_MARKER}"}]}
+    original = json.dumps(legacy)
+    path.write_text(original)
+    assert get_hooks_status(path)["requires_migration"]
+    result = install_nudge(path)
+    assert result["already_present"]
+    assert Path(result["backup_path"]).read_text() == original
+    assert json.loads(path.read_text()) == {"hooks": {"Stop": [{"hooks": legacy["Stop"]}]}}
+    assert nudge_installed(path)
+    assert not get_hooks_status(path)["requires_migration"]
+
+
+def test_nested_groups_preserve_matchers_and_unrelated_handlers(tmp_path):
+    from server.adapters.capture_nudge import NUDGE_MARKER
+    from server.adapters.codex.hooks import uninstall_nudge
+
+    path = tmp_path / "hooks.json"
+    user = {"type": "command", "command": "echo user", "timeout": 7}
+    config = {"description": "User hooks", "hooks": {"Stop": [
+        {"matcher": "", "hooks": [user, {"type": "command", "command": f"echo # {NUDGE_MARKER}"}]}
+    ], "PreToolUse": [{"matcher": "Bash", "hooks": [user]}]}}
+    path.write_text(json.dumps(config))
+    install_hooks(path)
+    uninstall_nudge(path)
+    uninstall_hooks(path)
+    expected = {"description": "User hooks", "hooks": {
+        "Stop": [{"matcher": "", "hooks": [user]}],
+        "PreToolUse": [{"matcher": "Bash", "hooks": [user]}],
+    }}
+    assert json.loads(path.read_text()) == expected
+
+
+def test_invalid_event_shape_is_not_overwritten(tmp_path):
+    path = tmp_path / "hooks.json"
+    original = '{"hooks": {"Stop": "invalid"}}'
+    path.write_text(original)
+    with pytest.raises(ValueError):
+        install_hooks(path)
+    assert path.read_text() == original

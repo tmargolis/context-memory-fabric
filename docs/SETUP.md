@@ -268,7 +268,7 @@ A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turn
 ```
 
 - The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 6), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
-- **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing.
+- **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing. Its `hooks.json` uses `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "..."}]}]}}`. If `/hooks` reports an unknown top-level `SessionStart` or `Stop`, rerun the Codex hook installer (`.venv/bin/python3 -m server.adapters.codex.cli hooks install`); it backs up and migrates the old flat format while preserving existing handlers. Close and reopen `/hooks` to review the corrected definitions. Installation/status does not prove that hooks are trusted or firing.
 - **Each nudge costs one extra agent step**, and the session must have CMF connected. Without it the agent just finishes.
 - Antigravity has no pre-compaction hook, and Claude Code's and Codex's can't prompt the agent, so a very long session is covered only by the periodic nudges.
 - Chat apps without hooks (Claude Desktop chat, Cowork, ChatGPT) rely on the instructions block, plus a nightly review.
