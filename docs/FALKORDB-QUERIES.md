@@ -30,12 +30,12 @@ LIMIT 300
 ```
 
 ### Subgraph Around a Specific Concept / Entity (Neighborhood Search)
-To focus on a single concept or keyword (e.g., `'Hex'`, `'Qlik'`, `'PostgreSQL'`) and see all connected nodes, edges, child facts, and mentioned episodes:
+To focus on a single concept or keyword (e.g., `'Acme Corp'`, `'Globex'`, `'PostgreSQL'`) and see all connected nodes, edges, child facts, and mentioned episodes:
 ```cypher
 MATCH (root)
-WHERE toLower(root.name) CONTAINS 'hex' 
-   OR toLower(root.content) CONTAINS 'hex' 
-   OR toLower(root.summary) CONTAINS 'hex'
+WHERE toLower(root.name) CONTAINS 'acme' 
+   OR toLower(root.content) CONTAINS 'acme' 
+   OR toLower(root.summary) CONTAINS 'acme'
 OPTIONAL MATCH (root)-[r1]-(neighbor)
 RETURN root, r1, neighbor
 LIMIT 100

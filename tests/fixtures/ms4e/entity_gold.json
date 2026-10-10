@@ -14,7 +14,7 @@
   ],
   "drop_heldout": [
     "jspace20.js", "opinion20.js", "top_probs", "top_ids", "top1_p", "topk=32", "eff_k20",
-    "PID 77867", "PID 12955", "LAN IP 172.16.10.61", "0.0.0.0", "localhost:8000", "~13 minutes",
+    "PID 77867", "PID 12955", "LAN IP 192.0.2.61", "0.0.0.0", "localhost:8000", "~13 minutes",
     "~25s", "2 minutes 14 seconds", "1.67GB", "517MB", "tab-1", "index 0", "L10", "L17",
     "L20", "L30", "layer 24", "layer 25", "21 layers", "p=36.5", "p=37.0", "full_layer_steps=1",
     "key_to_ref", "read_layers()", "extract() function", "drawSegment function", "json.dumps",

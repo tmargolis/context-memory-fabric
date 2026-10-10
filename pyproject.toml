@@ -43,6 +43,9 @@ dev = [
 # A CLI -m overrides the one in addopts (pytest keeps the last -m it sees),
 # which is what makes both commands above work.
 addopts = '-m "not live"'
+# Only tests/: imports/ can hold backup copies of test files (gitignored), which
+# otherwise break collection with "import file mismatch".
+testpaths = ["tests"]
 markers = [
     "live: hits the real Gemini API -- costs quota, needs GEMINI_API_KEY, slow",
 ]

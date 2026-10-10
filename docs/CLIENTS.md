@@ -49,7 +49,7 @@ Claude Desktop's, ChatGPT's, and Gemini's own "add a custom connector" flows are
 Set **both** vars together, or leave both unset — the server refuses to start with only one:
 
 ```bash
-CMF_MCP_ISSUER_URL=https://todds-macbook-air.tail54bb78.ts.net \
+CMF_MCP_ISSUER_URL=https://cmf.example.com \
 CMF_MCP_OAUTH_PASSWORD=$(openssl rand -hex 16) \
   uv run --directory /path/to/context-memory-fabric python -m server.mcp \
   --transport streamable-http --host 127.0.0.1 --port 8000 \

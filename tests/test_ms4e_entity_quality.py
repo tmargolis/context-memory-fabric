@@ -41,7 +41,7 @@ class TestNoiseCategory(unittest.TestCase):
             "Option C": "local_label", "Phase 7": "local_label", "tab-1": "local_label",
             "layer 40": "number_or_measure", "317MB": "number_or_measure", "PID 12955": "number_or_measure",
             "localhost:8000": "number_or_measure", "p=36.5": "number_or_measure", "L17": "number_or_measure",
-            "LAN IP 172.16.10.61": "number_or_measure", "~13 minutes": "number_or_measure",
+            "LAN IP 192.0.2.61": "number_or_measure", "~13 minutes": "number_or_measure",
         }
         for name, category in cases.items():
             with self.subTest(name=name):

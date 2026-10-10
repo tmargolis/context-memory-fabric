@@ -97,6 +97,7 @@ tests/fixtures/ms7_eval/*
 
 # MS6 review — personal project taxonomy, never published
 taxonomy.local.json
+privacy-denylist.local.json
 
 # Personal test examples referenced by test_ms6_review.py / test_step8_edit_memory.py —
 # real historical examples, kept local only. tests/fixtures/local/__init__.py (the loader) stays tracked.
