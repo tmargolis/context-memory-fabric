@@ -21,9 +21,13 @@
    no link between the two. Ingestion is sequential, though, so the
    invalidator is the episode whose ingestion was running at the fact's
    expired_at: the latest episode created at or before it.
-3. With `wiki_paths` (the files in the wiki as exported at as_of), MS7b's
-   wiki-derived Note nodes whose file did not exist yet are removed, with the
-   entities only those notes mentioned. Notes carry no timestamp of their own.
+3. MS7b's wiki-derived Note nodes that did not exist yet are removed, with
+   the entities only those notes mentioned. With `wiki_paths` (the files in the
+   wiki as exported at as_of) the export decides: it is direct evidence of what
+   the vault held. Without one, a note is removed when its own `created_at`
+   (server/providers/wiki/note_dates.py, B03) is after as_of; an undated note
+   is kept. `created_at` is an upper bound for the 2026-04-22 import's notes,
+   which is still before any as_of replay uses.
 
 The source graph is only read. Writes go to the snapshot, which must be named
 `replay-*`, and production names are refused outright.
@@ -197,11 +201,18 @@ async def _restore_later_invalidations(
     ))
 
 
-async def _prune_notes(driver: Any, wiki_paths: set[str]) -> tuple[int, int]:
-    """Remove Note nodes whose file is not in the exported wiki, then the
-    entities only those notes mentioned. Returns (notes, entities) removed."""
-    notes = _records(await driver.execute_query("MATCH (n:Note) RETURN n.note_path AS path"))
-    stale = sorted({n["path"] for n in notes if n["path"] and n["path"] not in wiki_paths})
+async def _prune_notes(driver: Any, cutoff: datetime, wiki_paths: Optional[set[str]] = None) -> tuple[int, int]:
+    """Remove Note nodes that did not exist at `cutoff` (by the wiki export when
+    given, else by their own created_at), then the entities only those notes
+    mentioned. Returns (notes, entities) removed."""
+    notes = _records(await driver.execute_query(
+        "MATCH (n:Note) RETURN n.note_path AS path, toString(n.created_at) AS created_at"
+    ))
+    if wiki_paths is not None:
+        stale = sorted({n["path"] for n in notes if n["path"] and n["path"] not in wiki_paths})
+    else:
+        stale = sorted({n["path"] for n in notes
+                        if n["path"] and (t := _ts(n.get("created_at"))) is not None and t > cutoff})
     if not stale:
         return 0, 0
     mentioned = [r["uuid"] for r in _records(await driver.execute_query(
@@ -270,8 +281,7 @@ async def snapshot_graph(
             result.removed_episode_names.append(r["name"])
     result.episodes_removed = len(removed)
     result.invalidations_restored = await _restore_later_invalidations(driver, timeline, removed)
-    if wiki_paths is not None:
-        result.notes_removed, result.note_entities_removed = await _prune_notes(driver, wiki_paths)
+    result.notes_removed, result.note_entities_removed = await _prune_notes(driver, cutoff, wiki_paths)
 
     counts = _records(await driver.execute_query(
         "MATCH (e:Episodic) WITH count(e) AS eps MATCH (n:Entity) RETURN eps, count(n) AS ents"

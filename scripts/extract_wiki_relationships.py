@@ -4,7 +4,7 @@ Extracts durable entity relationships (RELATES_TO) over wiki text without
 creating Episodic nodes, preserving the strict boundary between episodic memory
 and durable knowledge.
 
-- Resolves notes' actual created_at / updated_at timestamps (frontmatter, git, birthtime).
+- Resolves notes' actual created_at / updated_at timestamps (server/providers/wiki/note_dates.py).
 - Uses typed-recall extraction profile + debris filter.
 - Resolves onto existing entities (including Phase 2 merges).
 - Tags every edge with source='wiki', note_path, section_heading, and authoring timestamps.
@@ -25,7 +25,6 @@ import os
 from pathlib import Path
 import random
 import re
-import subprocess
 import sys
 import time
 from typing import Any, Optional
@@ -39,6 +38,8 @@ from server.providers.entity_filter import noise_category
 from server.providers.extraction_profile import extraction_kwargs, TYPED_RECALL_EXTRACTION
 from server.providers.memory_graphiti import get_graphiti_for_operation
 from server.providers.wiki.corpus import get_corpus_root
+# Shared with seed/sweep, replay and get_context; re-exported here for existing callers.
+from server.providers.wiki.note_dates import resolve_note_dates  # noqa: F401
 
 from graphiti_core.nodes import EpisodicNode, EpisodeType, EntityNode
 from graphiti_core.edges import EntityEdge
@@ -76,85 +77,6 @@ PILOT_NOTES = [
     "WIKI/art-projects/Cityscapes/Cityscape-View the shadows.md",
     "WIKI/art-projects/Cityscapes/Cityscape-Celestial urban sky.md",
 ]
-
-
-def resolve_note_dates(wiki_root: Path, rel_path: str) -> dict[str, Any]:
-    """Resolve note created_at and updated_at from frontmatter, git history, or disk."""
-    full_path = wiki_root / rel_path
-    if not full_path.exists():
-        now_iso = datetime.now(timezone.utc).isoformat()
-        return {
-            "created_at": now_iso,
-            "created_dt": datetime.now(timezone.utc),
-            "created_source": "fallback",
-            "updated_at": now_iso,
-            "updated_dt": datetime.now(timezone.utc),
-            "updated_source": "fallback",
-        }
-
-    created_fm, updated_fm = None, None
-    try:
-        content = full_path.read_text(encoding="utf-8", errors="replace")
-        if content.startswith("---"):
-            end_fm = content.find("\n---", 3)
-            if end_fm != -1:
-                fm_text = content[3:end_fm]
-                m_c = re.search(r"^created:\s*([^\n\r]+)", fm_text, re.M)
-                if m_c:
-                    created_fm = m_c.group(1).strip("\"' ")
-                m_u = re.search(r"^updated:\s*([^\n\r]+)", fm_text, re.M)
-                if m_u:
-                    updated_fm = m_u.group(1).strip("\"' ")
-    except Exception:
-        pass
-
-    # Git first commit
-    cmd_add = ["git", "-C", str(wiki_root), "log", "--diff-filter=A", "--follow", "-n", "1", "--pretty=format:%cI", "--", rel_path]
-    res_add = subprocess.run(cmd_add, capture_output=True, text=True)
-    git_add = res_add.stdout.strip() or None
-
-    # Git last commit
-    cmd_mod = ["git", "-C", str(wiki_root), "log", "-n", "1", "--pretty=format:%cI", "--", rel_path]
-    res_mod = subprocess.run(cmd_mod, capture_output=True, text=True)
-    git_mod = res_mod.stdout.strip() or None
-
-    # Disk timestamps
-    st = full_path.stat()
-    disk_birth = datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_ctime), tz=timezone.utc).isoformat()
-    disk_mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
-
-    c_source = "frontmatter" if created_fm else ("git" if git_add else "disk")
-    u_source = "frontmatter" if updated_fm else ("git" if git_mod else "disk")
-
-    created_at = created_fm or git_add or disk_birth
-    updated_at = updated_fm or git_mod or disk_mtime
-
-    # Normalize ISO string if needed
-    try:
-        c_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-    except Exception:
-        # Fallback date parsing (e.g. YYYY-MM-DD)
-        try:
-            c_dt = datetime.strptime(created_at[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except Exception:
-            c_dt = datetime.now(timezone.utc)
-
-    try:
-        u_dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-    except Exception:
-        try:
-            u_dt = datetime.strptime(updated_at[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except Exception:
-            u_dt = datetime.now(timezone.utc)
-
-    return {
-        "created_at": c_dt.isoformat(),
-        "created_dt": c_dt,
-        "created_source": c_source,
-        "updated_at": u_dt.isoformat(),
-        "updated_dt": u_dt,
-        "updated_source": u_source,
-    }
 
 
 def parse_markdown_sections(text: str) -> list[dict[str, Any]]:
@@ -342,23 +264,10 @@ async def process_section(
 
 
 async def update_note_node_dates(graphiti: Any, note_path: str, dates: dict[str, Any]) -> None:
-    """Update created_at and updated_at properties on :Note node."""
-    q = """
-    MATCH (n:Note {note_path: $note_path})
-    SET n.created_at = $created_at,
-        n.created_source = $created_source,
-        n.updated_at = $updated_at,
-        n.updated_source = $updated_source
-    RETURN count(n) AS c
-    """
-    await graphiti.driver.execute_query(
-        q,
-        note_path=note_path,
-        created_at=dates["created_at"],
-        created_source=dates["created_source"],
-        updated_at=dates["updated_at"],
-        updated_source=dates["updated_source"],
-    )
+    """Write a note's dates onto its :Note node (shared writer, see note_dates.py)."""
+    from server.providers.wiki.note_dates import NOTE_DATE_FIELDS, write_note_dates
+    row = {"note_path": note_path, **{k: dates[k] for k in NOTE_DATE_FIELDS}}
+    await write_note_dates(graphiti.driver, [row])
 
 
 async def main() -> None:

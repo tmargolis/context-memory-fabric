@@ -1,6 +1,7 @@
-"""MS7b Phase 4 -- duplicate merge + retention sweep over episode-extracted entities.
+"""MS7b Phase 4 -- duplicate merge + retention sweep over episode-extracted entities,
+plus Note-date upkeep.
 
-Two passes, in this order (merge before retention matters: a merged
+Two entity passes, in this order (merge before retention matters: a merged
 entity's *combined* mention count is what the retention sweep should
 judge, not two fragments each independently looking weaker than the
 entity actually is):
@@ -35,9 +36,16 @@ of notes scores low; a specific, rare name scores high. This is a
 one-time scan of the vault's text (no LLM, no network) cached in memory
 for the run.
 
+3. **Note dates** (B03, 2026-10-10): every :Note's created_at / updated_at is
+   re-resolved from the wiki (server/providers/wiki/note_dates.py) and
+   rewritten where it changed. A known date is never replaced by "unknown"
+   (e.g. a note whose file was deleted).
+   `--note-dates-only` runs just this pass, which is how an existing graph's
+   notes get their first dates.
+
 Usage:
     uv run python scripts/sweep_wiki_graph.py --graph-name mem-fabric-local-wiki
-        [--min-episodes 2] [--idf-threshold 2.0] [--dry-run]
+        [--min-episodes 2] [--idf-threshold 2.0] [--dry-run] [--note-dates-only]
 """
 
 from __future__ import annotations
@@ -199,11 +207,50 @@ async def merge_duplicate_entities(driver, groups: list[tuple[dict, list[dict]]]
     }
 
 
-async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_root: Path, dry_run: bool) -> dict:
+async def refresh_note_dates(driver, wiki_root: Path, dry_run: bool) -> dict:
+    """Re-resolve every :Note's dates and write the ones that changed."""
+    from collections import Counter
+    from server.providers.wiki.note_dates import NOTE_DATE_FIELDS, git_index, resolve_note_dates, write_note_dates
+
+    res = await driver.execute_query(
+        "MATCH (n:Note) RETURN n.note_path AS note_path, "
+        + ", ".join(f"n.{k} AS {k}" for k in NOTE_DATE_FIELDS)
+    )
+    current = res[0] if res and isinstance(res[0], list) else (res or [])
+    index = git_index(wiki_root)
+    changed, undated, sources = [], 0, Counter()
+    for rec in current:
+        path = rec["note_path"]
+        if not path:
+            continue
+        resolved = resolve_note_dates(wiki_root, path, index)
+        if resolved["created_at"] is None:
+            undated += 1  # no file and no history: leave whatever the node has
+            continue
+        sources[resolved["created_source"]] += 1
+        want = {k: resolved[k] for k in NOTE_DATE_FIELDS}
+        if any(rec.get(k) != want[k] for k in NOTE_DATE_FIELDS):
+            changed.append({"note_path": path, **want})
+    result = {"notes": len(current), "dated": sum(sources.values()), "undated": undated,
+              "created_sources": dict(sources), "changed": len(changed)}
+    if dry_run:
+        logger.info(f"[dry-run] note dates: {result}")
+        for row in changed[:10]:
+            logger.info(f"    {row['note_path']}: created {row['created_at']}, updated {row['updated_at']}")
+        return result
+    result["written"] = await write_note_dates(driver, changed)
+    logger.info(f"Note dates: {result}")
+    return result
+
+
+async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_root: Path, dry_run: bool,
+                note_dates_only: bool = False) -> dict:
     from server.providers.memory_graphiti import get_graphiti
 
     graphiti = get_graphiti(graph_name=graph_name)
     driver = graphiti.driver
+    if note_dates_only:
+        return {"dry_run": dry_run, "note_dates": await refresh_note_dates(driver, wiki_root, dry_run)}
 
     dup_groups = await find_duplicate_groups(driver)
     logger.info(f"Duplicate-name entity groups: {len(dup_groups)} "
@@ -255,6 +302,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
             "confirmed_recurring": len(confirmed_recurring),
             "confirmed_vouched": len(confirmed_vouched),
             "candidates": len(candidates),
+            "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=True),
         }
 
     async def _tag(uuids: list[str], status: str):
@@ -279,6 +327,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         "confirmed_recurring": len(confirmed_recurring),
         "confirmed_vouched": len(confirmed_vouched),
         "candidates": len(candidates),
+        "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=False),
     }
 
 
@@ -289,6 +338,7 @@ def main() -> None:
     parser.add_argument("--idf-threshold", type=float, default=DEFAULT_IDF_THRESHOLD)
     parser.add_argument("--wiki-root", type=Path, default=None, help="defaults to LLM_WIKI_PATH")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--note-dates-only", action="store_true", help="Only refresh :Note dates (pass 3)")
     args = parser.parse_args()
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name
@@ -296,7 +346,8 @@ def main() -> None:
     from server.providers.wiki.corpus import get_corpus_root
     wiki_root = args.wiki_root or get_corpus_root()
 
-    result = asyncio.run(sweep(args.graph_name, args.min_episodes, args.idf_threshold, wiki_root, args.dry_run))
+    result = asyncio.run(sweep(args.graph_name, args.min_episodes, args.idf_threshold, wiki_root, args.dry_run,
+                               note_dates_only=args.note_dates_only))
     print(json.dumps(result, indent=1))
 
 

@@ -11,11 +11,15 @@ observable behavior change in this milestone, and only in a configuration
 (LLM_WIKI_PATH unset) that the current deployment does not use.
 """
 
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from server.core.protocols import KnowledgeProvider, KnowledgeSource, MemoryProvider
 from server.knowledge import format_knowledge_result, load_knowledge_sources, search_knowledge
-from server.providers.wiki.corpus import ExtractionStatus
+from server.providers.wiki.corpus import ExtractionStatus, get_corpus_root
+from server.providers.wiki.note_dates import describe_age, git_index, resolve_note_dates
+from server.providers.wiki.provider import FileKnowledgeProvider
 from server.providers import get_default_knowledge_provider, get_default_memory_provider
 
 # Default providers for the current single-deployment configuration. A
@@ -63,6 +67,25 @@ def _select_memory(facts: list, cap: int) -> list:
         if len(out) >= cap:
             break
     return out
+
+
+def _wiki_ages(paths: list[str], root: Optional[Path] = None, now: Optional[datetime] = None) -> dict[str, str]:
+    """relative_path -> "created ... | updated ..." for wiki hits whose dates are known.
+    Never raises: a missing wiki or git problem just means no age lines."""
+    try:
+        root = root or get_corpus_root()
+        index = git_index(root)
+    except Exception:  # noqa: BLE001 - ages are an annotation, never a failure
+        return {}
+    ages = {}
+    for path in dict.fromkeys(paths):
+        try:
+            age = describe_age(resolve_note_dates(root, path, index), now)
+        except Exception:  # noqa: BLE001
+            age = None
+        if age:
+            ages[path] = age
+    return ages
 
 
 async def get_context(
@@ -150,6 +173,13 @@ async def get_context(
         )
         memory_facts.extend(expanded_facts)
 
+    # 2c. Note ages (B03): when each wiki hit was created and last changed, so a
+    # reader can weigh a two-year-old note against a fresh episode. Only for
+    # the file wiki, whose paths are relative to LLM_WIKI_PATH.
+    wiki_ages: dict[str, str] = {}
+    if wiki_results and isinstance(knowledge, FileKnowledgeProvider):
+        wiki_ages = await asyncio.to_thread(_wiki_ages, [r.relative_path for r in wiki_results])
+
     # 3. Assemble Unified Context
     sections: list[str] = [
         f"# Context Fabric: '{clean_topic}'\n",
@@ -163,6 +193,8 @@ async def get_context(
         for idx, r in enumerate(wiki_results, 1):
             sections.append(f"### {idx}. `{r.relative_path}` ({r.top_level_area})")
             sections.append(f"- **Media Type:** `{r.media_type}` | **Match:** `{r.match_basis}` | **Extraction:** `{r.extraction_status}`")
+            if r.relative_path in wiki_ages:
+                sections.append(f"- **Age:** {wiki_ages[r.relative_path]}")
             if r.extraction_status == ExtractionStatus.EXTRACTED.value and r.matched_snippet:
                 sections.append(f"\n> {r.matched_snippet}\n")
             elif r.extraction_status == ExtractionStatus.NEEDS_OCR.value:

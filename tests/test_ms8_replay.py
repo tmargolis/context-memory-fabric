@@ -406,7 +406,9 @@ class RollbackDriver:
         if "r.expired_at IS NOT NULL" in q:
             return [[dict(e) for e in self.expired]]
         if "RETURN n.note_path AS path" in q:
-            return [[{"path": n} for n in self.notes]]
+            # a note is a path, or (path, created_at) for a dated one
+            return [[{"path": n, "created_at": None} if isinstance(n, str) else {"path": n[0], "created_at": n[1]}
+                     for n in self.notes]]
         if "RETURN DISTINCT x.uuid" in q:
             return [[{"uuid": u} for u in self.note_entities]]
         if "n.note_path IN $paths" in q:
@@ -459,11 +461,30 @@ class TestRollback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(driver.entities_checked, ["x1"])
         self.assertEqual((result.notes_removed, result.note_entities_removed), (1, 1))
 
-    async def test_notes_left_alone_without_a_wiki_export(self):
+    async def test_undated_notes_left_alone_without_a_wiki_export(self):
         driver = RollbackDriver(self.EPISODES, notes=["WIKI/new.md"])
         await snap.snapshot_graph(T, "replay-t", journal_db=_journal(self.LEDGER), redis_client=FakeRedis(),
                                   graphiti=RollbackGraphiti(driver))
         self.assertIsNone(driver.notes_deleted)
+
+    async def test_without_an_export_prunes_notes_created_after_as_of(self):
+        driver = RollbackDriver(self.EPISODES, note_entities=["x1"], notes=[
+            ("WIKI/old.md", "2026-04-22T14:29:30-05:00"),   # import upper bound, before T
+            ("WIKI/later.md", "2026-09-10T00:00:01+00:00"),  # one second after T
+            "WIKI/undated.md",
+        ])
+        result = await snap.snapshot_graph(T, "replay-t", journal_db=_journal(self.LEDGER), redis_client=FakeRedis(),
+                                           graphiti=RollbackGraphiti(driver))
+        self.assertEqual(driver.notes_deleted, ["WIKI/later.md"])
+        self.assertEqual(result.notes_removed, 1)
+
+    async def test_an_export_overrides_created_at(self):
+        # created_at says WIKI/later.md is new, but the export shows it existed at as_of.
+        driver = RollbackDriver(self.EPISODES, notes=[("WIKI/later.md", "2026-09-11T00:00:00+00:00"),
+                                                      ("WIKI/gone.md", "2026-01-01T00:00:00+00:00")])
+        await snap.snapshot_graph(T, "replay-t", journal_db=_journal(self.LEDGER), redis_client=FakeRedis(),
+                                  graphiti=RollbackGraphiti(driver), wiki_paths={"WIKI/later.md"})
+        self.assertEqual(driver.notes_deleted, ["WIKI/gone.md"])
 
 
 class TestWikiWindow(unittest.TestCase):

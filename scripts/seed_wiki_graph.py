@@ -10,7 +10,8 @@ its extracted entity mentions onto the :Entity nodes seeded here BY NAME
 
 What gets written:
   - :Note        one per scanned note + one stub per referenced-but-
-                  unscanned note path (e.g. under RAW/)
+                  unscanned note path (e.g. under RAW/), with created_at /
+                  updated_at (server/providers/wiki/note_dates.py; B03, 2026-10-10)
   - :Section     one per heading (including boilerplate ones -- kept for
                   structural completeness and their own wikilinks, but
                   never decomposed into entities)
@@ -30,6 +31,11 @@ What gets written:
 Usage:
     uv run python scripts/seed_wiki_graph.py --graph-name mem-fabric-local-wiki
         [--sections PATH] [--entities PATH] [--dry-run] [--batch-size 500]
+        [--wiki-root PATH | --no-dates]
+
+Note dates come from --wiki-root (default: LLM_WIKI_PATH). Without a usable
+wiki the notes are seeded undated; scripts/sweep_wiki_graph.py
+--note-dates-only can add them later.
 """
 
 from __future__ import annotations
@@ -42,8 +48,9 @@ import os
 import time
 import uuid as uuidlib
 from datetime import datetime, timezone
+from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -53,12 +60,22 @@ DEFAULT_ENTITIES = Path("imports/state/wiki_entities.json")
 CYPHER_BATCH = 500
 
 
+def note_date_rows(notes: list[dict], wiki_root: Optional[Path]) -> dict[str, dict]:
+    """note_path -> the date properties its :Note node gets ({} without a wiki)."""
+    if wiki_root is None:
+        return {}
+    from server.providers.wiki.note_dates import git_index, note_date_row
+    index = git_index(wiki_root)
+    return {n["note_path"]: note_date_row(wiki_root, n["note_path"], index) for n in notes}
+
+
 def _chunks(seq: list, n: int):
     for i in range(0, len(seq), n):
         yield seq[i:i + n]
 
 
-async def seed(graph_name: str, sections_path: Path, entities_path: Path, batch_size: int, dry_run: bool) -> dict:
+async def seed(graph_name: str, sections_path: Path, entities_path: Path, batch_size: int, dry_run: bool,
+               wiki_root: Optional[Path] = None) -> dict:
     # Import here, after FALKORDB_DATABASE is set by main() -- mirrors
     # rebuild_graph_from_ledger.py's own convention for the same reason.
     from server.providers.memory_graphiti import get_graphiti, _build_embedder  # noqa: F401 (embedder factory)
@@ -70,12 +87,20 @@ async def seed(graph_name: str, sections_path: Path, entities_path: Path, batch_
     sections = sections_reg["sections"]
     entities = entities_reg["entities"]
 
+    dates = note_date_rows(notes, wiki_root)
+    if wiki_root is not None:
+        from server.providers.wiki.note_dates import git_index, resolve_note_dates
+        index = git_index(wiki_root)
+        sources = Counter(resolve_note_dates(wiki_root, n["note_path"], index)["created_source"] for n in notes)
+    else:
+        sources = None
     stats = {
         "graph_name": graph_name,
         "notes": len(notes),
         "sections": len(sections),
         "distinct_entities": len(entities),
         "dry_run": dry_run,
+        "note_created_sources": dict(sources) if sources else None,
     }
 
     if dry_run:
@@ -95,11 +120,17 @@ async def seed(graph_name: str, sections_path: Path, entities_path: Path, batch_
     # didn't, and showed as bare IDs in the Browser until the user set this by
     # hand (2026-09-13). Setting it here makes every future reseed correct
     # without a manual follow-up query.
-    note_rows = [{
-        "note_id": n["note_id"], "note_path": n["note_path"], "name": n["note_path"],
-        "top_level_area": n["top_level_area"], "is_stub": n["is_stub"],
-        "source": "wiki",
-    } for n in notes]
+    note_rows = []
+    for n in notes:
+        row = {
+            "note_id": n["note_id"], "note_path": n["note_path"], "name": n["note_path"],
+            "top_level_area": n["top_level_area"], "is_stub": n["is_stub"],
+            "source": "wiki",
+        }
+        d = dates.get(n["note_path"])
+        if d and d["created_at"]:
+            row.update({k: v for k, v in d.items() if v is not None})
+        note_rows.append(row)
     for chunk in _chunks(note_rows, batch_size):
         await driver.execute_query(
             "UNWIND $rows AS row MERGE (n:Note {note_id: row.note_id}) SET n = row",
@@ -231,12 +262,26 @@ def main() -> None:
     parser.add_argument("--entities", type=Path, default=DEFAULT_ENTITIES)
     parser.add_argument("--batch-size", type=int, default=CYPHER_BATCH)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--wiki-root", type=Path, default=None, help="Wiki to date notes from (default: LLM_WIKI_PATH)")
+    parser.add_argument("--no-dates", action="store_true", help="Seed notes without dates")
     args = parser.parse_args()
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name
 
+    wiki_root = None
+    if not args.no_dates:
+        if args.wiki_root:
+            wiki_root = args.wiki_root
+        else:
+            from server.providers.wiki.corpus import get_corpus_root
+            try:
+                wiki_root = get_corpus_root()
+            except RuntimeError as e:
+                logger.warning(f"No wiki for note dates ({e}); seeding notes undated")
+
     t0 = time.monotonic()
-    stats = asyncio.run(seed(args.graph_name, args.sections, args.entities, args.batch_size, args.dry_run))
+    stats = asyncio.run(seed(args.graph_name, args.sections, args.entities, args.batch_size, args.dry_run,
+                             wiki_root=wiki_root))
     stats["elapsed_seconds"] = round(time.monotonic() - t0, 1)
     print(json.dumps(stats, indent=1))
 
