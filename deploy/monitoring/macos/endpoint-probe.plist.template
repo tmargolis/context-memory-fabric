@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- CMF endpoint probe (scripts/probe_endpoint.py): every 5 minutes, checks the server locally and at
+     CMF_MCP_ISSUER_URL and appends to imports/state/endpoint_probe.jsonl. Replace {{REPO}} and {{LOG_DIR}},
+     save as ~/Library/LaunchAgents/com.cmf.endpoint-probe.plist, then: launchctl load <that file>. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.cmf.endpoint-probe</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{REPO}}/.venv/bin/python3</string>
+		<string>{{REPO}}/scripts/probe_endpoint.py</string>
+		<string>run</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>{{REPO}}</string>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>{{LOG_DIR}}/cmf-endpoint-probe.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{LOG_DIR}}/cmf-endpoint-probe-err.log</string>
+</dict>
+</plist>

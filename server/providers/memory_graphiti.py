@@ -1116,6 +1116,72 @@ def parse_iso_datetime(date_input: str | datetime) -> datetime:
     )
 
 
+_MAX_LISTED = 10  # candidates / preview rows shown in a report
+
+
+async def _fact_text_candidates(driver: Any, query: str, exclude: set[str]) -> list[dict[str, Any]]:
+    """Episodes whose RELATES_TO facts contain `query` (case-insensitive), most
+    matching facts first. Read-only; `exclude` drops episodes already matched directly."""
+    rows = await driver.execute_query(
+        "MATCH ()-[f:RELATES_TO]->() WHERE toLower(f.fact) CONTAINS toLower($query) "
+        "UNWIND f.episodes AS ep_uuid MATCH (e:Episodic {uuid: ep_uuid}) "
+        "RETURN e.uuid AS uuid, e.name AS name, e.valid_at AS valid_at, f.fact AS fact",
+        query=query,
+    )
+    records = rows[0] if rows and isinstance(rows[0], list) else []
+    by_uuid: dict[str, dict[str, Any]] = {}
+    for r in records:
+        if r["uuid"] in exclude:
+            continue
+        c = by_uuid.setdefault(r["uuid"], {"uuid": r["uuid"], "name": r["name"], "valid_at": r["valid_at"], "facts": []})
+        if r["fact"] not in c["facts"]:
+            c["facts"].append(r["fact"])
+    return sorted(by_uuid.values(), key=lambda c: (-len(c["facts"]), c["name"] or ""))
+
+
+def _candidate_lines(fact_candidates: list[dict[str, Any]]) -> list[str]:
+    lines = [f"#### 🔎 Episodes whose facts contain the query ({len(fact_candidates)}) — not edited",
+             "_Retarget one by passing its uuid as `target_query`._"]
+    for c in fact_candidates[:_MAX_LISTED]:
+        lines.append(f"- `{c.get('name')}` (`{c.get('uuid')}`): {c['facts'][0]}"
+                     + (f" (+{len(c['facts']) - 1} more facts)" if len(c["facts"]) > 1 else ""))
+    if len(fact_candidates) > _MAX_LISTED:
+        lines.append(f"- … and {len(fact_candidates) - _MAX_LISTED} more")
+    lines.append("")
+    return lines
+
+
+def format_edit_memory_preview_for_mcp(preview: dict[str, Any]) -> str:
+    """Report for an edit_memory call that requested no change: what the query matches."""
+    eps, ents, cands = preview["direct_episodes"], preview["direct_entities"], preview["fact_candidates"]
+    q = preview["target_query"]
+    if not eps and not ents and not cands:
+        return (f"### 🔍 Memory Match Preview (no changes requested)\n\n"
+                f"Nothing matches `{q}`: no episode name or content, entity name or summary, or fact contains it.")
+    lines = [
+        "### 🔍 Memory Match Preview (no changes requested)",
+        f"- **Target Query:** `{q}`",
+        f"- **Episodes matched directly:** {len(eps)} | **Entities matched directly:** {len(ents)}",
+        "- An edit with this `target_query` writes to the direct matches only (narrow it, or use a uuid, to edit one).",
+        "",
+    ]
+    if eps:
+        lines.append("#### 🎬 Episodes (name or content contains the query)")
+        lines += [f"- `{e.get('name')}` (`{e.get('uuid')}`), valid from `{e.get('valid_at')}`" for e in eps[:_MAX_LISTED]]
+        if len(eps) > _MAX_LISTED:
+            lines.append(f"- … and {len(eps) - _MAX_LISTED} more")
+        lines.append("")
+    if ents:
+        lines.append("#### 🏷️ Entities (name or summary contains the query)")
+        lines += [f"- `{e.get('name')}` (`{e.get('uuid')}`)" for e in ents[:_MAX_LISTED]]
+        if len(ents) > _MAX_LISTED:
+            lines.append(f"- … and {len(ents) - _MAX_LISTED} more")
+        lines.append("")
+    if cands:
+        lines += _candidate_lines(cands)
+    return "\n".join(lines).strip()
+
+
 def format_edit_memory_results_for_mcp(
     target_query: str,
     dry_run: bool,
@@ -1124,12 +1190,29 @@ def format_edit_memory_results_for_mcp(
     matched_edges: list[dict[str, Any]],
     registry_updates: list[dict[str, Any]],
     reextraction: Optional[dict[str, Any]] = None,
+    direct_match_counts: Optional[dict[str, int]] = None,
+    fact_candidates: Optional[list[dict[str, Any]]] = None,
 ) -> str:
     """Format memory edit/update results into clean Markdown for MCP clients."""
     status_label = "DRY RUN (Preview Only - No Changes Made)" if dry_run else "COMMITTED (Graphiti and FalkorDB Updated)"
+    fact_candidates = fact_candidates or []
 
     if not matched_episodes and not matched_entities and not matched_edges:
-        return f"### ⚠️ Memory Edit Report ({status_label})\n\nNo matching episodes, entities, or facts found for query: `{target_query}`."
+        header = f"### ⚠️ Memory Edit Report ({status_label})\n\n"
+        direct = direct_match_counts or {}
+        if direct.get("episodes") or direct.get("entities"):
+            body = (f"`{target_query}` matched {direct.get('episodes', 0)} episode(s) and "
+                    f"{direct.get('entities', 0)} entity(ies) directly, but the requested change alters none of "
+                    "them (the values are already in place, or the field doesn't apply: `new_summary` is for "
+                    "entities, `new_name` and `new_content` for episodes), so nothing was changed.")
+            if fact_candidates:
+                body += "\n\n" + "\n".join(_candidate_lines(fact_candidates)).strip()
+        elif fact_candidates:
+            body = (f"No episode or entity contains `{target_query}` directly, so nothing was changed.\n\n"
+                    + "\n".join(_candidate_lines(fact_candidates)).strip())
+        else:
+            body = f"No matching episodes, entities, or facts found for query: `{target_query}`."
+        return header + body
 
     lines = [
         f"### ✏️ Episodic Memory Edit Report ({status_label})",
@@ -1194,6 +1277,9 @@ def format_edit_memory_results_for_mcp(
         if reextraction.get("message"):
             lines.append(f"- {reextraction['message']}")
         lines.append("")
+
+    if fact_candidates:
+        lines += _candidate_lines(fact_candidates)
 
     return "\n".join(lines).strip()
 
@@ -1375,12 +1461,18 @@ async def edit_memory(
     that directly matches several nodes still edits all of them — narrow
     the query (prefer an exact uuid) to scope a correction to one node.
 
+    With no change requested (all new_* empty), nothing is written and the
+    result is a match preview: the directly matched episodes and entities,
+    plus episodes whose extracted facts contain the query. Those fact-text
+    candidates are listed in every report and never edited; pass one's uuid
+    as `target_query` to edit it.
+
     Args:
         target_query: Search string, entity name, episode name, or UUID identifying the memory to edit.
         new_reference_time: New date/timestamp for the episode (e.g. '2025-01-13' or '2025-01-13T00:00:00Z').
         new_content: Optional updated body content for the episode.
         new_summary: Optional updated summary for matched entity node(s).
-        new_name: Optional updated identifier name for the episode or entity.
+        new_name: Optional updated name for matched episode(s); entities are not renamed.
         dry_run: If True, previews changes without writing to FalkorDB or updating the import registry.
         format_for_mcp: If True, returns formatted Markdown for MCP responses.
         registry_path: Path to import registry JSON (defaults to project-root imports/state/import_registry.json).
@@ -1457,6 +1549,35 @@ async def edit_memory(
     # for seeing what's connected — it is just never mutated.
     direct_entity_uuids = set(entities_map.keys())
     direct_episode_uuids = set(episodes_map.keys())
+
+    # Episodes whose extracted facts contain the query (found 2026-10-10, B04):
+    # recall_mem returns fact text, which an LLM wrote, so it is usually not in
+    # any episode's own content and the direct match above misses it. These are
+    # candidates only -- listed with their uuids so the caller can retarget one
+    # -- and are never written to.
+    fact_candidates = await _fact_text_candidates(driver, clean_query, exclude=direct_episode_uuids)
+
+    # A call with no change requested is a lookup ("what does this match?").
+    # Until 2026-10-10 it reported only nodes that *would change*, so every
+    # such probe said "No matching episodes" even when the query matched --
+    # the whole of the 2026-09-21 "target search misses promoted episodes"
+    # finding (all 8 journaled failures were change-less dry runs).
+    # (Blank strings count as "not given": some MCP clients send "" for unused optional fields.)
+    if not any(v is not None and not (isinstance(v, str) and not v.strip())
+               for v in (new_reference_time, new_content, new_summary, new_name)):
+        preview = {
+            "target_query": clean_query,
+            "dry_run": True,
+            "mode": "preview",
+            "direct_episodes": [{k: episodes_map[u].get(k) for k in ("uuid", "name", "valid_at")}
+                                for u in sorted(direct_episode_uuids, key=lambda u: episodes_map[u].get("name") or u)],
+            "direct_entities": [{k: entities_map[u].get(k) for k in ("uuid", "name")}
+                                for u in sorted(direct_entity_uuids, key=lambda u: entities_map[u].get("name") or u)],
+            "fact_candidates": fact_candidates,
+            "matched_episodes": [], "matched_entities": [], "matched_edges": [], "registry_updates": [],
+            "reextraction": None,
+        }
+        return format_edit_memory_preview_for_mcp(preview) if format_for_mcp else preview
 
     # For each matched Entity, find connected Episodes
     for ent_uuid in list(entities_map.keys()):
@@ -1539,6 +1660,7 @@ async def edit_memory(
             new_valid_at_iso, new_date_str, new_compact_str, new_content, new_summary, new_name,
             dry_run, format_for_mcp, registry_path, background,
             Path(ledger_path) if ledger_path else DEFAULT_EDIT_LEDGER,
+            fact_candidates=fact_candidates,
         )
     finally:
         spark_hold.close()
@@ -1567,6 +1689,8 @@ async def _edit_memory_writes(
     registry_path: Optional[str | Path],
     background: bool,
     ledger_path: Path,
+    *,
+    fact_candidates: Optional[list[dict[str, Any]]] = None,
 ) -> str | dict[str, Any]:
     """edit_memory's write half: steps 4-6 over the nodes it matched."""
     # 4. Plan and track modifications
@@ -1800,6 +1924,8 @@ async def _edit_memory_writes(
         "matched_edges": modified_edges,
         "registry_updates": registry_updates,
         "reextraction": reextraction,
+        "direct_match_counts": {"episodes": len(direct_episode_uuids), "entities": len(direct_entity_uuids)},
+        "fact_candidates": fact_candidates or [],
     }
 
     if format_for_mcp:
@@ -1811,6 +1937,8 @@ async def _edit_memory_writes(
             matched_edges=modified_edges,
             registry_updates=registry_updates,
             reextraction=reextraction,
+            direct_match_counts=result_data["direct_match_counts"],
+            fact_candidates=fact_candidates,
         )
     return result_data
 

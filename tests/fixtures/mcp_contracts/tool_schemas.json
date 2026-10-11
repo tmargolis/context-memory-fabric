@@ -267,7 +267,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.\n    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).\n    - Use to update entity summaries or episode narrative content in the knowledge graph.\n\n    EXAMPLES OF USER INTENT:\n    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'\n    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'\n    - 'Correct the summary for the SQLite database entity.'\n\n    SIDE EFFECTS:\n    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.\n    - new_content replaces the episode's facts too: it is re-extracted from the new content in the background\n      (~30-40s on the local model) and its old facts are removed. It must match exactly one episode (use its\n      uuid) and fails without changing anything while another local-model extraction job is running.\n    ",
+    "description": "Edit, correct, or re-date existing episodic memory episodes, entities, and edges in FalkorDB.\n\n    WHEN TO USE:\n    - Use when the user points out an inaccurate date, typo, outdated fact, or incorrect detail in past episodic memory.\n    - Use to re-date historical episodes (e.g. correcting a date from 2024 to 2025).\n    - Use to update entity summaries or episode narrative content in the knowledge graph.\n\n    EXAMPLES OF USER INTENT:\n    - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'\n    - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'\n    - 'Correct the summary for the SQLite database entity.'\n\n    LOOKUP FIRST:\n    - Call with only target_query to see what it matches (episodes, entities, and episodes whose facts contain\n      the query, each with its uuid); nothing is written. recall_mem returns fact text, which usually matches\n      only facts, so retarget the episode you mean by its uuid.\n\n    SIDE EFFECTS:\n    - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.\n    - new_content replaces the episode's facts too: it is re-extracted from the new content in the background\n      (~30-40s on the local model) and its old facts are removed. It must match exactly one episode (use its\n      uuid) and fails without changing anything while another local-model extraction job is running.\n    ",
     "input_schema": {
       "properties": {
         "dry_run": {
@@ -299,7 +299,7 @@
             }
           ],
           "default": null,
-          "description": "Optional updated identifier name for the episode or entity.",
+          "description": "Optional updated name for the matched episode(s). Entities are not renamed.",
           "title": "New Name"
         },
         "new_reference_time": {

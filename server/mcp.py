@@ -1159,7 +1159,7 @@ async def edit_memory(
     new_name: Annotated[
         Optional[str],
         Field(
-            description="Optional updated identifier name for the episode or entity."
+            description="Optional updated name for the matched episode(s). Entities are not renamed."
         ),
     ] = None,
     dry_run: Annotated[
@@ -1180,6 +1180,11 @@ async def edit_memory(
     - 'The database migration was completed on 2025-01-13, not 2024-01-13. Update that in memory.'
     - 'Fix the date for the Project Orion architecture decision to 2025-01-13.'
     - 'Correct the summary for the SQLite database entity.'
+
+    LOOKUP FIRST:
+    - Call with only target_query to see what it matches (episodes, entities, and episodes whose facts contain
+      the query, each with its uuid); nothing is written. recall_mem returns fact text, which usually matches
+      only facts, so retarget the episode you mean by its uuid.
 
     SIDE EFFECTS:
     - When dry_run=False, modifies episodic nodes, entity nodes, and graph edges in FalkorDB and synchronizes local import registry records.

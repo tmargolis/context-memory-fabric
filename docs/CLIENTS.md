@@ -260,6 +260,8 @@ Two different Tailscale commands do very different things here — don't confuse
 
 Turn Funnel off when you're done testing: `tailscale funnel --bg off` (or `tailscale funnel reset` to clear all Funnel config).
 
+To see how often the public URL is unreachable (remote clients report this as a transient 502), run `scripts/probe_endpoint.py run` on a schedule; it checks the server both locally and at `CMF_MCP_ISSUER_URL`, and `scripts/probe_endpoint.py summary` separates "server down" from "public path down". A launchd template is in `deploy/monitoring/macos/`.
+
 ---
 
 ## MCP-Boundary Capture (Milestone 4a)
@@ -302,7 +304,7 @@ All connected clients receive access to the full suite of 29 Context Memory Fabr
 2. **`search_wiki(query, max_results, force_rescan)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.). `max_results` defaults to 10; `force_rescan=True` bypasses the in-memory cache.
 3. **`recall_mem(query, max_results)`** *(Read-Only)* — Semantic search across episodic memory facts and temporal history in FalkorDB / Graphiti.
 4. **`remember(content, name, source_description)`** *(State Write)* — Ingests a substantive decision, milestone, preference change, or event into episodic memory.
-5. **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** *(Memory Mutation)* — Edits, corrects, or re-dates existing episodic episodes, entity nodes, and graph edges, synchronizing local import state.
+5. **`edit_memory(target_query, new_reference_time, new_content, new_summary, new_name, dry_run)`** *(Memory Mutation)* — Edits, corrects, or re-dates existing episodic episodes, entity nodes, and graph edges, synchronizing local import state. Called with only `target_query`, it previews what the query matches, including episodes whose facts contain it (each with its uuid), and writes nothing. `new_name` renames episodes only.
 6. **`reconcile_memories(records, dry_run)`** *(Reconciliation)* — Consolidates, updates, and upserts episodic memories with real upsert/reject semantics in FalkorDB and synchronizes local import registry state.
 7. **`propose_doc_update(target_path, proposed_content, rationale, source_context)`** *(Proposal Write)* — Creates a reviewable staging proposal in `doc-proposals/` without mutating the canonical Wiki. `source_context` is optional background/decision references for the reviewer.
 8. **`import_memories(content, source, source_description, dry_run)`** *(Admin Ingest)* — Administrative bulk import tool for importing AI memory summaries (ChatGPT, Claude, Gemini) into episodic memory.
