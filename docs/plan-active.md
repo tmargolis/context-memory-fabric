@@ -101,14 +101,14 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 Execution groups reorganized 2026-10-09. Rank and close **whole groups**, not individual checkboxes. Existing findings, completed work, decisions, and deferrals are preserved below; the original section headings remain linkable. Grouping is not implementation approval or evidence that an old operational count is still current.
 
-The first four are the proposed low-Spark shortlist, ordered by completion feasibility and value. **B04 is conditional on diagnosis, not a promised quick fix.** B03 needs a date-policy decision and approved graph updates. B15 may be a prerequisite for live checks. No group is complete merely because its code is written when its scope includes migration, deployment, or operational verification.
+B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to plan-history.md. B15 may be a prerequisite for live checks. No group is complete merely because its code is written when its scope includes migration, deployment, or operational verification.
 
 | Group | Complete scope | Planning disposition |
 |---|---|---|
 | B01 | Tracked-file privacy | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b01--tracked-file-privacy-closed-2026-10-10) |
 | B02 | Manual review merge tooling | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b02--manual-review-merge-tooling-closed-2026-10-10) |
-| [B03](#b03--wiki-date-provenance-and-use) | Wiki date provenance and use | Shortlist 3; no bulk inference; operational approval |
-| [B04](#b04--client-correction-and-transport-reliability) | Client correction and transport reliability | Shortlist 4, conditional; low compute, uncertain diagnosis |
+| B03 | Wiki date provenance and use | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b03--wiki-date-provenance-and-use-closed-2026-10-10) |
+| B04 | Client correction and transport reliability | **Closed 2026-10-10** → [plan-history.md](plan-history.md#b04--client-correction-and-transport-reliability-closed-2026-10-10) |
 | [B05](#b05--codex-hook-lifecycle-verification) | Codex hook lifecycle verification | Interactive completion gate |
 | [B06](#b06--recurring-review-operations-and-outstanding-promotions) | Recurring review operations and outstanding promotions | Ongoing operations plus 1–3 hours of pending promotion |
 | [B07](#b07--promotion-reliability-and-identity) | Promotion reliability and identity | Uncertain reproduction/compute |
@@ -120,35 +120,6 @@ The first four are the proposed low-Spark shortlist, ordered by completion feasi
 | [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
 | [B15](#b15--test-graph-compatibility) | Test graph compatibility | Verify state; possible validation prerequisite |
-
-### B03 — Wiki date provenance and use
-
-Finite deliverable. Date derivation, source labels, existing-note population, seed/sweep upkeep, replay pruning, and context age display must all be completed. The initial-import fallback still needs the recorded user decision. No bulk inference; graph writes require approval. These dates support B11 but do not implement its query modes or conflict policy.
-
-#### Wiki Note dates (found 2026-09-29, MS8 fidelity)
-
-MS7b's `Note` nodes carry no dates (`scripts/seed_wiki_graph.py` seeds them once from registries that have none). Replay snapshots therefore prune notes by the wiki export, and `get_context` can't say how old a note is.
-
-- [ ] **Give every `Note` a `created_at`, an `updated_at` and an `ingested_at`**, set by `seed_wiki_graph.py` and `sweep_wiki_graph.py`, each with a `*_source` field saying where the date came from.
-  - **`created_at`:** the note's `created:` frontmatter when present (90 notes have one), otherwise the commit that first added the file (`git log --diff-filter=A --follow`).
-  - **The 705 files from the 2026-04-22 initial import:** git can only say "on or before 04-22" for these, so use the file's disk timestamp instead (User, 2026-09-29).
-    - Measured the same day, of the 671 still on disk, **126** have a disk birth time before the import, which is real pre-git history.
-    - **545** have one after it, because a copy or sync reset it (442 show May 2026), and would date notes weeks after git shows they existed.
-    - Proposed rule, to confirm with User: the disk time when it's earlier than the import, otherwise the import date with `created_at_source = "git-import-upper-bound"`.
-  - **`updated_at`:** the last commit that touched the file. It's exact since Auto-sync resumed on 2026-09-11. Inside the 2026-08-31 → 09-11 watcher outage it's only as good as the hand-made commits.
-  - **Not disk birth time in general:** it's reset by rewrites and syncs (`Print-Framing-Now-And-Then.md`: disk 05-27, git first-add 04-23).
-- [ ] **Use them.** Replay snapshots prune notes by `created_at`, and `get_context` shows a note's age next to it, which feeds the staleness signals under Assembly refinements.
-- **Attempt rolled back 2026-10-10:** a 2026-10-09 implementation switched replay to `created_at` while production Notes have none (0 of 434), so replay stopped pruning future notes; it also moved `resolve_note_dates` with a regex patch that broke `extract_wiki_relationships.py`. Redo from a plan: replay keeps the `wiki_paths` filter until the seeder has backfilled dates, and `resolve_note_dates` moves to one shared module on purpose.
-
-### B04 — Client correction and transport reliability
-
-Keep the full MS6c functional-pass group together: the completed stale-fact correction, open edit-target lookup, and open cross-client 502 finding. Complete only when lookup is verified and the transport finding has a supported resolution or an explicitly accepted monitoring disposition. A lookup fix alone does not close this group. Low expected Spark usage, but diagnostic effort and reproducibility are uncertain.
-
-#### Found during MS6c Phase 1 (Cowork functional pass, 2026-09-16)
-
-- [x] **Fixed 2026-10-06 ([MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)): `new_content` now re-extracts the episode's facts, and the one polluted production episode was removed.** Original finding: **`edit_memory` doesn't re-run fact extraction, so corrected episodes leave stale facts behind.** Confirmed by direct Cypher query against `mem-fabric-local-wiki`: both MS6c verification episodes (`ms6c_verification_test_2026_09_16`, `gemini_verification_test_2026_09_16`) still carry their pre-correction `RELATES_TO` fact edges (`"Initial version... test value set to ALPHA"`, `"...test value is ALPHA-GEMINI"`) with no post-correction facts added alongside them. `edit_memory` updates the episode's own content node in place — that part is correct and immediate, `recall_mem`/`get_context` both surface the corrected body text — but the entity-relationship facts Graphiti derived at original ingestion are untouched. Since `recall_mem`/`get_context` render *both* the episode body and separately-listed facts, this is what User's Cowork pass surfaced as apparent "duplicates": two or more distinct, differently-worded facts from the same original extraction pass, one of them now describing a state the episode no longer says. Not literal duplicate indexing — each fact edge has a distinct uuid and wording — but confusing and worth fixing: `edit_memory` should either re-run extraction on `new_content` or explicitly invalidate/mark superseded the old fact edges the way `correct_memory`'s original design intended.
-- [ ] **Still open (attempt rolled back 2026-10-10: matching episodes through fact text found candidates but widened what a commit writes to every fact-linked episode; redo so fact matches are shown as candidates and a write needs an exact name or uuid) — also found 2026-09-21 (review-by-conversation pass): `edit_memory`'s target search misses some already-promoted episodes entirely.** Every query tried (full statement text, short phrases, episode name, single keywords) returned "no matching episodes, entities, or facts found" for content `recall_mem` finds instantly. Not diagnosed. Right now there is no working MCP path to patch a promoted episode's content. A direct sqlite write fixes only the ledger's `derived_memories.statement`, not the graph node.
-- [ ] **`search_wiki` hit a transient 502 (Cloudflare, `origin_bad_gateway`) from Cowork, succeeded on retry.** Same OAuth/tunnel path every client (including Claude Desktop) now goes through post-MS6c, so this is the same class of flakiness behind Gemini's "error 1076"s and the first silent-failure `remember()` attempt — worth keeping an eye on if it recurs, not yet frequent enough to chase down.
 
 ### B05 — Codex hook lifecycle verification
 
