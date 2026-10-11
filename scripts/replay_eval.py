@@ -47,8 +47,8 @@ from server.replay.snapshot import (  # noqa: E402
 
 
 def _counts(graph: str) -> tuple[int, int]:
-    import redis
-    r = redis.Redis()
+    from server.core.falkordb_conn import redis_client
+    r = redis_client()
     nodes = r.execute_command("GRAPH.RO_QUERY", graph, "MATCH (n) RETURN count(n)")[1][0][0]
     edges = r.execute_command("GRAPH.RO_QUERY", graph, "MATCH ()-[e]->() RETURN count(e)")[1][0][0]
     return int(nodes), int(edges)

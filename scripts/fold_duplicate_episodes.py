@@ -21,6 +21,9 @@ Nodes are addressed by uuid; two of the duplicates share one name.
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 import argparse
 from datetime import datetime, timezone
 import json
@@ -43,8 +46,8 @@ FOLDS = [
 
 class Db:
     def __init__(self, graph: str, apply: bool):
-        from falkordb import FalkorDB
-        self.g, self.apply = FalkorDB().select_graph(graph), apply
+        from server.core.falkordb_conn import falkordb_client
+        self.g, self.apply = falkordb_client().select_graph(graph), apply
 
     def q(self, cypher: str, write: bool = False, **params) -> list[list]:
         return (self.g.query if write else self.g.ro_query)(cypher, params or None).result_set

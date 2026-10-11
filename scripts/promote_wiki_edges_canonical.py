@@ -10,7 +10,10 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import time
-from falkordb import FalkorDB
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from server.core.falkordb_conn import falkordb_client
 
 SOURCE_GRAPH = "fixgraph-p4"
 DEFAULT_TARGET = "fixgraph-canonical-test"
@@ -29,7 +32,7 @@ def _create_args(props: dict, alias: str = "x") -> tuple[str, dict]:
 
 
 def run_promotion(target_graph_name: str, apply: bool = False):
-    db = FalkorDB(host="localhost", port=6379)
+    db = falkordb_client()
     g_target = db.select_graph(target_graph_name)
     g_src = db.select_graph(SOURCE_GRAPH)
 

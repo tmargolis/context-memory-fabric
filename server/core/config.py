@@ -98,6 +98,7 @@ class CMFConfig:
     falkordb_host: str
     falkordb_port: int
     falkordb_password: Optional[str]
+    falkordb_username: Optional[str]
     falkordb_database: Optional[str]
     cmf_state_dir: Path
 
@@ -341,6 +342,7 @@ def load_config() -> CMFConfig:
         falkordb_host=os.getenv("FALKORDB_HOST", "localhost"),
         falkordb_port=int(os.getenv("FALKORDB_PORT", "6379")),
         falkordb_password=os.getenv("FALKORDB_PASSWORD") or None,
+        falkordb_username=os.getenv("FALKORDB_USER") or os.getenv("FALKORDB_USERNAME") or None,
         falkordb_database=os.getenv("FALKORDB_DATABASE"),
         cmf_state_dir=_resolve_state_dir(),
         llm_provider=_provider("CMF_LLM_PROVIDER"),

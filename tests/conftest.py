@@ -101,6 +101,7 @@ def _production_graph_untouched():
             r = redis.Redis(
                 host=os.getenv("FALKORDB_HOST", "localhost"),
                 port=int(os.getenv("FALKORDB_PORT", "6379")),
+                username=os.getenv("FALKORDB_USER") or os.getenv("FALKORDB_USERNAME") or None,
                 password=os.getenv("FALKORDB_PASSWORD") or None,
                 decode_responses=True,
                 socket_connect_timeout=1,

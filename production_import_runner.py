@@ -37,7 +37,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("production_runner")
 
-import redis
+import redis  # noqa: F401
+from server.core.falkordb_conn import redis_client
 
 from server.chatgpt_export_parser import (
     ChatGPTConversationParser,
@@ -63,7 +64,7 @@ EXPECTED_TOTAL_EPISODIC = 57
 
 def get_falkordb_inventory() -> dict[str, dict[str, int]]:
     """Query FalkorDB directly to obtain live node and edge counts per graph."""
-    r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    r = redis_client(decode_responses=True)
     graphs = r.execute_command("GRAPH.LIST")
     inventory = {}
     for g in graphs:
@@ -214,7 +215,7 @@ def reconcile_state(
         reconciliation_errors.append(f"Duplicate candidate IDs in registry: {set(dups)}")
 
     # 3. FalkorDB query for Episodic nodes in target graph
-    r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    r = redis_client(decode_responses=True)
     try:
         ep_res = r.execute_command("GRAPH.QUERY", target_graph, "MATCH (e:Episodic) RETURN e.name, e.uuid")
         graph_episodes = {row[0]: row[1] for row in ep_res[1]}
@@ -369,7 +370,7 @@ async def run_import_flow(
         end_reg_data = json.load(f)
     end_reg_count = len(end_reg_data.get("imported_episodes", {}))
 
-    r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    r = redis_client(decode_responses=True)
     ep_res = r.execute_command("GRAPH.QUERY", "memory-fabric", "MATCH (e:Episodic) RETURN count(e)")
     end_ep_count = ep_res[1][0][0]
 
@@ -488,7 +489,7 @@ def verify_post_import(target_graph: str = "memory-fabric") -> dict[str, Any]:
         sys.exit(1)
 
     # 5. Check graph inventories
-    r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    r = redis_client(decode_responses=True)
     inv = {}
     for g in r.execute_command("GRAPH.LIST"):
         n = r.execute_command("GRAPH.QUERY", g, "MATCH (n) RETURN count(n)")[1][0][0]

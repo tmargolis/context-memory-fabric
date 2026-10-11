@@ -60,8 +60,9 @@ def test_merged_aliases():
 @pytest.mark.live
 def test_end_to_end_merge_on_throwaway_graph():
     falkordb = pytest.importorskip("falkordb")
+    from server.core.falkordb_conn import falkordb_client
     try:
-        graph = falkordb.FalkorDB().select_graph("fixgraph-mergetest")
+        graph = falkordb_client().select_graph("fixgraph-mergetest")
         graph.query("RETURN 1")
     except Exception:
         pytest.skip("FalkorDB not reachable")

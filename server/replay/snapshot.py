@@ -135,8 +135,8 @@ def availability(rows: Iterable[dict[str, Any]], first_by_memory: dict[str, str]
 def graph_episode_rows(graph: str, redis_client: Any = None) -> list[dict[str, Any]]:
     """name, source_description and created_at of every episode in `graph` (read-only)."""
     if redis_client is None:
-        import redis
-        redis_client = redis.Redis()
+        from server.core.falkordb_conn import redis_client as _redis_client
+        redis_client = _redis_client()
     res = redis_client.execute_command(
         "GRAPH.RO_QUERY", graph,
         "MATCH (e:Episodic) RETURN e.name, e.source_description, toString(e.created_at)",
@@ -253,8 +253,8 @@ async def snapshot_graph(
         from server.journal.store import DEFAULT_JOURNAL_PATH
         journal_db = DEFAULT_JOURNAL_PATH
     if redis_client is None:
-        import redis
-        redis_client = redis.Redis()
+        from server.core.falkordb_conn import redis_client as _redis_client
+        redis_client = _redis_client()
     if redis_client.exists(target):
         redis_client.execute_command("GRAPH.DELETE", target)
     redis_client.execute_command("GRAPH.COPY", source, target)
@@ -297,8 +297,8 @@ async def snapshot_graph(
 def drop_snapshot(target: str, redis_client: Any = None) -> bool:
     check_snapshot_name(target, source="")
     if redis_client is None:
-        import redis
-        redis_client = redis.Redis()
+        from server.core.falkordb_conn import redis_client as _redis_client
+        redis_client = _redis_client()
     if not redis_client.exists(target):
         return False
     redis_client.execute_command("GRAPH.DELETE", target)

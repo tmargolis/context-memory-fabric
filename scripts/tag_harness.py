@@ -57,12 +57,10 @@ async def _run(args: argparse.Namespace) -> int:
 
     from server.consolidation.promotion import PromotionStore
 
-    falkor_host = os.getenv("FALKORDB_HOST", "localhost")
-    falkor_port = int(os.getenv("FALKORDB_PORT", "6379"))
-    falkor_password = os.getenv("FALKORDB_PASSWORD") or None
 
     ledger_graph = args.ledger_graph or args.graph
-    driver = FalkorDriver(host=falkor_host, port=falkor_port, password=falkor_password, database=args.graph)
+    from server.core.falkordb_conn import connection_params
+    driver = FalkorDriver(**connection_params(), database=args.graph)
 
     with PromotionStore() as promotion_store:
         rows = promotion_store._conn.execute(

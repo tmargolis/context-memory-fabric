@@ -63,8 +63,8 @@ PROTECTED = {"mem-fabric-local", "fixgraph-p4"}
 
 
 def _graph(name: str):
-    from falkordb import FalkorDB
-    return FalkorDB().select_graph(name)
+    from server.core.falkordb_conn import falkordb_client
+    return falkordb_client().select_graph(name)
 
 
 def memory_id(sd):

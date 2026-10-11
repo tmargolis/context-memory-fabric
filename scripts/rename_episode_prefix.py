@@ -54,13 +54,13 @@ STAMP = "pre-rename-20261002"
 
 
 def _redis():
-    import redis
-    return redis.Redis()
+    from server.core.falkordb_conn import redis_client
+    return redis_client()
 
 
 def _graph(name: str):
-    from falkordb import FalkorDB
-    return FalkorDB().select_graph(name)
+    from server.core.falkordb_conn import falkordb_client
+    return falkordb_client().select_graph(name)
 
 
 def counts(g) -> dict[str, int]:

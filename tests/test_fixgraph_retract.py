@@ -13,8 +13,9 @@ def test_main_guards_scratch_only(monkeypatch):
 @pytest.mark.live
 def test_retract_episode_live_on_throwaway_graph():
     falkordb = pytest.importorskip("falkordb")
+    from server.core.falkordb_conn import falkordb_client
     try:
-        graph = falkordb.FalkorDB().select_graph("fixgraph-retracttest")
+        graph = falkordb_client().select_graph("fixgraph-retracttest")
         graph.query("RETURN 1")
     except Exception:
         pytest.skip("FalkorDB not reachable")

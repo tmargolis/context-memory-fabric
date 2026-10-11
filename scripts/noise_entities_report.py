@@ -101,8 +101,8 @@ def main() -> int:
     ap.add_argument("--out-dir", default=str(_ROOT / "imports" / "fixgraph"))
     args = ap.parse_args()
 
-    import redis
-    r = redis.Redis()
+    from server.core.falkordb_conn import redis_client
+    r = redis_client()
     merging = merge_uuids(args.decisions)
     out = []
     for e in load(r, args.graph):

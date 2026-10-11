@@ -38,11 +38,10 @@ MIN_QUERY_TIMEOUT_MS = 30000
 
 
 def falkordb_connection_params() -> dict[str, Any]:
-    return {
-        "host": os.getenv("FALKORDB_HOST", "localhost"),
-        "port": int(os.getenv("FALKORDB_PORT", "6379")),
-        "password": os.getenv("FALKORDB_PASSWORD") or None,
-    }
+    """host/port/username/password from the environment (server/core/falkordb_conn.py)."""
+    from server.core.falkordb_conn import connection_params
+
+    return connection_params()
 
 
 class _DefaultSearchDriver:

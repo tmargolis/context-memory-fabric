@@ -37,8 +37,8 @@ DEFAULT_LEDGER = FIX / "retract_ledger.jsonl"
 
 class Db:
     def __init__(self, graph: str, apply: bool):
-        from falkordb import FalkorDB
-        self.g, self.graph, self.apply = FalkorDB().select_graph(graph), graph, apply
+        from server.core.falkordb_conn import falkordb_client
+        self.g, self.graph, self.apply = falkordb_client().select_graph(graph), graph, apply
 
     def q(self, cypher: str, write: bool = False, **params) -> list[list]:
         run = self.g.query if write else self.g.ro_query

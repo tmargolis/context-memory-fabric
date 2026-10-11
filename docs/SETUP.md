@@ -129,7 +129,7 @@ docker compose up -d falkordb
 - FalkorDB: `localhost:6379`
 - FalkorDB Browser UI: `http://localhost:3001`
 
-FalkorDB starts with no password; both ports bind to `127.0.0.1` only. Users you add with `ACL SETUSER` (e.g. a login for the Browser UI) persist across restarts and container recreates: the server keeps them in `/data/users.acl` on the data volume, so run `ACL SAVE` after changing one. If you also give the `default` user a password, put it in `.env` as `FALKORDB_PASSWORD`, since CMF connects as `default`. To reach the Browser from your other devices, share it over your VPN only (Tailscale: `tailscale serve --bg --https=8443 http://127.0.0.1:3001`), never through a public Funnel: anyone who reaches the Browser can log in as `default`.
+FalkorDB starts with no password; both ports bind to `127.0.0.1` only. Users you add with `ACL SETUSER` (e.g. a login for the Browser UI) persist across restarts and container recreates: the server keeps them in `/data/users.acl` on the data volume, so run `ACL SAVE` after changing one. To require a login, create your own user (`ACL SETUSER <name> on ><password> ~* &* +@all`), put it in `.env` as `FALKORDB_USER` / `FALKORDB_PASSWORD`, then turn the built-in user off (`ACL SETUSER default off`) and `ACL SAVE`. Every CMF client (server, pollers, scripts, replay, tests) reads those two variables; with `FALKORDB_USER` unset they connect as `default`. To reach the Browser from your other devices, share it over your VPN only (Tailscale: `tailscale serve --bg --https=8443 http://127.0.0.1:3001`), never through a public Funnel: while `default` is on, anyone who reaches the Browser can log in as it.
 
 ### 4. Configure Environment
 
@@ -312,6 +312,8 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
 | `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset or empty, the wiki tools (`search_wiki`, `propose_doc_update`, ...) are not offered and extraction proposes episodes only. |
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
+| `FALKORDB_USER` | No | — | FalkorDB ACL user every CMF client logs in as (alias `FALKORDB_USERNAME`). Unset: the built-in `default` user. |
+| `FALKORDB_PASSWORD` | No | — | Password for that user. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
 | `CMF_STATE_DIR` | No | repo root | Where `doc-proposals/` and `episode-proposals/` are kept. |
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |

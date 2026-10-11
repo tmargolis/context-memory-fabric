@@ -14,7 +14,10 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import time
-from falkordb import FalkorDB
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from server.core.falkordb_conn import falkordb_client
 
 SOURCE_GRAPH = "fixgraph-p4"
 PROD_GRAPH = "mem-fabric-local"
@@ -34,7 +37,7 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Execute changes (default is dry-run)")
     args = parser.parse_args()
 
-    db = FalkorDB(host="localhost", port=6379)
+    db = falkordb_client()
     g_prod = db.select_graph(PROD_GRAPH)
     g_src = db.select_graph(SOURCE_GRAPH)
 

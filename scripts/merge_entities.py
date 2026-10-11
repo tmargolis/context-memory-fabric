@@ -120,8 +120,8 @@ class Db:
     """Typed FalkorDB access: real lists back, parameters passed natively."""
 
     def __init__(self, graph: str, apply: bool):
-        from falkordb import FalkorDB
-        self.g, self.graph, self.apply = FalkorDB().select_graph(graph), graph, apply
+        from server.core.falkordb_conn import falkordb_client
+        self.g, self.graph, self.apply = falkordb_client().select_graph(graph), graph, apply
 
     def q(self, cypher: str, write: bool = False, **params) -> list[list]:
         run = self.g.query if write else self.g.ro_query
@@ -261,8 +261,8 @@ def main() -> int:
             print(f"refusing {args.graph!r}: backup counts {backup_counts} do not match target counts {target_counts}", file=sys.stderr)
             return 2
         if args.apply:
-            import redis
-            r = redis.Redis()
+            from server.core.falkordb_conn import redis_client
+            r = redis_client()
             print(f"Running Redis SAVE before applying merge to {args.graph}...")
             r.save()
 
