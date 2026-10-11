@@ -11,7 +11,7 @@ implementation, deliberately -- generalizing *that* is MS5's job, not this
 rename's (docs/plan-active.md, "Wiki→doc rename", 2026-09-19).
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 import difflib
 import hashlib
@@ -94,7 +94,10 @@ class DocProposal:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DocProposal":
-        return cls(**data)
+        # Ignore fields this version doesn't know, so a rollback (or an older
+        # reader) still lists, reviews and applies newer proposal files.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 # Terminal review verdicts. "applied" is a separate status apply_proposal()
