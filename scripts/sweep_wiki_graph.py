@@ -41,7 +41,8 @@ for the run.
    rewritten where it changed. A known date is never replaced by "unknown"
    (e.g. a note whose file was deleted).
    `--note-dates-only` runs just this pass, which is how an existing graph's
-   notes get their first dates.
+   notes get their first dates. `--repath-notes` first moves :Note nodes whose
+   file was moved to its new path (repath_notes).
 
 Usage:
     uv run python scripts/sweep_wiki_graph.py --graph-name mem-fabric-local-wiki
@@ -243,14 +244,76 @@ async def refresh_note_dates(driver, wiki_root: Path, dry_run: bool) -> dict:
     return result
 
 
+def _note_id(note_path: str) -> str:
+    """Same id scripts/build_wiki_sections.py gives a note path."""
+    import hashlib
+    return hashlib.sha1(note_path.encode("utf-8")).hexdigest()[:16]
+
+
+async def repath_notes(driver, wiki_root: Path, dry_run: bool, log_dir: Optional[Path] = None) -> dict:
+    """Point :Note nodes whose file moved at its new path (found 2026-10-10: a
+    folder move left 27 stubs naming files that now live elsewhere).
+
+    A note whose file is missing is moved when exactly one file with the same
+    name exists elsewhere in the vault and no :Note already has that path.
+    note_path, name and note_id (sha1 of the path, as build_wiki_sections.py
+    assigns it) change together, as does note_path on the note's :Section
+    nodes; edges are untouched. Ambiguous, missing or colliding paths are
+    reported and left alone. An applied run writes an old -> new mapping to
+    `log_dir` for undo."""
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    res = await driver.execute_query("MATCH (n:Note) RETURN n.note_path AS note_path")
+    current = res[0] if res and isinstance(res[0], list) else (res or [])
+    paths = {r["note_path"] for r in current if r["note_path"]}
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for f in wiki_root.rglob("*"):
+        rel = f.relative_to(wiki_root)
+        if f.is_file() and not any(part.startswith(".") for part in rel.parts):
+            by_name[f.name].append(rel.as_posix())
+    moves, skipped = [], []
+    for old in sorted(paths):
+        if (wiki_root / old).exists():
+            continue
+        found = by_name.get(Path(old).name, [])
+        if len(found) == 1 and found[0] not in paths:
+            moves.append({"old": old, "new": found[0], "old_id": _note_id(old), "new_id": _note_id(found[0])})
+        else:
+            reason = "no file with that name" if not found else ("ambiguous" if len(found) > 1 else "target already a Note")
+            skipped.append({"path": old, "reason": reason, "candidates": found[:5]})
+    result = {"missing": len(moves) + len(skipped), "moves": len(moves), "skipped": skipped}
+    if dry_run:
+        for m in moves[:10]:
+            logger.info(f"[dry-run] {m['old']} -> {m['new']}")
+        return result
+    for m in moves:
+        await driver.execute_query(
+            "MATCH (n:Note {note_path: $old}) SET n.note_path = $new, n.name = $new, n.note_id = $new_id",
+            old=m["old"], new=m["new"], new_id=m["new_id"],
+        )
+        await driver.execute_query("MATCH (s:Section {note_path: $old}) SET s.note_path = $new", old=m["old"], new=m["new"])
+    if moves and log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = log_dir / f"note_repath_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
+        log.write_text(json.dumps(moves, indent=1) + "\n")
+        result["log"] = str(log)
+    logger.info(f"Repathed {len(moves)} notes; skipped {len(skipped)}")
+    return result
+
+
 async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_root: Path, dry_run: bool,
-                note_dates_only: bool = False) -> dict:
+                note_dates_only: bool = False, repath: bool = False) -> dict:
     from server.providers.memory_graphiti import get_graphiti
 
     graphiti = get_graphiti(graph_name=graph_name)
     driver = graphiti.driver
+    out: dict = {"dry_run": dry_run}
+    if repath:  # before dates, so a moved note is dated from its new path
+        out["repath"] = await repath_notes(driver, wiki_root, dry_run, log_dir=Path("imports/state"))
     if note_dates_only:
-        return {"dry_run": dry_run, "note_dates": await refresh_note_dates(driver, wiki_root, dry_run)}
+        out["note_dates"] = await refresh_note_dates(driver, wiki_root, dry_run)
+        return out
 
     dup_groups = await find_duplicate_groups(driver)
     logger.info(f"Duplicate-name entity groups: {len(dup_groups)} "
@@ -303,6 +366,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
             "confirmed_vouched": len(confirmed_vouched),
             "candidates": len(candidates),
             "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=True),
+            **({"repath": out["repath"]} if repath else {}),
         }
 
     async def _tag(uuids: list[str], status: str):
@@ -328,6 +392,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         "confirmed_vouched": len(confirmed_vouched),
         "candidates": len(candidates),
         "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=False),
+        **({"repath": out["repath"]} if repath else {}),
     }
 
 
@@ -339,6 +404,8 @@ def main() -> None:
     parser.add_argument("--wiki-root", type=Path, default=None, help="defaults to LLM_WIKI_PATH")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--note-dates-only", action="store_true", help="Only refresh :Note dates (pass 3)")
+    parser.add_argument("--repath-notes", action="store_true",
+                        help="First point :Note nodes whose file moved at its new path (unique file name match)")
     args = parser.parse_args()
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name
@@ -347,7 +414,7 @@ def main() -> None:
     wiki_root = args.wiki_root or get_corpus_root()
 
     result = asyncio.run(sweep(args.graph_name, args.min_episodes, args.idf_threshold, wiki_root, args.dry_run,
-                               note_dates_only=args.note_dates_only))
+                               note_dates_only=args.note_dates_only, repath=args.repath_notes))
     print(json.dumps(result, indent=1))
 
 

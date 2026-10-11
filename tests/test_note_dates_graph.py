@@ -1,5 +1,6 @@
 """B03: Note dates reach the graph through seed_wiki_graph and sweep_wiki_graph."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -93,3 +94,55 @@ class TestNoteDatesInGraph(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeRepathDriver:
+    """:Note and :Section nodes as dicts keyed by note_path; answers repath_notes' queries."""
+
+    def __init__(self, notes, sections=()):
+        self.notes = {p: {"note_path": p, "name": p, "note_id": "old"} for p in notes}
+        self.sections = [{"note_path": p} for p in sections]
+
+    async def execute_query(self, q, **p):
+        if q == "MATCH (n:Note) RETURN n.note_path AS note_path":
+            return ([{"note_path": k} for k in self.notes], [], None)
+        if q.startswith("MATCH (n:Note {note_path: $old}) SET"):
+            node = self.notes.pop(p["old"])
+            node.update(note_path=p["new"], name=p["new"], note_id=p["new_id"])
+            self.notes[p["new"]] = node
+            return ([], [], None)
+        if q.startswith("MATCH (s:Section {note_path: $old})"):
+            for s in self.sections:
+                if s["note_path"] == p["old"]:
+                    s["note_path"] = p["new"]
+            return ([], [], None)
+        raise AssertionError(f"unexpected query: {q}")
+
+
+class TestRepathNotes(unittest.IsolatedAsyncioTestCase):
+    async def test_moves_unique_matches_and_skips_the_rest(self):
+        from scripts.sweep_wiki_graph import _note_id, repath_notes
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("RAW/Household/moved.md", "A/dup.md", "B/dup.md", "WIKI/here.md", "RAW/taken.md"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text("x\n")
+            driver = FakeRepathDriver(
+                ["RAW/RESEARCH/Household/moved.md", "OLD/dup.md", "OLD/gone.md", "WIKI/here.md",
+                 "OLD/taken.md", "RAW/taken.md"],
+                sections=["RAW/RESEARCH/Household/moved.md"])
+
+            preview = await repath_notes(driver, root, dry_run=True)
+            self.assertEqual((preview["missing"], preview["moves"]), (4, 1))
+            self.assertEqual({s["path"]: s["reason"] for s in preview["skipped"]},
+                             {"OLD/dup.md": "ambiguous", "OLD/gone.md": "no file with that name",
+                              "OLD/taken.md": "target already a Note"})
+            self.assertIn("RAW/RESEARCH/Household/moved.md", driver.notes)  # dry run wrote nothing
+
+            log_dir = root / "logs"
+            done = await repath_notes(driver, root, dry_run=False, log_dir=log_dir)
+            self.assertEqual(done["moves"], 1)
+            node = driver.notes["RAW/Household/moved.md"]
+            self.assertEqual((node["name"], node["note_id"]), ("RAW/Household/moved.md", _note_id("RAW/Household/moved.md")))
+            self.assertEqual(driver.sections[0]["note_path"], "RAW/Household/moved.md")
+            self.assertEqual(json.loads(Path(done["log"]).read_text())[0]["old"], "RAW/RESEARCH/Household/moved.md")
