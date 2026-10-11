@@ -23,6 +23,15 @@ services:
       # container recreate doesn't silently revert the live
       # `GRAPH.CONFIG SET TIMEOUT` fix back to 1000.
       - FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT 30000 RESULTSET_SIZE 10000
+      # ACL users (ACL SETUSER) persist only with an ACL file, and `ACL SAVE`
+      # fails without one. Keep it on the volume so users survive a recreate
+      # (2026-10-10). The server refuses to start if the file is missing, so
+      # the entrypoint below creates it on a fresh volume. With an ACL file,
+      # `requirepass` can't also be set; give the default user a password with
+      # ACL SETUSER instead (CMF connects as `default` with FALKORDB_PASSWORD).
+      - REDIS_ARGS=--aclfile /data/users.acl
+    # The image's own entrypoint, after making sure the ACL file exists.
+    entrypoint: [ "sh", "-c", "touch /data/users.acl && exec /var/lib/falkordb/bin/run.sh" ]
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]

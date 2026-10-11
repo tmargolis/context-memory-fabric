@@ -129,6 +129,8 @@ docker compose up -d falkordb
 - FalkorDB: `localhost:6379`
 - FalkorDB Browser UI: `http://localhost:3001`
 
+FalkorDB starts with no password; both ports bind to `127.0.0.1` only. Users you add with `ACL SETUSER` (e.g. a login for the Browser UI) persist across restarts and container recreates: the server keeps them in `/data/users.acl` on the data volume, so run `ACL SAVE` after changing one. If you also give the `default` user a password, put it in `.env` as `FALKORDB_PASSWORD`, since CMF connects as `default`. To reach the Browser from your other devices, share it over your VPN only (Tailscale: `tailscale serve --bg --https=8443 http://127.0.0.1:3001`), never through a public Funnel: anyone who reaches the Browser can log in as `default`.
+
 ### 4. Configure Environment
 
 Create `.env` in the repository root:
