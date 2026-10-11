@@ -28,7 +28,9 @@ services:
       # (2026-10-10). The server refuses to start if the file is missing, so
       # the entrypoint below creates it on a fresh volume. With an ACL file,
       # `requirepass` can't also be set; give the default user a password with
-      # ACL SETUSER instead (CMF connects as `default` with FALKORDB_PASSWORD).
+      # ACL SETUSER instead. CMF connects as FALKORDB_USER / FALKORDB_PASSWORD;
+      # this deployment runs as its own user with `default` off. The healthcheck
+      # below still passes then: an unauthenticated PING gets NOAUTH, exit 0.
       - REDIS_ARGS=--aclfile /data/users.acl
     # The image's own entrypoint, after making sure the ACL file exists.
     entrypoint: [ "sh", "-c", "touch /data/users.acl && exec /var/lib/falkordb/bin/run.sh" ]
@@ -40,16 +42,24 @@ services:
       retries: 5
 
   spark-llm-proxy:
+    # OPTIONAL (profile "spark"): only for FalkorDB Browser's chat, and only if
+    # you have a local LLM tunnel on the Mac's port 12345. CMF itself never uses
+    # it. Not started by `docker compose up` unless enabled with
+    # `--profile spark` or COMPOSE_PROFILES=spark in .env. It can't be a host
+    # process (launchd): it must listen inside falkordb's network namespace.
+    #
     # FalkorDB Browser's chat only accepts a localhost/127.0.0.1 LLM URL, and
     # it fetches server-side, so "localhost" means the falkordb container.
     # Sharing falkordb's network namespace, this forwards the container's
     # localhost:12345 to the Mac's Spark SSH tunnel (com.cmf.spark-tunnel,
     # 12345 -> Spark LM Studio :1234). Browser setting: Local LLM → LM Studio,
     # URL http://localhost:12345/v1. It still needs that tunnel running.
-    # Tied to the falkordb container: after recreating falkordb, run
-    # `docker compose up -d` for both services, not just falkordb.
+    # Tied to the falkordb container: after recreating falkordb, recreate this
+    # too (`docker compose up -d --force-recreate spark-llm-proxy`); never use
+    # --no-deps on falkordb without it, or the proxy keeps a dead namespace.
     image: alpine/socat@sha256:5ffbd6ae916cbad86a58fabe0d6d5a6fd5c2b47ddf031e82996baac9300e732f
     container_name: context-memory-fabric-spark-llm-proxy
+    profiles: [ "spark" ]
     network_mode: "service:falkordb"
     command: TCP-LISTEN:12345,fork,reuseaddr,bind=127.0.0.1 TCP:host.docker.internal:12345
     depends_on:
