@@ -329,6 +329,13 @@ Out of MS7 with the exit gate met (`get_context` at 80% of a complete answer, be
   - **If adopted, add summary history:** a journal table of (entity, old summary, new summary, episode, time), written by `postprocess_episode`. It gives the replay the summary as of a cut-off, and gives `explain` the episode behind each change.
 - [ ] **Residual eval misses.** A1 — `gemini-openclaw-002` (the friend's-Spark decision) is retrieved by neither the edge nor the vector arm; needs the extraction gap closed or a broader vector recall. B7 — `+memory` regressed 1→0 after the vector arm (wiki-domain query, `+both` unaffected); accepted. C6 — see `search_wiki` semantic retrieval above.
 
+#### Note-to-note links in retrieval (User, 2026-10-10)
+
+The graph holds every wiki `[[link]]` as a `(:Note)-[:REFERENCES]->(:Note)` edge (1,144 between real notes, plus 393 into the 233 stub notes that stand for linked `RAW/` sources), but no retrieval code reads them: cheap-linking expansion follows only `MENTIONS` through entities. `search_wiki` does read `RAW/` files directly, so the sources aren't invisible, only unconnected.
+
+- [ ] **Investigate whether link expansion improves retrieval.** For a retrieved note, also offer the notes it links to (sources it cites) and the notes linking to it, ranked and capped like the entity expansion in `server/retrieval_expansion.py`. Measure with the MS7 eval harness (and MS8 replay) against the current baseline before keeping it; watch context size, since hub notes (index, timelines) link widely.
+- **Prerequisite done 2026-10-10:** 27 stub paths left stale by the `RAW/RESEARCH/Household` → `RAW/Household` move were repaired (`scripts/sweep_wiki_graph.py --repath-notes`, mapping in `imports/state/note_repath_20261011T034013Z.json`). Run the sweep with `--repath-notes` after future folder moves. One orphan Note (`TO-RESEARCH/…ChatGPT Work.md`, file deleted 2026-09-13, no edges) remains.
+
 ### B12 — Capture coverage and historical source recovery
 
 Group local transcript recovery, remote/Cowork capture and attribution, scheduled-task capture policy, and missing Gemini export records. Preserve the completed provenance/test records and all user deferrals. Source access and capture choices must be resolved; the Gemini item includes review and promotion, not merely journaling. Historical recovery/extraction may be substantial.
