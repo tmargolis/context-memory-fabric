@@ -16,10 +16,10 @@ reviews what the pollers staged, using CMF's MCP tools:
    episodes in a background process (one at a time, each holding the Spark
    slot), so nothing else needs confirming.
 
-A doc update that would rewrite more than 30% of its live page is a cue to
-compare, not a reason to reject: the task may draft an additive rebuild with
-propose_doc_update and recommend that instead, and confirming approves the
-rebuild and rejects the original in one step.
+Doc proposals from extract@1.7 are additive (mode="append"): the batch shows
+the addition and where it goes, and confirming applies exactly the reviewed
+rendering. The additive-rebuild workflow (rebuild_proposal_id) was retired at
+1.7's activation; the column stays so earlier runs still read back.
 """
 
 from __future__ import annotations
@@ -169,23 +169,20 @@ class RecommendationStore:
 # --- batch ------------------------------------------------------------------------
 
 
-def _doc_coverage(proposal: Any, wiki_root: Optional[Path]) -> dict[str, Any]:
-    """For an update: how much of the live page the proposal would rewrite."""
-    from server.proposals import UPDATE_GUARD_MIN_LINES, UPDATE_MAX_REMOVED_FRACTION, removed_line_fraction
-
-    if proposal.operation != "update" or wiki_root is None:
-        return {}
-    live = wiki_root / proposal.target_path
-    if not live.is_file():
-        return {"live_page": "missing"}
-    text = live.read_text(encoding="utf-8", errors="replace")
-    lines = len(text.splitlines())
-    frac = removed_line_fraction(text, proposal.proposed_content)
-    return {
-        "live_page_lines": lines,
-        "rewrites_fraction": round(frac, 2),
-        "trips_overwrite_check": lines >= UPDATE_GUARD_MIN_LINES and frac > UPDATE_MAX_REMOVED_FRACTION,
-    }
+def _doc_shape(proposal: Any, wiki_root: Optional[Path]) -> dict[str, Any]:
+    """What a reviewer needs to judge a doc: the addition and where it lands, or a replacement's size."""
+    shape: dict[str, Any] = {"mode": getattr(proposal, "mode", "replace")}
+    if getattr(proposal, "addition", None):
+        shape.update(addition=proposal.addition, target_heading=proposal.target_heading)
+    if getattr(proposal, "conflicts_with", None):
+        shape["conflicts_with"] = proposal.conflicts_with
+    if proposal.operation == "update" and wiki_root is not None:
+        live = wiki_root / proposal.target_path
+        if not live.is_file():
+            shape["live_page"] = "missing"
+        else:
+            shape["live_page_lines"] = len(live.read_text(encoding="utf-8", errors="replace").splitlines())
+    return shape
 
 
 def build_batch(
@@ -244,7 +241,7 @@ def build_batch(
             "project": getattr(p, "source_project", None),
             "conversation_id": getattr(p, "source_conversation_id", None),
             "created_at": p.created_at,
-            **_doc_coverage(p, wiki_root),
+            **_doc_shape(p, wiki_root),
         })
 
     run_id = store.start_run(items) if items else None
@@ -288,19 +285,14 @@ def record(store: RecommendationStore, run_id: str, recommendations: list[dict[s
         if not reason:
             errors.append(f"{item['label']}: a reason is required")
             continue
-        rebuild = rec.get("rebuild_proposal_id")
-        if rebuild:
-            if item["item_type"] != "doc":
-                errors.append(f"{item['label']}: only a doc can carry a rebuild_proposal_id")
-                continue
-            proposal = get_proposal(rebuild, proposals_dir)
-            if proposal is None or proposal.status != "pending_review":
-                errors.append(f"{item['label']}: rebuild {rebuild!r} is not a pending proposal")
-                continue
+        if rec.get("rebuild_proposal_id"):
+            errors.append(f"{item['label']}: rebuild_proposal_id was retired with extract@1.7; "
+                          "proposals are additive now, so judge the proposal itself")
+            continue
         shown = item.get("shown")
         if item["item_type"] == "episode":
             shown = (rec.get("summary") or "").strip() or shown
-        saved.append({**item, "verdict": verdict, "reason": reason, "rebuild_proposal_id": rebuild, "summary": shown})
+        saved.append({**item, "verdict": verdict, "reason": reason, "rebuild_proposal_id": None, "summary": shown})
 
     missing = [label for label, i in items.items() if i["item_id"] not in {s["item_id"] for s in saved}]
     store.save(run_id, saved)

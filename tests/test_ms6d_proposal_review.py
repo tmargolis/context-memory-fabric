@@ -277,9 +277,9 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.assertEqual(reloaded.status, "pending_review")
 
 
-class TestDestructiveUpdateGuard(unittest.TestCase):
-    """2026-10-03: whole-file updates written from a page snippet would have
-    deleted most of their page. Updates removing >30% of lines are refused."""
+class TestReviewedContentApplies(unittest.TestCase):
+    """extract@1.7 activation retired the removed-fraction guard and force=True:
+    what was reviewed is what is written, and a stale base is still refused."""
 
     def setUp(self):
         self._wiki = tempfile.TemporaryDirectory()
@@ -295,40 +295,39 @@ class TestDestructiveUpdateGuard(unittest.TestCase):
         self._wiki.cleanup()
         self._props.cleanup()
 
-    def _approved(self, content):
+    def _approved(self, content, **kw):
         p = create_doc_proposal(target_path="WIKI/page.md", proposed_content=content, rationale="r",
-                                wiki_root=self.wiki_root, proposals_dir=self.proposals_dir)
+                                wiki_root=self.wiki_root, proposals_dir=self.proposals_dir, **kw)
         review_proposal(p.proposal_id, "approved", proposals_dir=self.proposals_dir)
         return p
 
-    def _apply(self, p, **kw):
+    def _apply(self, p):
         return apply_proposal(p.proposal_id, expected_sha256=p.proposed_sha256, dry_run=False,
-                              wiki_root=self.wiki_root, proposals_dir=self.proposals_dir, **kw)
+                              wiki_root=self.wiki_root, proposals_dir=self.proposals_dir)
 
-    def test_truncating_rewrite_is_refused_even_on_dry_run(self):
-        p = self._approved("\n".join(self.lines[:5]) + "\n")
-        with self.assertRaises(ValueError) as ctx:
-            apply_proposal(p.proposal_id, expected_sha256=p.proposed_sha256, dry_run=True,
-                           wiki_root=self.wiki_root, proposals_dir=self.proposals_dir)
-        self.assertIn("75%", str(ctx.exception))
-        self.assertEqual(self.page.read_text().count("\n"), 20)
-
-    def test_additive_update_passes(self):
-        p = self._approved("\n".join(self.lines + ["## New", "new material"]) + "\n")
-        self.assertFalse(self._apply(p)["dry_run"])
-        self.assertIn("new material", self.page.read_text())
-
-    def test_small_edit_passes(self):
-        edited = list(self.lines)
-        edited[3] = "line 3, corrected"
-        p = self._approved("\n".join(edited) + "\n")
+    def test_append_writes_the_reviewed_rendering(self):
+        p = self._approved("## New\nnew material", mode="append")
         self._apply(p)
-        self.assertIn("line 3, corrected", self.page.read_text())
+        self.assertEqual(self.page.read_text(), p.proposed_content)
+        self.assertTrue(self.page.read_text().startswith("\n".join(self.lines)))
 
-    def test_force_overrides(self):
+    def test_deliberate_replacement_applies_after_review(self):
         p = self._approved("# Rewritten\n")
-        self._apply(p, force=True)
+        self._apply(p)
         self.assertEqual(self.page.read_text(), "# Rewritten\n")
+
+    def test_force_is_gone(self):
+        p = self._approved("# Rewritten\n")
+        with self.assertRaises(TypeError):
+            apply_proposal(p.proposal_id, expected_sha256=p.proposed_sha256, dry_run=True,
+                           wiki_root=self.wiki_root, proposals_dir=self.proposals_dir, force=True)
+
+    def test_stale_append_is_refused_not_rebased(self):
+        p = self._approved("new material", mode="append")
+        self.page.write_text(self.page.read_text() + "edited meanwhile\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self._apply(p)
+        self.assertNotIn("new material", self.page.read_text())
 
 
 class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):

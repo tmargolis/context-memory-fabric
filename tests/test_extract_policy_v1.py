@@ -401,7 +401,7 @@ class TestFrontmatterBackstop(unittest.TestCase):
         self.assertIn("title: Custom", out)  # other model-supplied values preserved
         self.assertIn("- x", out)
 
-    def test_updated_is_always_todays_date_not_the_models_value(self):
+    def test_updated_is_source_date_not_the_models_value(self):
         content = (
             "---\ntitle: Custom\ncreated: 2026-08-28\nupdated: 2020-01-02\nstatus: active\n"
             "source: claude_code\ntags:\n  - x\n---\n\n# Custom\n"
@@ -409,7 +409,7 @@ class TestFrontmatterBackstop(unittest.TestCase):
         out = _ensure_frontmatter(
             content, target_path="WIKI/projects/x/y.md", harness="claude_code", created_date="2026-08-28"
         )
-        today_str = datetime.now(timezone.utc).date().isoformat()
+        today_str = "2026-08-28"
         self.assertIn(f"updated: {today_str}", out)
         self.assertNotIn("updated: 2020-01-02", out)
 
@@ -458,6 +458,7 @@ class TestWholeCorpusWikiGrounding(unittest.TestCase):
                 {
                     "target_path": "WIKI/projects/J-Space/J-Space visualization method and decisions.md",
                     "title": "J-Space visualization: method and decisions",
+                "current_content": "# Existing\n\nOriginal material.",
                     "snippet": "Working record of how J-Space visualizations are built...",
                 }
             ]
@@ -493,6 +494,7 @@ class TestWholeCorpusWikiGrounding(unittest.TestCase):
             {
                 "target_path": "WIKI/projects/J-Space/J-Space visualization method and decisions.md",
                 "title": "J-Space visualization: method and decisions",
+                "current_content": "# Existing\n\nOriginal material.",
             }
         ]
         candidate = policy._to_doc_candidate(

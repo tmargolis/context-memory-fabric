@@ -22,7 +22,7 @@ supplies the `thread_key` and `normalize_key` collapses trivial variants.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 import re
@@ -69,6 +69,19 @@ def normalize_key(raw: str) -> str:
     return s or "untitled"
 
 
+# Same placeholders ExtractPolicyV1 refuses to route a doc folder from.
+_UNKNOWN_PROJECTS = frozenset({None, "", "unknown", "other", "tmp-other"})
+_REASON_THREAD_RE = re.compile(r"(?:^| \| )thread=([^|]+)")
+
+
+def _thread_key_of(row) -> Optional[str]:
+    """A derived memory's thread: the column, or the reason string older rows carry."""
+    if row["thread_key"]:
+        return row["thread_key"]
+    match = _REASON_THREAD_RE.search(row["reason"] or "")
+    return match.group(1).strip() if match else None
+
+
 @dataclass
 class ThreadRecord:
     thread_key: str
@@ -82,6 +95,8 @@ class ThreadRecord:
     conversation_ids: list[str] = field(default_factory=list)
     event_ids: list[str] = field(default_factory=list)
     reasoning_kinds: list[str] = field(default_factory=list)
+    projects: list[str] = field(default_factory=list)
+    latest_statement: str = ""
     episode_count: int = 0
 
     @property
@@ -103,6 +118,8 @@ class ThreadRecord:
             "harnesses": self.harnesses,
             "reasoning_kinds": self.reasoning_kinds,
             "last_seen_at": self.last_seen_at,
+            "projects": self.projects,
+            "latest_statement": self.latest_statement,
         }
 
 
@@ -119,6 +136,7 @@ def _row_to_record(row: sqlite3.Row) -> ThreadRecord:
         conversation_ids=json.loads(row["conversation_ids_json"]),
         event_ids=json.loads(row["event_ids_json"]),
         reasoning_kinds=json.loads(row["reasoning_kinds_json"]),
+        projects=json.loads(row["projects_json"]),
         episode_count=row["episode_count"],
     )
 
@@ -133,7 +151,38 @@ class ThreadIndex:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(SCHEMA_SQL)
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(reasoning_threads)")}
+        if "projects_json" not in columns:
+            # Additive, and kept on rollback; old code never reads the column.
+            self._conn.execute("ALTER TABLE reasoning_threads ADD COLUMN projects_json TEXT NOT NULL DEFAULT '[]'")
+            self.backfill_projects(commit=False)
         self._conn.commit()
+
+    def backfill_projects(self, commit: bool = True) -> dict[str, int]:
+        """Union each thread's projects from derived memories. Idempotent; returns counts."""
+        stats = {"threads": 0, "updated": 0, "with_projects": 0}
+        if not self._conn.execute("SELECT 1 FROM sqlite_master WHERE name='derived_memories'").fetchone():
+            return stats
+        found: dict[str, set[str]] = {}
+        for row in self._conn.execute(
+            "SELECT thread_key, reason, project FROM derived_memories WHERE project IS NOT NULL "
+            "AND (thread_key IS NOT NULL OR reason LIKE '%thread=%')"
+        ):
+            key = _thread_key_of(row)
+            if key:
+                found.setdefault(normalize_key(key), set()).add(row["project"])
+        for row in self._conn.execute("SELECT thread_key, projects_json FROM reasoning_threads").fetchall():
+            stats["threads"] += 1
+            before = json.loads(row["projects_json"] or "[]")
+            after = sorted(set(before) | found.get(row["thread_key"], set()))
+            if after != before:
+                self._conn.execute("UPDATE reasoning_threads SET projects_json=? WHERE thread_key=?",
+                                   (json.dumps(after), row["thread_key"]))
+                stats["updated"] += 1
+            stats["with_projects"] += bool(after)
+        if commit:
+            self._conn.commit()
+        return stats
 
     def close(self) -> None:
         self._conn.close()
@@ -158,6 +207,58 @@ class ThreadIndex:
         ).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def scoped_threads(self, *, conversation_id: str, project: Optional[str],
+                       as_of: datetime, days: int = 14, limit: int = 20, journal_store=None) -> list[ThreadRecord]:
+        """Reconstruct candidate context at source time, never from future index state."""
+        cutoff = as_of.astimezone(timezone.utc)
+        floor = cutoff - timedelta(days=days)
+        if project in _UNKNOWN_PROJECTS:
+            project = None  # unknown projects see current-conversation candidates only
+        if not self._conn.execute("SELECT 1 FROM sqlite_master WHERE name='derived_memories'").fetchone():
+            return []
+        thread_rows = ("FROM derived_memories d {join} WHERE d.event_date IS NOT NULL "
+                       "AND (d.thread_key IS NOT NULL OR d.reason LIKE '%thread=%') ORDER BY d.event_date, d.memory_id")
+        if self._conn.execute("SELECT 1 FROM sqlite_master WHERE name='events'").fetchone():
+            rows = [dict(r) for r in self._conn.execute(
+                "SELECT d.*, e.conversation_id, e.harness "
+                + thread_rows.format(join="LEFT JOIN events e ON e.event_id = d.source_event_id"))]
+        else:  # thread index kept apart from the journal: look each source event up
+            rows = []
+            for r in self._conn.execute("SELECT d.* " + thread_rows.format(join="")):
+                row = dict(r)
+                ev = journal_store.get(row["source_event_id"]) if journal_store is not None else None
+                row["conversation_id"] = ev.source.conversation_id if ev else None
+                row["harness"] = ev.source.harness if ev else None
+                rows.append(row)
+        grouped: dict[str, list[dict]] = {}
+        for row in rows:
+            at = datetime.fromisoformat(row["event_date"]).astimezone(timezone.utc)
+            key = _thread_key_of(row)
+            if at <= cutoff and key:
+                grouped.setdefault(normalize_key(key), []).append(row)
+        candidates = []
+        for key, history in grouped.items():
+            current = [r for r in history if "conversation_id" in r.keys() and r["conversation_id"] == conversation_id]
+            recent = [r for r in history if project and r["project"] == project and datetime.fromisoformat(r["event_date"]).astimezone(timezone.utc) >= floor]
+            if not current and not recent:
+                continue
+            eligible = current or recent
+            latest = eligible[-1]
+            # Status is recorded in the episode reason, so later resolutions do not leak backwards.
+            if not current and "status=resolved" in (latest["reason"] or ""):
+                continue
+            rec = self.get(key)
+            if rec is None:
+                continue
+            rec.last_seen_at = latest["event_date"]
+            rec.latest_statement = latest["statement"]
+            rec.projects = sorted({r["project"] for r in history if r["project"]})
+            rec.harnesses = sorted({r["harness"] for r in history if "harness" in r.keys() and r["harness"]})
+            rec.status = "resolved" if "status=resolved" in (latest["reason"] or "") else "open"
+            candidates.append((bool(current), rec))
+        candidates.sort(key=lambda pair: (pair[0], pair[1].last_seen_at or "", pair[1].thread_key), reverse=True)
+        return [rec for _, rec in candidates[:limit]]
+
     def record_episode(
         self,
         *,
@@ -169,6 +270,7 @@ class ThreadIndex:
         conversation_id: Optional[str],
         observed_at: Optional[datetime] = None,
         status: Optional[str] = None,
+        project: Optional[str] = None,
     ) -> ThreadRecord:
         """Upsert a thread with one more episode's worth of links.
 
@@ -211,6 +313,7 @@ class ThreadIndex:
                     now,
                 ),
             )
+            self._conn.execute("UPDATE reasoning_threads SET projects_json=? WHERE thread_key=?", (json.dumps([project] if project else []), key))
             self._conn.commit()
             return self.get(key)  # type: ignore[return-value]
 
@@ -245,6 +348,7 @@ class ThreadIndex:
                 key,
             ),
         )
+        self._conn.execute("UPDATE reasoning_threads SET projects_json=? WHERE thread_key=?", (json.dumps(sorted(set(rec.projects + ([project] if project else [])))), key))
         self._conn.commit()
         return self.get(key)  # type: ignore[return-value]
 

@@ -52,9 +52,19 @@ def test_batch_has_rules_tier1_episodes_and_docs(env):
     labels = [i["label"] for i in batch["items"]]
     assert labels == ["EP1", "EP2", "EP3", "DOC1", "DOC2"]  # the investigation is tier 2: out of scope
     update = next(i for i in batch["items"] if i.get("operation") == "update")
-    assert update["trips_overwrite_check"] is True and update["rewrites_fraction"] > 0.3
+    assert update["mode"] == "replace" and update["live_page_lines"] > 10  # a legacy whole-page rewrite
+    assert "trips_overwrite_check" not in update and "rewrites_fraction" not in update
     new = next(i for i in batch["items"] if i.get("operation") == "create")
-    assert "trips_overwrite_check" not in new
+    assert "live_page_lines" not in new
+
+
+def test_batch_shows_an_additive_proposal_and_where_it_lands(env):
+    added = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", "- the new fact", "one new fact",
+                                wiki_root=env["wiki"], proposals_dir=env["docs"], mode="append",
+                                target_heading="Billing Jobs")
+    item = next(i for i in _batch(env)["items"] if i["item_id"] == added.proposal_id)
+    assert (item["mode"], item["addition"], item["target_heading"]) == ("append", "- the new fact", "Billing Jobs")
+    assert len(item["conflicts_with"]) == 1  # the legacy rewrite of the same page stays separately reviewable
 
 
 def test_next_batch_skips_recommended_items(env):
@@ -138,15 +148,27 @@ def test_confirm_with_overrides_skip_and_flags(env):
     assert sorted(again["already_decided"]) == ["DOC1", "DOC2", "EP1", "EP3"]
 
 
-def test_doc_rebuild_is_approved_and_original_rejected(env):
+def test_new_rebuild_references_are_refused(env):
     batch = _batch(env)
+    out = rec.record(env["store"], batch["run_id"], [
+        {"label": "DOC1", "verdict": "approve", "reason": "x", "rebuild_proposal_id": "prop_x"},
+    ], proposals_dir=env["docs"])
+    assert out["recorded"] == 0 and "retired" in out["errors"][0]
+
+
+def _historical_rebuild(env, batch):
+    """A run recorded before activation, carrying a drafted rebuild (still confirmable)."""
     doc1 = next(i for i in batch["items"] if i["label"] == "DOC1")
     rebuild = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", LIVE_PAGE + "- the new fact\n",
                                   "additive rebuild", wiki_root=env["wiki"], proposals_dir=env["docs"])
-    rec.record(env["store"], batch["run_id"], [
-        {"label": "DOC1", "verdict": "approve", "reason": "one new fact", "rebuild_proposal_id": rebuild.proposal_id},
-        {"label": "EP1", "verdict": "approve", "reason": "x", "rebuild_proposal_id": rebuild.proposal_id},
-    ], proposals_dir=env["docs"])
+    env["store"].save(batch["run_id"], [{**doc1, "verdict": "approve", "reason": "one new fact",
+                                         "rebuild_proposal_id": rebuild.proposal_id}])
+    return doc1, rebuild
+
+
+def test_doc_rebuild_is_approved_and_original_rejected(env):
+    batch = _batch(env)
+    doc1, rebuild = _historical_rebuild(env, batch)
     rec.confirm(env["store"], batch["run_id"], reviewer="tester", review_db=env["db"], proposals_dir=env["docs"])
     assert get_proposal(rebuild.proposal_id, env["docs"]).status == "approved"
     original = get_proposal(doc1["item_id"], env["docs"])
@@ -188,13 +210,11 @@ def test_yes_applies_docs_and_starts_promotion(env, tmp_path):
     calls = []
     live = rec.go_live(out, wiki_root=env["wiki"], proposals_dir=env["docs"], journal_db=env["db"],
                        log_dir=tmp_path / "logs", spawn=lambda cmd, **kw: calls.append((cmd, kw)))
-    # DOC2 (a new page) is written; DOC1 trips the 30% guard and is reported, still approved.
-    assert live["applied"] == ["DOC2"]
-    assert len(live["apply_errors"]) == 1 and live["apply_errors"][0].startswith("DOC1:")
+    # What was approved is written as reviewed: the removed-fraction guard is gone, which is
+    # why activation's preflight refuses while a legacy rewrite that would trip it is pending.
+    assert live["applied"] == ["DOC1", "DOC2"] and not live["apply_errors"]
     assert (env["wiki"] / "WIKI" / "projects" / "Acme" / "New-Page.md").exists()
-    assert get_proposal(ids["DOC2"], env["docs"]).status == "applied"
-    assert get_proposal(ids["DOC1"], env["docs"]).status == "approved"
-    assert (env["wiki"] / "WIKI" / "projects" / "Acme" / "Billing-Jobs.md").read_text() == LIVE_PAGE
+    assert get_proposal(ids["DOC1"], env["docs"]).status == "applied"
     # Only this run's approved episode goes to one detached promote process.
     assert live["promoting"] == ["EP1"]
     (cmd, kw), = calls
@@ -206,11 +226,7 @@ def test_yes_applies_docs_and_starts_promotion(env, tmp_path):
 
 def test_yes_applies_the_rebuild_not_the_original(env, tmp_path):
     batch = _batch(env)
-    rebuild = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", LIVE_PAGE + "- the new fact\n",
-                                  "additive rebuild", wiki_root=env["wiki"], proposals_dir=env["docs"])
-    rec.record(env["store"], batch["run_id"], [
-        {"label": "DOC1", "verdict": "approve", "reason": "one new fact", "rebuild_proposal_id": rebuild.proposal_id},
-    ], proposals_dir=env["docs"])
+    _historical_rebuild(env, batch)
     out = rec.confirm(env["store"], batch["run_id"], reviewer="tester", review_db=env["db"], proposals_dir=env["docs"])
     live = rec.go_live(out, wiki_root=env["wiki"], proposals_dir=env["docs"], log_dir=tmp_path,
                        spawn=lambda *a, **k: pytest.fail("no episodes approved, nothing to promote"))

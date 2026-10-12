@@ -17,12 +17,14 @@ import difflib
 import hashlib
 import json
 import logging
+import re
 import os
 from pathlib import Path
 from typing import Any, Optional
 import uuid
 
 from server.core.config import default_reviewer
+from server.eval_privacy import eval_leaks
 from server.providers.wiki.corpus import (
     IGNORED_DIR_NAMES,
     get_corpus_root,
@@ -88,6 +90,11 @@ class DocProposal:
     # on every proposal created before this existed, populated going
     # forward by whatever calls create_doc_proposal() with it set.
     source_project: Optional[str] = None
+    mode: str = "replace"
+    addition: Optional[str] = None
+    target_heading: Optional[str] = None
+    source_date: Optional[str] = None
+    conflicts_with: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -193,6 +200,61 @@ def validate_target_path(target_path: str, wiki_root: Path) -> Path:
     return resolved
 
 
+class ProposalRefused(ValueError):
+    """A proposal declined by policy (not a malformed request or a fault)."""
+
+
+def strip_frontmatter(content: str) -> str:
+    match = re.match(r"\A\s*---\s*\n.*?\n---\s*(?:\n|\Z)", content, re.S)
+    return content[match.end():].lstrip("\n") if match else content
+
+
+def append_material(base: str, addition: str, heading: Optional[str] = None) -> str:
+    """Insert new material without rewriting old bytes; ignore headings inside fences."""
+    if not addition.strip():
+        raise ValueError("Append material must not be empty")
+    if addition.lstrip().startswith("---"):
+        raise ProposalRefused("Append material must not contain frontmatter; send only the new body material")
+    lines = base.splitlines(keepends=True)
+    headings = []
+    fence = None
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            fence = None if fence == marker else (marker if fence is None else fence)
+            continue
+        if fence is None:
+            match = re.match(r"^(#{1,6}) +(.+?)\s*#*\s*$", line)
+            if match:
+                headings.append((i, len(match[1]), match[2].strip()))
+    wanted = (heading or "").lstrip("#").strip()
+    matches = [h for h in headings if h[2] == wanted] if wanted else []
+    if len(matches) > 1:
+        raise ProposalRefused(f"Ambiguous target heading: {heading}")
+    at = len(lines)
+    if matches:
+        i, level, _ = matches[0]
+        at = next((n for n, depth, _ in headings if n > i and depth <= level), len(lines))
+    left, right = "".join(lines[:at]), "".join(lines[at:])
+    return left + ("" if left.endswith("\n\n") or not left else "\n" if left.endswith("\n") else "\n\n") + addition.strip() + "\n\n" + right
+
+
+def advance_updated(content: str, source_date: Optional[str], target: str) -> str:
+    if not source_date or target.startswith("RAW/"):
+        return content
+    # Preserve creation and all unrelated metadata; an older transcript cannot move updated backwards.
+    match = re.match(r"\A---\s*\n(.*?)\n---", content, re.S)
+    if not match:
+        return content
+    body = match[1]
+    existing = re.search(r"(?m)^updated:\s*['\"]?(\d{4}-\d{2}-\d{2})", body)
+    if existing and existing[1] >= source_date:
+        return content
+    new = re.sub(r"(?m)^updated:.*$", "updated: " + source_date, body) if existing else body + "\nupdated: " + source_date
+    return content[:match.start(1)] + new + content[match.end(1):]
+
+
 def create_doc_proposal(
     target_path: str,
     proposed_content: str,
@@ -203,15 +265,41 @@ def create_doc_proposal(
     source_project: Optional[str] = None,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
+    mode: str = "replace",
+    target_heading: Optional[str] = None,
+    source_date: Optional[str] = None,
+    supersedes: Optional[str] = None,
 ) -> DocProposal:
     """Create and persist a new reviewable Wiki update proposal.
 
     Does NOT modify the target file in LLM_Wiki.
+
+    mode="append" on an existing page renders `proposed_content` as an
+    addition onto the live page now; the stored `proposed_content` is that
+    complete rendering, applied byte-for-byte after review. `supersedes`
+    names the pending proposal this one replaces, so it is not flagged as a
+    conflict.
     """
     root = wiki_root if wiki_root is not None else get_corpus_root()
     resolved_target = validate_target_path(target_path, root)
     rel_path_str = resolved_target.relative_to(root.resolve()).as_posix()
 
+    leaked = set(eval_leaks(proposed_content))
+    if leaked and resolved_target.is_file():
+        leaked -= set(eval_leaks(resolved_target.read_text(encoding="utf-8", errors="replace")))  # pre-existing text
+    if leaked:
+        raise ProposalRefused(f"Proposal quotes private evaluation fixtures (cases {', '.join(sorted(leaked)[:5])})")
+
+    if mode not in ("append", "replace"):
+        raise ValueError("mode must be append or replace")
+    addition = proposed_content if mode == "append" and resolved_target.exists() else None
+    if addition is not None:
+        proposed_content = append_material(resolved_target.read_text(encoding="utf-8"), addition, target_heading)
+        proposed_content = advance_updated(proposed_content, source_date, rel_path_str)
+    pending = list_proposals(status="pending_review", proposals_dir=proposals_dir)
+    # Other conversations' proposals, and legacy whole-page replacements, stay separately reviewable.
+    conflicts = [p.proposal_id for p in pending if p.target_path == rel_path_str and p.proposal_id != supersedes
+                 and (p.source_conversation_id != source_conversation_id or p.mode == "replace")]
     now_iso = datetime.now(timezone.utc).isoformat()
     prop_id = f"prop_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
@@ -268,6 +356,7 @@ def create_doc_proposal(
         current_sha256=current_sha,
         proposed_sha256=proposed_sha,
         proposed_content=proposed_content,
+        mode=mode, addition=addition, target_heading=target_heading, source_date=source_date, conflicts_with=conflicts,
         unified_diff=unified_diff_str,
     )
 
@@ -452,32 +541,12 @@ def bulk_reject_proposals(
     return {"rejected": rejected, "skipped": skipped}
 
 
-# An "update" proposal is a whole-file rewrite. extract@1.6 wrote them after
-# seeing only a ~300-char snippet of the live page, so 43 of 45 pending
-# updates (2026-10-03) would have deleted most of their page. Refuse any
-# update that removes more than this share of the live page's lines unless
-# the caller explicitly forces it. Pages shorter than the minimum are exempt.
-UPDATE_MAX_REMOVED_FRACTION = 0.30
-UPDATE_GUARD_MIN_LINES = 10
-
-
-def removed_line_fraction(live_text: str, proposed_text: str) -> float:
-    """Share of the live page's lines that the proposed text deletes or rewrites."""
-    live = live_text.splitlines()
-    if not live:
-        return 0.0
-    ops = difflib.SequenceMatcher(None, live, proposed_text.splitlines(), autojunk=False).get_opcodes()
-    removed = sum(i2 - i1 for tag, i1, i2, _, _ in ops if tag in ("delete", "replace"))
-    return removed / len(live)
-
-
 def apply_proposal(
     proposal_id: str,
     expected_sha256: Optional[str] = None,
     dry_run: bool = True,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
-    force: bool = False,
 ) -> dict[str, Any]:
     """Write an approved proposal's content into LLM_Wiki. The only function
     in this module that touches the canonical corpus.
@@ -492,9 +561,13 @@ def apply_proposal(
       silently overwritten — with 76 proposals up to weeks old, this is a
       real case, not a theoretical one.
 
-    Plus a content guard: an "update" that removes more than
-    UPDATE_MAX_REMOVED_FRACTION of a page's lines (pages of at least
-    UPDATE_GUARD_MIN_LINES lines) is refused unless `force=True`.
+    What is written is exactly the reviewed `proposed_content`: an additive
+    proposal (mode="append", extract@1.7) was rendered onto the live page
+    when it was created, and the stale-base check above refuses it if that
+    page has changed since. Nothing is rebased at apply time. (The
+    removed-fraction guard and force=True it needed were retired with
+    extract@1.7's activation; a deliberate whole-page replacement from
+    propose_doc_update applies after review like any other proposal.)
 
     On a real (non-dry-run) apply: writes proposed_content to the resolved
     target, commits it in the LLM_Wiki git repo if one is present (best
@@ -545,16 +618,6 @@ def apply_proposal(
                 "this proposal was created. Refusing to apply against a stale base; "
                 "create a fresh proposal against the current content instead."
             )
-        live_lines = len(live_text.splitlines())
-        if live_lines >= UPDATE_GUARD_MIN_LINES and not force:
-            frac = removed_line_fraction(live_text, proposal.proposed_content)
-            if frac > UPDATE_MAX_REMOVED_FRACTION:
-                raise ValueError(
-                    f"Proposal '{proposal_id}' would remove or rewrite {frac:.0%} of the "
-                    f"{live_lines} lines in '{proposal.target_path}' (limit "
-                    f"{UPDATE_MAX_REMOVED_FRACTION:.0%}). Refusing a likely-destructive update; "
-                    "rebuild it on the full current page, or pass force=True if the rewrite is intended."
-                )
 
     if dry_run:
         return {

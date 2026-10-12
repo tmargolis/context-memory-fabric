@@ -20,8 +20,8 @@ Create a scheduled task named "CMF nightly review" that runs every day at 11:11 
 1. Call get_review_batch. If its "items" list is empty, reply "CMF nightly review: nothing new to review." and stop.
 2. Read its "rules" field first, and follow those rules for every judgment.
 3. Judge every item in "items" (EP = a staged episode, DOC = a doc proposal) as approve, reject or flag, each with a short reason a person can check in one read. Use get_doc_proposal to read a DOC's diff when you need it.
-4. For a DOC with "trips_overwrite_check": true, compare it with the live page. If the page already covers it, reject it as covered. Otherwise draft an additive rebuild with propose_doc_update (the full current page with only the missing facts added) and recommend approve with "rebuild_proposal_id" set to the new proposal's id.
-5. Call record_review_recommendations with the run_id and one entry per item: label, verdict, reason, and optionally a shorter summary and a rebuild_proposal_id.
+4. For a DOC with "mode": "append", judge its "addition" (what it adds to the live page, under "target_heading" when set). For "mode": "replace", compare the whole rewrite with the live page and flag it if it removes substantive content. When "conflicts_with" lists other proposals for the same page, judge each separately and flag incompatible ones.
+5. Call record_review_recommendations with the run_id and one entry per item: label, verdict, reason, and optionally a shorter summary.
 6. End by showing me the summary that record_review_recommendations returns, unchanged.
 
 During the scheduled run, never call confirm_review_recommendations, review_episode, bulk_review_episodes, review_doc_proposal, apply_doc_proposal, promote_approved_episodes, remember or capture_session. Those wait for me.
@@ -36,7 +36,7 @@ Open the task's latest run in that app. The summary has two tables, **Episodes (
 
 What a yes does (`confirm_review_recommendations`):
 
-- Approved docs are written to the wiki right away and committed in its git repo. A doc whose page changed since the proposal was made, or that would remove more than 30% of its page, is not written; the reply names it and it stays approved for you to look at.
+- Approved docs are written to the wiki right away and committed in its git repo. Each is written exactly as reviewed. A doc whose page changed since the proposal was made is not written; the reply names it and it stays approved for you to look at.
 - Approved episodes are promoted by a background process on the machine running CMF, one at a time (1–4 minutes each on Spark), each waiting its turn for the Spark slot so it doesn't collide with the pollers. It keeps going after the chat or app closes. The reply gives its log, `imports/review/promote_<run_id>.log`. An episode that fails stays approved; `python -m server.review.cli promote --apply` retries everything approved but not yet promoted.
 
 From any other chat or app, `list_review_recommendations` shows the latest unconfirmed run again, and `confirm_review_recommendations` confirms it. Items a run has recommended on aren't offered to the next run; a night with nothing new reports so. Each run covers at most 50 items, oldest first; a backlog is worked through over several nights.

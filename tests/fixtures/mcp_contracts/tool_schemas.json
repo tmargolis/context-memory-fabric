@@ -1,35 +1,24 @@
 {
   "apply_doc_proposal": {
-    "annotations": {
-      "destructive_hint": true,
-      "idempotent_hint": false,
-      "open_world_hint": false,
-      "read_only_hint": false,
-      "title": null
-    },
-    "description": "Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_doc_proposal, to\n      actually apply it. A dry run is optional, for a preview of what would be written.\n\n    CRITICAL SAFETY CONTRACT:\n    - Refuses any proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or \u2014 for a\n      new-file proposal \u2014 if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - Refuses an update that would remove or rewrite more than 30% of the live page's\n      lines unless force=True (whole-file rewrites written from a snippet of the page).\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
+    "name": "apply_doc_proposal",
+    "title": "Apply Doc Proposal",
+    "description": "Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_doc_proposal, to\n      actually apply it. A dry run is optional, for a preview of what would be written.\n\n    CRITICAL SAFETY CONTRACT:\n    - Refuses any proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or \u2014 for a\n      new-file proposal \u2014 if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - Writes exactly the reviewed content. An additive proposal was rendered onto the live\n      page when it was made; if that page has changed since, the stale-base refusal above\n      applies and a fresh proposal is needed. Nothing is rebased at apply time.\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
     "input_schema": {
       "properties": {
-        "dry_run": {
-          "default": true,
-          "description": "If true (default), reports what would happen without writing anything. Set false to actually apply.",
-          "title": "Dry Run",
-          "type": "boolean"
+        "proposal_id": {
+          "description": "The proposal_id to apply. Must already be 'approved'.",
+          "title": "Proposal Id",
+          "type": "string"
         },
         "expected_sha256": {
           "description": "The proposal's proposed_sha256, as returned by get_doc_proposal. Proves you re-fetched this proposal before applying it, rather than acting on a stale copy.",
           "title": "Expected Sha256",
           "type": "string"
         },
-        "proposal_id": {
-          "description": "The proposal_id to apply. Must already be 'approved'.",
-          "title": "Proposal Id",
-          "type": "string"
-        },
-        "force": {
-          "default": false,
-          "description": "Override the destructive-update guard (an update removing more than 30% of the page's lines). Only when the user has confirmed the rewrite is intended.",
-          "title": "Force",
+        "dry_run": {
+          "default": true,
+          "description": "If true (default), reports what would happen without writing anything. Set false to actually apply.",
+          "title": "Dry Run",
           "type": "boolean"
         }
       },
@@ -40,7 +29,6 @@
       "title": "apply_doc_proposalArguments",
       "type": "object"
     },
-    "name": "apply_doc_proposal",
     "output_schema": {
       "properties": {
         "result": {
@@ -54,7 +42,13 @@
       "title": "apply_doc_proposalOutput",
       "type": "object"
     },
-    "title": "Apply Doc Proposal"
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": true,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
   },
   "bulk_reject_doc_proposals": {
     "annotations": {
@@ -202,7 +196,7 @@
     "input_schema": {
       "properties": {
         "items": {
-          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='doc_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): complete desired file content, not a diff; doc_rationale (str, required): why this belongs in durable knowledge.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'doc_proposal' it is carried as background context.",
+          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='doc_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): new body material only for an existing page, complete content for a new page; target_heading (str, optional), source_date (YYYY-MM-DD from source evidence, optional); doc_rationale (str, required): why this belongs in durable knowledge.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'doc_proposal' it is carried as background context.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -1527,7 +1521,7 @@
   "get_review_batch": {
     "name": "get_review_batch",
     "title": "Get Review Batch",
-    "description": "Start a nightly review run: the review rules plus the staged items no earlier run has covered.\n\n    WHEN TO USE:\n    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with\n      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1\u2026)\n      and doc proposals (DOC1\u2026), oldest first. A doc update carries `trips_overwrite_check` when it\n      would rewrite more than 30% of its live page \u2014 compare, don't auto-reject.\n    - Then judge every item and call record_review_recommendations with the same `run_id`.\n\n    DISTINCTIONS:\n    - Changes nothing in the review queue. It only registers the run, so the next run skips\n      these items.\n    - Empty `items` means nothing new to review; say so and stop.\n    ",
+    "description": "Start a nightly review run: the review rules plus the staged items no earlier run has covered.\n\n    WHEN TO USE:\n    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with\n      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1\u2026)\n      and doc proposals (DOC1\u2026), oldest first. A doc carries `mode`: \"append\" adds `addition` to\n      the live page (under `target_heading` when set), \"replace\" is a whole-page rewrite to read\n      against the live page. `conflicts_with` lists other pending proposals for the same page.\n    - Then judge every item and call record_review_recommendations with the same `run_id`.\n\n    DISTINCTIONS:\n    - Changes nothing in the review queue. It only registers the run, so the next run skips\n      these items.\n    - Empty `items` means nothing new to review; say so and stop.\n    ",
     "input_schema": {
       "properties": {
         "max_items": {
@@ -1573,7 +1567,7 @@
           "type": "string"
         },
         "recommendations": {
-          "description": "One entry per item: {'label': 'EP3' or 'DOC1', 'verdict': 'approve'|'reject'|'flag', 'reason': str, optional 'summary': a shorter statement for the table, optional 'rebuild_proposal_id': a pending proposal you drafted with propose_doc_update as the additive rebuild of this doc}.",
+          "description": "One entry per item: {'label': 'EP3' or 'DOC1', 'verdict': 'approve'|'reject'|'flag', 'reason': str, optional 'summary': a shorter statement for the table}.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -1657,7 +1651,7 @@
   "confirm_review_recommendations": {
     "name": "confirm_review_recommendations",
     "title": "Confirm Review Recommendations",
-    "description": "Confirm a nightly review run and make it live: record the verdicts, apply the approved docs,\n    and start promoting the approved episodes. One call does all three.\n\n    WHEN TO USE:\n    - Only when the user says yes to a run (\"yes\", \"confirm\", \"yes but EP3 approve and skip DOC1\").\n      That one yes covers the verdicts, the doc applies and the promotion: don't ask again, and\n      don't call apply_doc_proposal or promote_approved_episodes afterwards. Never on your own initiative.\n\n    CRITICAL SAFETY CONTRACT:\n    - Verdicts go through the same functions a person uses. Flagged items without an override, and\n      skipped items, stay in the queue.\n    - For a doc with a drafted rebuild, approve approves the rebuild and rejects the original.\n    - Approved docs are written to the wiki (no dry run) and committed there. A doc the apply guards\n      refuse (its page changed since, or it would remove over 30% of the page) is reported and stays\n      approved, unapplied.\n    - Approved episodes are promoted by a background process, one at a time and each waiting for\n      the Spark slot (1-4 minutes apiece); its log path is in the reply.\n    ",
+    "description": "Confirm a nightly review run and make it live: record the verdicts, apply the approved docs,\n    and start promoting the approved episodes. One call does all three.\n\n    WHEN TO USE:\n    - Only when the user says yes to a run (\"yes\", \"confirm\", \"yes but EP3 approve and skip DOC1\").\n      That one yes covers the verdicts, the doc applies and the promotion: don't ask again, and\n      don't call apply_doc_proposal or promote_approved_episodes afterwards. Never on your own initiative.\n\n    CRITICAL SAFETY CONTRACT:\n    - Verdicts go through the same functions a person uses. Flagged items without an override, and\n      skipped items, stay in the queue.\n    - Approved docs are written to the wiki (no dry run) and committed there, exactly as reviewed.\n      A doc the apply guards refuse (its page changed since) is reported and stays approved,\n      unapplied.\n    - Approved episodes are promoted by a background process, one at a time and each waiting for\n      the Spark slot (1-4 minutes apiece); its log path is in the reply.\n    ",
     "input_schema": {
       "properties": {
         "run_id": {

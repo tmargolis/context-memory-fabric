@@ -84,6 +84,9 @@ class PolicyContext:
     # deterministic backstop that guarantees the WIKI/projects/ prefix
     # regardless of whether the model uses this list.
     existing_project_folders: Optional[list[str]] = None
+    # Every second-level folder under WIKI/ and RAW/ ("WIKI/Job-Search", ...), so
+    # a doc routed into an existing non-project folder keeps it, in its casing.
+    existing_wiki_folders: Optional[list[str]] = None
     # Whole-corpus durable knowledge discovery (2026-09-24, Upstream Wiki Grounding).
     # Relevant documents discovered across the whole corpus via search_corpus()
     # before evaluating the window: [{"target_path": ..., "title": ..., "snippet": ...,
@@ -180,6 +183,12 @@ class ReasoningEpisode:
     # DURABLE_CANDIDATE-only -- see class docstring.
     target_path: Optional[str] = None
     proposed_content: Optional[str] = None
+    # extract@1.7 additive proposals: the heading to insert under, the source
+    # date (America/Chicago) that may advance `updated:`, and whether the
+    # existing target page was shown to the model in full.
+    target_heading: Optional[str] = None
+    source_date: Optional[str] = None
+    target_seen: bool = False
 
 
 @runtime_checkable

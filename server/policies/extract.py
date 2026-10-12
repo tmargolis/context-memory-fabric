@@ -29,12 +29,16 @@ from datetime import datetime, timezone
 import json
 import logging
 import re
-from typing import Optional
+from typing import Optional, Any
+from zoneinfo import ZoneInfo
+from pathlib import Path
+import os
 
 from server.consolidation.project_aliases import resolve_project
 from server.core.models import DatePrecision, SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
+from server.proposals import strip_frontmatter
 from server.policies.reasoning_episode import (
     GenerateFn,
     ReasoningEpisodePolicyV1,
@@ -111,7 +115,7 @@ logger = logging.getLogger(__name__)
 # an existing target_path over creating a new duplicate page whenever the topic
 # matches. In _to_doc_candidate, if the model targets an already-known existing
 # wiki doc, its target_path is preserved verbatim without force-relocating it.
-EXTRACT_POLICY_VERSION = "1.6"
+EXTRACT_POLICY_VERSION = "1.7"
 
 # Existing pages are shown in full (2026-10-09): an update is a whole-page
 # rewrite, and 1.6 wrote them from a 300-char snippet (wiki pages) or a
@@ -129,7 +133,12 @@ assert _RESPONSE_FORMAT_MARKER in _SYSTEM, (
     "ReasoningEpisodePolicyV1's _SYSTEM prompt no longer contains the expected "
     "response-format marker -- ExtractPolicyV1's prompt splice needs updating to match."
 )
-_EPISODE_INSTRUCTIONS = _SYSTEM.split(_RESPONSE_FORMAT_MARKER)[0].rstrip()
+_EPISODE_INSTRUCTIONS = _SYSTEM.split(_RESPONSE_FORMAT_MARKER)[0].rstrip() + """
+A thread is one specific decision or problem, not a broad project label. Reuse a shown key
+only for a clear continuation of that particular problem; otherwise mint a new specific key.
+Evaluation fixtures under tests/fixtures/ms7_eval are private. Never repeat questions or gold
+answers in an episode or document; case IDs and aggregate scores are permitted.
+"""
 
 _DOC_INSTRUCTIONS = """
 In addition to episodes, also identify DOC PROPOSALS: durable, reusable, reference-shaped
@@ -146,8 +155,9 @@ AVOID DUPLICATE PAGES. Before proposing a new document, check EXISTING WIKI DOCU
 (searched across the entire corpus) and ALREADY PROPOSED DOCS below. If this window's durable
 knowledge belongs as an update, extension, or revision to an existing document, REUSE that
 exact "target_path" rather than inventing a new file name. Write "proposed_content" as the
-complete updated page incorporating both existing material and the new additions: start from
-the page's "current_content" and keep everything in it that is still true. A page shown with
+new material only, without frontmatter or a copy of the existing body; code appends it to the
+unchanged live page. For a new page, provide complete content. Optional target_heading names
+a unique existing heading for the addition. A page shown with
 "full_content_shown": false has only a snippet here -- never propose an update to it; put that
 knowledge in "episodes" instead. Only propose a new "target_path" when the subject is
 genuinely distinct and does not belong in any existing wiki document.
@@ -249,12 +259,13 @@ _EXTRACT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "target_path": {"type": "string"},
+                    "target_heading": {"type": ["string", "null"]},
                     "proposed_content": {"type": "string"},
                     "rationale": {"type": "string"},
                     "statement": {"type": "string"},
                     "turn_numbers": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["target_path", "proposed_content", "rationale", "statement"],
+                "required": ["target_heading", "target_path", "proposed_content", "rationale", "statement"],
             },
         },
     },
@@ -313,6 +324,22 @@ def _normalize_target_path(raw: str) -> str:
     return "WIKI/projects/" + "/".join(parts)
 
 
+def _route_existing_folder(raw: str, existing_wiki_folders: list[str]) -> Optional[str]:
+    """Keep a path the model put under an existing WIKI/ or RAW/ folder other
+    than WIKI/projects, in that folder's casing; RAW/ paths are kept as given.
+    Which folder a topic belongs in is deployment routing (the operator's
+    CMF_REVIEW_RULES_PATH file), not code. None means "normalize as usual"."""
+    parts = [p for p in raw.strip().strip("/").split("/") if p]
+    if len(parts) < 2 or parts[0].lower() not in ("wiki", "raw"):
+        return None
+    if len(parts) >= 3:
+        folded = _fold(parts[0] + "/" + parts[1])
+        for folder in existing_wiki_folders:
+            if _fold(folder) == folded and _fold(folder) != _fold("WIKI/projects"):
+                return "/".join([folder] + parts[2:])
+    return "/".join(["RAW"] + parts[1:]) if parts[0].lower() == "raw" else None
+
+
 def _fold(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -341,13 +368,13 @@ def _canonicalize_doc_project_folder(target_path: str, project: str, existing_fo
     rest = parts[3] if len(parts) > 3 else None
 
     project_key = _fold(project)
-    folder = project
+    folder = "-".join(word[:1].upper() + word[1:] for word in project.split("-"))
     for existing in existing_folders:
         if _fold(existing) == project_key:
             folder = existing
             break
 
-    if _fold(parts[2]) == _fold(folder):
+    if parts[2] == folder:
         return target_path  # model already picked (a spelling of) the right folder
 
     return "/".join(["WIKI", "projects", folder] + ([rest] if rest else []))
@@ -361,7 +388,7 @@ _FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?\n)(---\s*\n)", re.DOTALL)
 _REQUIRED_FRONTMATTER_KEYS = ("title", "created", "updated", "status", "source", "tags")
 
 
-def _ensure_frontmatter(content: str, target_path: str, harness: str, created_date: str) -> str:
+def _ensure_frontmatter(content: str, target_path: str, harness: str, created_date: str, updated_date: Optional[str] = None) -> str:
     """Guarantee every required YAML frontmatter key, matching the vault's
     existing convention (see e.g. WIKI/projects/DelayedVideoTablet/Battery-
     Optimization.md), regardless of whether the model followed the prompt's
@@ -399,7 +426,7 @@ def _ensure_frontmatter(content: str, target_path: str, harness: str, created_da
     project_folder = target_path.split("/")[2] if target_path.count("/") >= 2 else "misc"
     # Ensure created_date and updated_date are strictly YYYY-MM-DD date strings (no timestamps/times)
     created_date = str(created_date).split("T")[0].split(" ")[0].strip("\"'")
-    updated_date = datetime.now(timezone.utc).date().isoformat()
+    updated_date = updated_date or created_date
 
     match = _FRONTMATTER_RE.match(content.lstrip("\n"))
     if not match:
@@ -515,6 +542,7 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
                 ordered,
                 context.existing_project_folders or [],
                 relevant_wiki_docs=context.relevant_wiki_docs or [],
+                existing_wiki_folders=context.existing_wiki_folders or [],
             )
             if candidate is None:
                 continue
@@ -525,6 +553,10 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
 
     def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
         lines = [self._system, ""]
+        # Personal routing stays in the existing configured rules file, never in generic prompts.
+        rules = os.getenv("CMF_REVIEW_RULES_PATH")
+        if rules and Path(rules).expanduser().is_file():
+            lines += ["--- DEPLOYMENT ROUTING / REVIEW RULES ---", Path(rules).expanduser().read_text(), ""]
         if is_subagent_window(ordered):
             lines += [SUBAGENT_NOTE, ""]
         lines.append("--- CONVERSATION WINDOW ---")
@@ -554,9 +586,9 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         doc_pages = context.open_doc_pages or []
         if doc_pages:
             lines.append("")
-            lines.append("--- ALREADY PROPOSED DOCS THIS CONVERSATION (reuse target_path if this window continues one) ---")
+            lines.append("--- ALREADY PROPOSED DOCS (same conversation and relevant pending targets; reuse paths, add only new material) ---")
             for p in doc_pages[:20]:
-                lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement"),
+                lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement") or p.get("source_context"), "source_conversation_id": p.get("source_conversation_id"), "conflicts_with": p.get("conflicts_with", []),
                                          **_page(p.get("proposed_content"), None)}, default=str))
 
         folders = context.existing_project_folders or []
@@ -580,6 +612,7 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         ordered: list[SourceEvent],
         existing_project_folders: list[str],
         relevant_wiki_docs: Optional[list[dict[str, Any]]] = None,
+        existing_wiki_folders: Optional[list[str]] = None,
     ) -> Optional[ReasoningEpisode]:
         target_path = (spec.get("target_path") or "").strip()
         proposed_content = spec.get("proposed_content") or ""
@@ -602,7 +635,8 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         first_user = next((e for e in cited if e.actor_type == "user"), cited[0])
 
         harness = ordered[0].source.harness if ordered else "unknown"
-        created_date = first_user.observed_at.date().isoformat()
+        created_date = min(e.observed_at for e in cited).astimezone(ZoneInfo("America/Chicago")).date().isoformat()
+        updated_date = max(e.observed_at for e in cited).astimezone(ZoneInfo("America/Chicago")).date().isoformat()
 
         # Check if the model targeted an existing wiki doc retrieved across the whole corpus.
         # If so, preserve its exact target_path without forcing it into a new project folder.
@@ -614,8 +648,20 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
         matched_existing = known_docs_map.get(_fold(target_path))
         if matched_existing:
             target_path = matched_existing
+            doc = next(d for d in relevant_wiki_docs if d.get("target_path") == matched_existing)
+            current = doc.get("current_content")
+            if doc.get("full_content_shown") is False or not current or len(current) > PAGE_FULL_MAX_CHARS:
+                return None  # snippet-only target: never updated
+            # An addition is body material only: drop a model-supplied frontmatter
+            # block and any pasted copy of the existing body.
+            proposed_content = strip_frontmatter(proposed_content)
+            existing_body = strip_frontmatter(current).strip()
+            if existing_body and existing_body in proposed_content:
+                proposed_content = proposed_content.replace(existing_body, "", 1).strip()
+            if not proposed_content.strip():
+                return None
         else:
-            target_path = _normalize_target_path(target_path)
+            target_path = _route_existing_folder(target_path, existing_wiki_folders or []) or _normalize_target_path(target_path)
 
             # claude_code/claude_desktop/antigravity-specific (claude_code:
             # found 2026-09-23, DelayedVideoTablet review; antigravity: found
@@ -637,12 +683,13 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             # Same alias folding pipeline.py applies to derived_memories.project.
             project = resolve_project(project)
 
-            if project and project not in ("unknown", "other", "tmp-other"):
+            if target_path.startswith("WIKI/projects/") and project and project not in ("unknown", "other", "tmp-other"):
                 target_path = _canonicalize_doc_project_folder(target_path, project, existing_project_folders)
 
-        proposed_content = _ensure_frontmatter(
-            proposed_content, target_path=target_path, harness=harness, created_date=created_date
-        )
+        if not matched_existing and not target_path.startswith("RAW/"):
+            proposed_content = _ensure_frontmatter(
+                proposed_content, target_path=target_path, harness=harness, created_date=created_date, updated_date=updated_date
+            )
 
         return ReasoningEpisode(
             category=ExtractionCategory.DURABLE_CANDIDATE,
@@ -655,4 +702,6 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             date_precision=DatePrecision.DAY,
             target_path=target_path,
             proposed_content=proposed_content,
+            target_heading=spec.get("target_heading"), source_date=updated_date,
+            target_seen=bool(matched_existing),
         )

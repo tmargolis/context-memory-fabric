@@ -504,7 +504,7 @@ async def capture_session(
                 "optional): short lowercase hyphenated topic slug, stable across chats about the same "
                 "undertaking.\n"
                 "  destination='doc_proposal' — target_path (str, required): relative path within LLM_Wiki; "
-                "proposed_content (str, required): complete desired file content, not a diff; doc_rationale "
+                "proposed_content (str, required): new body material only for an existing page, complete content for a new page; target_heading (str, optional), source_date (YYYY-MM-DD from source evidence, optional); doc_rationale "
                 "(str, required): why this belongs in durable knowledge.\n"
                 "  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt "
                 "supporting this item — for 'episode' this becomes the item's only trace in the evidence "
@@ -866,10 +866,6 @@ async def apply_doc_proposal(
         bool,
         Field(description="If true (default), reports what would happen without writing anything. Set false to actually apply."),
     ] = True,
-    force: Annotated[
-        bool,
-        Field(description="Override the destructive-update guard (an update removing more than 30% of the page's lines). Only when the user has confirmed the rewrite is intended."),
-    ] = False,
 ) -> str:
     """Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool
     that modifies the canonical durable-knowledge corpus.
@@ -884,8 +880,9 @@ async def apply_doc_proposal(
       current hash no longer matches what the proposal was diffed against), or — for a
       new-file proposal — if the target now exists. Either drift is reported by name, not
       silently overwritten.
-    - Refuses an update that would remove or rewrite more than 30% of the live page's
-      lines unless force=True (whole-file rewrites written from a snippet of the page).
+    - Writes exactly the reviewed content. An additive proposal was rendered onto the live
+      page when it was made; if that page has changed since, the stale-base refusal above
+      applies and a fresh proposal is needed. Nothing is rebased at apply time.
     - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one
       is present, as a free undo path.
 
@@ -896,7 +893,7 @@ async def apply_doc_proposal(
       search_wiki call rather than sitting behind a stale index.
     """
     try:
-        result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run, force=force)
+        result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run)
         message = format_apply_result(result)
         if not result["dry_run"]:
             invalidate_corpus_cache()
@@ -1713,8 +1710,9 @@ async def get_review_batch(
     WHEN TO USE:
     - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with
       `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1…)
-      and doc proposals (DOC1…), oldest first. A doc update carries `trips_overwrite_check` when it
-      would rewrite more than 30% of its live page — compare, don't auto-reject.
+      and doc proposals (DOC1…), oldest first. A doc carries `mode`: "append" adds `addition` to
+      the live page (under `target_heading` when set), "replace" is a whole-page rewrite to read
+      against the live page. `conflicts_with` lists other pending proposals for the same page.
     - Then judge every item and call record_review_recommendations with the same `run_id`.
 
     DISTINCTIONS:
@@ -1744,9 +1742,7 @@ async def record_review_recommendations(
         list[dict],
         Field(
             description="One entry per item: {'label': 'EP3' or 'DOC1', 'verdict': 'approve'|'reject'|'flag', "
-            "'reason': str, optional 'summary': a shorter statement for the table, optional "
-            "'rebuild_proposal_id': a pending proposal you drafted with propose_doc_update as the additive "
-            "rebuild of this doc}."
+            "'reason': str, optional 'summary': a shorter statement for the table}."
         ),
     ],
 ) -> str:
@@ -1839,10 +1835,9 @@ async def confirm_review_recommendations(
     CRITICAL SAFETY CONTRACT:
     - Verdicts go through the same functions a person uses. Flagged items without an override, and
       skipped items, stay in the queue.
-    - For a doc with a drafted rebuild, approve approves the rebuild and rejects the original.
-    - Approved docs are written to the wiki (no dry run) and committed there. A doc the apply guards
-      refuse (its page changed since, or it would remove over 30% of the page) is reported and stays
-      approved, unapplied.
+    - Approved docs are written to the wiki (no dry run) and committed there, exactly as reviewed.
+      A doc the apply guards refuse (its page changed since) is reported and stays approved,
+      unapplied.
     - Approved episodes are promoted by a background process, one at a time and each waiting for
       the Spark slot (1-4 minutes apiece); its log path is in the reply.
     """

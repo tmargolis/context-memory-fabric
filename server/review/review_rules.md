@@ -37,9 +37,9 @@ Reject:
 - Pages that duplicate an existing page or another proposal in the batch.
 - Snapshots of a design or schema that has since changed.
 
-**The overwrite check is a flag, not a reject rule.** A doc update with `trips_overwrite_check: true` would rewrite more than 30% of its live page (proposals are whole-file rewrites, often written from only a snippet). Read the proposal and the live page (`get_doc_proposal` shows the diff), then:
-1. If the live page already holds everything relevant: **reject** as covered.
-2. Otherwise: draft an **additive rebuild** with `propose_doc_update` on the full current page (keep its structure, links and frontmatter; add only the missing facts, checked against their source; update the `updated:` date), and recommend **approve** with `rebuild_proposal_id` set to the new proposal. Confirming approves the rebuild and rejects the original.
+**Judge what a doc adds.** A doc with `mode: "append"` adds `addition` to the live page, under `target_heading` when set (otherwise at the end); the rest of the page is unchanged and its `created:` date is kept. Judge the addition: reject it if the page already covers it, if it belongs on a different page, or if it is a new topic that should be its own page. A doc with `mode: "replace"` is a deliberate whole-page rewrite: read it against the live page (`get_doc_proposal` shows the diff) and flag it if it removes substantive content.
+
+**Conflicts stay separate.** `conflicts_with` names other pending proposals for the same page, often from another conversation. Judge each on its own; when two say incompatible things, flag rather than pick.
 
 Frontmatter dates (`created`, `updated`) come from when the conversation happened, not from the review date.
 
@@ -53,4 +53,4 @@ Frontmatter dates (`created`, `updated`) come from when the conversation happene
 
 ## Output
 
-End your run by calling `record_review_recommendations` with one entry per item (`label`, `verdict`, `reason`, optional `summary` and `rebuild_proposal_id`), and show the user the summary it returns, unchanged.
+End your run by calling `record_review_recommendations` with one entry per item (`label`, `verdict`, `reason`, optional `summary`), and show the user the summary it returns, unchanged.

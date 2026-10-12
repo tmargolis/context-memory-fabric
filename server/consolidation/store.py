@@ -332,12 +332,12 @@ class ConsolidationStore:
                 memory_id, source_event_id, policy_name, policy_version, category,
                 statement, reason, confidence, event_date, date_precision,
                 reasoning_kind, evidence_event_ids_json, approval_state, supersedes, created_at,
-                project
+                project, thread_key
             ) VALUES (
                 :memory_id, :source_event_id, :policy_name, :policy_version, :category,
                 :statement, :reason, :confidence, :event_date, :date_precision,
                 :reasoning_kind, :evidence_event_ids_json, :approval_state, :supersedes, :created_at,
-                :project
+                :project, :thread_key
             )
             ON CONFLICT(memory_id) DO NOTHING
             """,
@@ -358,6 +358,7 @@ class ConsolidationStore:
                 "supersedes": supersedes,
                 "created_at": now,
                 "project": project,
+                "thread_key": episode.thread_key,
             },
         )
         self._conn.execute(

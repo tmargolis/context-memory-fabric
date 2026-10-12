@@ -223,6 +223,9 @@ def _capture_doc_item(
     try:
         proposal = create_doc_proposal(
             target_path=target_path,
+            mode="append",
+            target_heading=item.get("target_heading"),
+            source_date=item.get("source_date"),
             proposed_content=proposed_content,
             rationale=rationale,
             source_context=item.get("evidence_text"),

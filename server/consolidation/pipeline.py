@@ -40,6 +40,7 @@ gate discussion of why that matters for auto-accept policy).
 from collections import defaultdict
 from datetime import datetime
 import logging
+import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -61,7 +62,14 @@ from server.adapters.claude_code.project_slug import derive_project_from_path
 from server.consolidation.project_aliases import resolve_project
 from server.adapters.claude_code.parser import HARNESS_COWORK, TRANSCRIPT_HARNESSES as CLAUDE_TRANSCRIPT_HARNESSES
 from server.adapters.claude_cowork.discovery import project_for_journaled_session
-from server.proposals import create_doc_proposal, review_proposal
+from server.proposals import (
+    ProposalRefused,
+    advance_updated,
+    create_doc_proposal,
+    list_proposals,
+    review_proposal,
+    strip_frontmatter,
+)
 from server.review.actions import reject_episode
 from server.review.store import ReviewStore
 
@@ -368,11 +376,18 @@ def run_reasoning_consolidation(
         # never reads this field, and a run with no doc proposals at all is
         # unaffected either way.
         existing_project_folders: list[str] = []
+        existing_wiki_folders: list[str] = []
+        corpus_root: Optional[Path] = wiki_root
         try:
             from server.providers.wiki.corpus import get_corpus_root
-            projects_dir = (wiki_root if wiki_root is not None else get_corpus_root()) / "WIKI" / "projects"
+            corpus_root = wiki_root if wiki_root is not None else get_corpus_root()
+            projects_dir = corpus_root / "WIKI" / "projects"
             if projects_dir.is_dir():
                 existing_project_folders = sorted(p.name for p in projects_dir.iterdir() if p.is_dir())
+            existing_wiki_folders = sorted(
+                f"{top}/{p.name}" for top in ("WIKI", "RAW") if (corpus_root / top).is_dir()
+                for p in (corpus_root / top).iterdir() if p.is_dir() and not p.name.startswith(".")
+            )
         except Exception:  # noqa: BLE001 -- see comment above; this is a hint, not a requirement
             logger.debug("Could not enumerate existing WIKI/projects/ folders for doc-routing context", exc_info=True)
 
@@ -386,6 +401,7 @@ def run_reasoning_consolidation(
             "episodes_created": 0,
             "doc_proposals_created": 0,
             "doc_proposals_failed": 0,
+            "doc_proposals_skipped": 0,
             "doc_proposals_superseded_in_run": 0,
             "threads_merged": 0,
             "episodes_merged_away": 0,
@@ -396,14 +412,12 @@ def run_reasoning_consolidation(
             "errors": [],
         }
 
-        for conv_key in sorted(by_conv):
+        for conv_key in sorted(by_conv, key=lambda k: min(e.observed_at for e in by_conv[k])):
             conv_events = by_conv[conv_key]
-            # Reset per-conversation: doc pages proposed so far this run (for
-            # dedup/context) and tier-1 episodes written so far this run (for the
-            # end-of-conversation thread merge). Neither persists across
-            # conversations -- a merge or supersession only ever happens within
-            # one conversation's own output.
-            doc_pages_this_conv: dict[str, dict[str, str]] = {}
+            # Reset per-conversation: tier-1 episodes written so far (for the
+            # end-of-conversation thread merge, which also picks up this
+            # conversation's still-unmerged children from earlier runs). Doc
+            # proposals are read back from the proposal store each window.
             tier1_this_conv: list[tuple[str, ReasoningEpisode]] = []
             harness_slug_for_conv: Optional[str] = None
             # The merged episode a thread merge writes needs the project its
@@ -478,11 +492,15 @@ def run_reasoning_consolidation(
                     max_results=5,
                 )
 
+                # Pending proposals: this conversation's (any earlier run) and the
+                # project's, so new material extends them instead of competing.
+                pending_now = list_proposals(proposals_dir=proposals_dir, status="pending_review")
                 context = PolicyContext(
                     topical_window=list(window.events),
-                    open_threads=thread_index.open_threads(),
-                    open_doc_pages=list(doc_pages_this_conv.values()),
+                    open_threads=thread_index.scoped_threads(conversation_id=window.conversation_id or conv_key, project=project, as_of=max(e.observed_at for e in window.events), journal_store=journal_store),
+                    open_doc_pages=[p.to_dict() for p in _relevant_pending(pending_now, window.conversation_id, project)],
                     existing_project_folders=existing_project_folders,
+                    existing_wiki_folders=existing_wiki_folders,
                     relevant_wiki_docs=relevant_wiki_docs,
                     conversation_title=conv_title,
                 )
@@ -508,9 +526,26 @@ def run_reasoning_consolidation(
                     if episode.category == ExtractionCategory.DURABLE_CANDIDATE:
                         target_path = episode.target_path or ""
                         try:
+                            target_exists = corpus_root is not None and (corpus_root / target_path).is_file()
+                            if target_exists and not episode.target_seen:
+                                raise ProposalRefused(f"existing page {target_path} was not shown in full; kept as episode material only")
+                            # Supersede only an additive (or new-page) proposal; a legacy
+                            # whole-page replacement stays for review, flagged as a conflict.
+                            prior_here = max(
+                                (p for p in pending_now if p.source_conversation_id == window.conversation_id
+                                 and p.target_path == target_path and (p.mode == "append" or not target_exists)),
+                                key=lambda p: p.created_at, default=None,
+                            )
+                            material = episode.proposed_content or ""
+                            if prior_here is not None:
+                                material = _carry_forward(prior_here, material, target_exists, episode.source_date, target_path)
                             proposal = create_doc_proposal(
                                 target_path=target_path,
-                                proposed_content=episode.proposed_content or "",
+                                proposed_content=material,
+                                mode="append",
+                                target_heading=episode.target_heading or (prior_here.target_heading if prior_here else None),
+                                source_date=episode.source_date,
+                                supersedes=prior_here.proposal_id if prior_here else None,
                                 rationale=episode.rationale or "",
                                 source_context=episode.statement,
                                 source_conversation_id=window.conversation_id,
@@ -519,6 +554,7 @@ def run_reasoning_consolidation(
                                 wiki_root=wiki_root,
                                 proposals_dir=proposals_dir,
                             )
+                            pending_now.append(proposal)
                             stats["doc_proposals_created"] += 1
 
                             # Same target_path already proposed earlier THIS RUN
@@ -528,26 +564,23 @@ def run_reasoning_consolidation(
                             # pending proposals for the same page competing for
                             # review. The new one already carries the fuller,
                             # more recent content.
-                            prior_here = doc_pages_this_conv.get(proposal.target_path)
-                            if prior_here is not None and prior_here["proposal_id"] != proposal.proposal_id:
+                            if prior_here is not None and prior_here.proposal_id != proposal.proposal_id:
                                 try:
                                     review_proposal(
-                                        prior_here["proposal_id"],
+                                        prior_here.proposal_id,
                                         verdict="rejected",
                                         reviewer="pipeline-doc-merge",
-                                        notes=f"superseded within this run by {proposal.proposal_id}",
+                                        notes=f"superseded by {proposal.proposal_id}, which carries its material forward",
                                         proposals_dir=proposals_dir,
                                     )
+                                    pending_now.remove(prior_here)
                                     stats["doc_proposals_superseded_in_run"] += 1
                                 except ValueError as exc:
-                                    logger.warning("Could not supersede prior doc proposal %s: %s", prior_here["proposal_id"], exc)
+                                    logger.warning("Could not supersede prior doc proposal %s: %s", prior_here.proposal_id, exc)
 
-                            doc_pages_this_conv[proposal.target_path] = {
-                                "proposal_id": proposal.proposal_id,
-                                "target_path": proposal.target_path,
-                                "statement": episode.statement,
-                                "proposed_content": proposal.proposed_content,
-                            }
+                        except ProposalRefused as exc:
+                            logger.info("ExtractPolicyV1 doc proposal declined for %s: %s", job_id, exc)
+                            stats["doc_proposals_skipped"] += 1
                         except (ValueError, RuntimeError) as exc:
                             # A malformed target_path or an unconfigured knowledge
                             # provider must not lose the window's episodes or abort
@@ -587,11 +620,42 @@ def run_reasoning_consolidation(
                             conversation_id=window.conversation_id,
                             observed_at=episode.event_date,
                             status=episode.status,
+                            project=project,
                         )
 
                     if approval == "queued_for_review" and episode.thread_key:
                         tier1_this_conv.append((memory_id, episode))
 
+            if merge_threads:
+                # Include still-unreviewed children from successful earlier windows/reruns.
+                present = {mid for mid, _ in tier1_this_conv}
+                conn = consolidation_store._conn
+                unmerged = ("FROM derived_memories d {join} WHERE d.policy_name=? AND d.policy_version=? "
+                            "AND d.approval_state='queued_for_review' AND d.thread_key IS NOT NULL "
+                            "AND d.superseded_by IS NULL AND d.memory_id NOT LIKE 'reason:threadmerge:%' {conv}")
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='reviews'").fetchone():
+                    # A reviewed child keeps its verdict and never feeds a new merge.
+                    unmerged += " AND d.memory_id NOT IN (SELECT memory_id FROM reviews WHERE review_state != 'pending')"
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='events'").fetchone():
+                    prior_rows = conn.execute(
+                        "SELECT d.* " + unmerged.format(join="JOIN events e ON e.event_id = d.source_event_id",
+                                                        conv="AND COALESCE(e.conversation_id, e.event_id) = ?"),
+                        (policy.name, policy.version, conv_key)).fetchall()
+                else:
+                    prior_rows = []
+                    for row in conn.execute("SELECT d.* " + unmerged.format(join="", conv=""), (policy.name, policy.version)):
+                        source = journal_store.get(row["source_event_id"])
+                        if source is not None and (source.source.conversation_id or source.event_id) == conv_key:
+                            prior_rows.append(row)
+                for row in prior_rows:
+                    if row["memory_id"] in present:
+                        continue
+                    tier1_this_conv.append((row["memory_id"], ReasoningEpisode(
+                        category=ExtractionCategory.EPISODIC, reasoning_kind=row["reasoning_kind"] or "finding",
+                        statement=row["statement"], confidence=row["confidence"],
+                        evidence_event_ids=json.loads(row["evidence_event_ids_json"] or "[]"),
+                        thread_key=row["thread_key"], event_date=datetime.fromisoformat(row["event_date"]) if row["event_date"] else None,
+                    )))
             if merge_threads and len(tier1_this_conv) > 1:
                 merge_stats = _merge_tier1_by_thread(
                     consolidation_store=consolidation_store,
@@ -647,6 +711,70 @@ def _chunk_by_budget(
     if current:
         chunks.append(current)
     return chunks
+
+
+def _relevant_pending(pending, conversation_id, project):
+    """This conversation's pending proposals first, then the same known project's."""
+    own = [p for p in pending if p.source_conversation_id == conversation_id]
+    known = project not in (None, "", "unknown", "other", "tmp-other")
+    same_project = [p for p in pending if known and p.source_project == project and p not in own]
+    return sorted(own, key=lambda p: p.created_at, reverse=True) + sorted(same_project, key=lambda p: p.created_at, reverse=True)
+
+
+def _carry_forward(prior, material: str, target_exists: bool, source_date, target_path: str) -> str:
+    """Combine an unreviewed proposal's material with this window's, losing neither.
+
+    For an existing page the material is the addition; for a new page it is the
+    whole page, whose first frontmatter is kept. New material that already
+    contains the earlier material (a fuller restatement) replaces it.
+    """
+    old = (prior.addition if target_exists else prior.proposed_content) or ""
+    if not target_exists:
+        material = strip_frontmatter(material)
+    old_body = old if target_exists else strip_frontmatter(old)
+    head = old[: len(old) - len(old_body)] if old.endswith(old_body) else ""
+    if not old_body.strip() or material.strip() in old_body:
+        combined = old_body if old_body.strip() else material
+    elif old_body.strip() in material:
+        combined = material
+    else:
+        combined = old_body.rstrip() + "\n\n" + material.strip() + "\n"
+    result = head + combined
+    return result if target_exists else advance_updated(result, source_date, target_path)
+
+
+def _retire_absorbed(consolidation_store, review_store, children, merged_id):
+    """Link only unreviewed children demonstrably represented by an existing merge."""
+    conn = consolidation_store._conn
+    merged = consolidation_store.get_derived_memories([merged_id])
+    if not merged:
+        return 0
+    parent = merged[0]
+    evidence = set(json.loads(parent["evidence_event_ids_json"] or "[]"))
+    count = 0
+    for mid, episode in children:
+        row = consolidation_store.get_derived_memories([mid])
+        # A child without a derived row is in-memory only; 1.6 retired those too.
+        if row and row[0]["approval_state"] != "queued_for_review":
+            continue
+        review = review_store.get(mid)
+        if review is not None and review["review_state"] != "pending":
+            if review["reviewer"] == "pipeline-thread-merge" and review["reason"] == f"merged into {merged_id}":
+                continue  # retired into this same parent on an earlier run
+            logger.warning("Merge conflict: reviewed child %s remains untouched", mid)
+            continue
+        has_promotions = conn.execute("SELECT 1 FROM sqlite_master WHERE name='promotions'").fetchone()
+        if has_promotions and conn.execute("SELECT 1 FROM promotions WHERE memory_id=? AND status='succeeded'", (mid,)).fetchone():
+            logger.warning("Merge conflict: promoted child %s remains untouched", mid)
+            continue
+        if episode.statement not in parent["statement"] or not set(episode.evidence_event_ids).issubset(evidence):
+            logger.warning("Merge conflict: %s is not fully represented in %s", mid, merged_id)
+            continue
+        reject_episode(review_store, mid, reviewer="pipeline-thread-merge", reason=f"merged into {merged_id}")
+        conn.execute("UPDATE derived_memories SET superseded_by=? WHERE memory_id=?", (merged_id, mid))
+        conn.commit()
+        count += 1
+    return count
 
 
 def _merge_tier1_by_thread(
@@ -711,7 +839,8 @@ def _merge_tier1_by_thread(
         base_job_id = f"job:reason:threadmerge:{conv_key}:{norm_key}::{policy_name}@{policy_version}"
         base_memory_id = f"reason:threadmerge:{conv_key}:{norm_key}::{policy_name}@{policy_version}"
         if consolidation_store.get_job(base_job_id) is not None:
-            continue  # already merged on a prior run of this exact policy version
+            episodes_merged_away += _retire_absorbed(consolidation_store, review_store, group, base_memory_id)
+            continue
 
         group.sort(key=lambda pair: pair[1].event_date.isoformat() if pair[1].event_date else "")
         chunks = _chunk_by_budget(group, char_budget)
@@ -724,6 +853,7 @@ def _merge_tier1_by_thread(
             suffix = f"::part{part}" if split else ""
             merge_job_id = base_job_id + suffix
             if consolidation_store.get_job(merge_job_id) is not None:
+                episodes_merged_away += _retire_absorbed(consolidation_store, review_store, chunk, base_memory_id + suffix)
                 continue
 
             kinds_present = {ep.reasoning_kind for _, ep in chunk}
@@ -775,15 +905,8 @@ def _merge_tier1_by_thread(
                 project=project,
             )
 
-            for memory_id, _ in chunk:
-                reject_episode(
-                    review_store,
-                    memory_id,
-                    reviewer="pipeline-thread-merge",
-                    reason=f"merged into {merged_memory_id}",
-                )
+            episodes_merged_away += _retire_absorbed(consolidation_store, review_store, chunk, merged_memory_id)
             merged_any = True
-            episodes_merged_away += len(chunk)
 
         if merged_any:
             threads_merged += 1
