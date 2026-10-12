@@ -191,7 +191,7 @@ def test_routes_into_existing_wiki_folder_in_its_casing():
     out=policy._to_doc_candidate(spec,[event('a','c')],[],[],existing_wiki_folders=['WIKI/Job-Search','WIKI/projects'])
     assert out.target_path=='WIKI/Job-Search/Outreach Playbook.md' and not out.target_seen
     raw=policy._to_doc_candidate({**spec,'target_path':'RAW/notes/x.md','proposed_content':'plain'},[event('a','c')],[],[])
-    assert raw.target_path=='RAW/notes/x.md' and raw.proposed_content=='plain'  # RAW keeps its own schema
+    assert raw.target_path=='RAW/notes/x.md' and raw.proposed_content.startswith('---\n') and 'plain' in raw.proposed_content
 
 
 class _Scripted:

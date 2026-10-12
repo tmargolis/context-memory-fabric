@@ -50,3 +50,13 @@ Scheduled-task features change often. Check your app's own help for the current 
 - **Gemini Spark:** "schedules" run recurring tasks, and since June 2026 Spark connects to custom MCP servers by URL. Rolling out to Google AI Pro (US) and Ultra subscribers; see [What's new for Gemini Spark](https://support.google.com/gemini/answer/17171264).
 - **Antigravity:** the 2.0 desktop app adds scheduled tasks (`/schedule`). It runs on your computer, so it can use the local CMF server; the computer has to be awake at 11:11 PM.
 - **Claude Code:** a desktop scheduled task or a cloud routine works too. A cloud routine needs the remote CMF connector; a local one needs the machine awake.
+
+## Reading a proposal
+
+Each proposal is one file, `doc-proposals/<proposal_id>.json` (or its `approved/` / `rejected/` subfolder):
+
+- `diff_hunks`: the changes, numbered, one string per line, so the review reads cleanly in any JSON viewer. `get_doc_proposal` shows the same changes as "Change N of M" sections.
+- `unified_diff`: the same diff as one text block, for older readers.
+- `proposed_content`: the complete, exact file apply writes after approval, checked against its SHA-256. A changed live page still blocks the apply.
+
+Frontmatter `source` entries on the existing page are kept in order and new ones are appended once (a second source turns a scalar into a list). This applies to `RAW/` pages too; a `source` field in a format CMF doesn't parse is left exactly as written. A page without frontmatter never gets one added. Older proposals without `diff_hunks` still load and render.

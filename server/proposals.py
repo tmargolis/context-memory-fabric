@@ -95,6 +95,7 @@ class DocProposal:
     target_heading: Optional[str] = None
     source_date: Optional[str] = None
     conflicts_with: list[str] = field(default_factory=list)
+    diff_hunks: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -241,7 +242,7 @@ def append_material(base: str, addition: str, heading: Optional[str] = None) -> 
 
 
 def advance_updated(content: str, source_date: Optional[str], target: str) -> str:
-    if not source_date or target.startswith("RAW/"):
+    if not source_date:
         return content
     # Preserve creation and all unrelated metadata; an older transcript cannot move updated backwards.
     match = re.match(r"\A---\s*\n(.*?)\n---", content, re.S)
@@ -253,6 +254,78 @@ def advance_updated(content: str, source_date: Optional[str], target: str) -> st
         return content
     new = re.sub(r"(?m)^updated:.*$", "updated: " + source_date, body) if existing else body + "\nupdated: " + source_date
     return content[:match.start(1)] + new + content[match.end(1):]
+
+
+def _source_field(content: str) -> tuple[Optional[re.Match], Optional[re.Match], list[str]]:
+    """Read the supported YAML source scalar/list without reserializing other metadata."""
+    front = re.match(r"\A---[ \t]*\n(.*?)\n---(?:\n|\Z)", content, re.S)
+    if not front:
+        return None, None, []
+    field_match = re.search(r"(?m)^source:[ \t]*([^\n]*)(?:\n(?:[ \t]+[^\n]*|-[ \t]+[^\n]*|[ \t]*(?=\n|\Z)))*", front[1])
+    if not field_match:
+        return front, None, []
+
+    def scalar(value: str) -> str:
+        value = value.strip()
+        if value.startswith('"'):
+            try:
+                parsed = json.loads(value)
+            except ValueError as exc:
+                raise ProposalRefused("Unsupported quoted source metadata") from exc
+            if not isinstance(parsed, str):
+                raise ProposalRefused("Source entries must be strings")
+            return parsed
+        if value.startswith("'") and value.endswith("'"):
+            return value[1:-1].replace("''", "'")
+        if not value or value[0] in "[{&*!>|" or ": " in value:
+            raise ProposalRefused("Source metadata must be a string or a list of strings")
+        return re.split(r"\s+#", value, maxsplit=1)[0].strip()
+
+    raw = field_match[1].strip()
+    rest = [line for line in field_match[0].splitlines()[1:]
+            if line.strip() and not line.lstrip().startswith("#")]
+    if raw.startswith('['):
+        # YAML flow strings, including unquoted harness labels.
+        token = r'"(?:\\.|[^"\\])*"|\'(?:\'\'|[^\'])*\'|[^,\[\]{}]+?'
+        pattern = rf"\[\s*(?:(?:{token})(?:\s*,\s*(?:{token}))*\s*,?)?\s*\]"
+        if not re.fullmatch(pattern, raw) or rest:
+            raise ProposalRefused("Unsupported source list")
+        tokens = re.findall(r'"(?:\\.|[^"\\])*"|\'(?:\'\'|[^\'])*\'|[^,\[\]{}]+', raw[1:-1])
+        values = [scalar(v) for v in tokens if v.strip()]
+    elif rest:
+        if raw or any(not re.match(r"^\s*-\s+", line) for line in rest):
+            raise ProposalRefused("Source metadata must be a string or a list of strings")
+        values = [scalar(re.sub(r"^\s*-\s+", "", line)) for line in rest]
+    else:
+        values = [scalar(raw)] if raw and raw not in ("null", "~") else []
+    return front, field_match, values
+
+
+def merge_sources(base: str, proposed: str, source_harness: Optional[str] = None) -> str:
+    """Preserve old provenance, append new sources once, and leave other bytes alone."""
+    _, _, old = _source_field(base)
+    front, source, new = _source_field(proposed)
+    combined = list(dict.fromkeys(old + new + ([source_harness] if source_harness else [])))
+    if not combined or combined == new:
+        return proposed
+    rendered = ("source: " + json.dumps(combined[0], ensure_ascii=False) if len(combined) == 1 else
+                "source:\n" + "\n".join("  - " + json.dumps(v, ensure_ascii=False) for v in combined))
+    if front is None:
+        return proposed  # never add frontmatter to a page that has none
+    body = front[1]
+    body = body[:source.start()] + rendered + body[source.end():] if source else body + "\n" + rendered
+    return proposed[:front.start(1)] + body + proposed[front.end(1):]
+
+
+def split_diff_hunks(diff: str) -> list[dict[str, Any]]:
+    """JSON-friendly, individually reviewable sections; also works on legacy diffs."""
+    hunks: list[dict[str, Any]] = []
+    for line in diff.splitlines():
+        if line.startswith("@@ "):
+            hunks.append({"header": line, "lines": []})
+        elif hunks:
+            hunks[-1]["lines"].append(line)
+    return hunks
 
 
 def create_doc_proposal(
@@ -296,6 +369,13 @@ def create_doc_proposal(
     if addition is not None:
         proposed_content = append_material(resolved_target.read_text(encoding="utf-8"), addition, target_heading)
         proposed_content = advance_updated(proposed_content, source_date, rel_path_str)
+    if resolved_target.suffix.lower() in {".md", ".markdown"}:
+        base = resolved_target.read_text(encoding="utf-8", errors="replace") if resolved_target.is_file() else ""
+        try:
+            proposed_content = merge_sources(base, proposed_content, source_harness)
+        except ProposalRefused as exc:
+            # A source field in a schema we don't parse (some RAW pages) is left exactly as written.
+            logger.info("Sources for %s left as written: %s", rel_path_str, exc)
     pending = list_proposals(status="pending_review", proposals_dir=proposals_dir)
     # Other conversations' proposals, and legacy whole-page replacements, stay separately reviewable.
     conflicts = [p.proposal_id for p in pending if p.target_path == rel_path_str and p.proposal_id != supersedes
@@ -309,35 +389,23 @@ def create_doc_proposal(
     if resolved_target.exists():
         if not resolved_target.is_file():
             raise ValueError(f"Target path exists but is not a file: '{rel_path_str}'")
-
         operation = "update"
         current_text = resolved_target.read_text(encoding="utf-8", errors="replace")
         current_sha = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
-
-        diff_lines = list(
-            difflib.unified_diff(
-                current_text.splitlines(keepends=True),
-                proposed_content.splitlines(keepends=True),
-                fromfile=f"a/{rel_path_str}",
-                tofile=f"b/{rel_path_str}",
-                lineterm="",
-            )
-        )
-        unified_diff_str = "\n".join(diff_lines)
     else:
-        operation = "create"
-        current_sha = None
+        operation, current_text, current_sha = "create", "", None
 
-        diff_lines = list(
-            difflib.unified_diff(
-                [],
-                proposed_content.splitlines(keepends=True),
-                fromfile="/dev/null",
-                tofile=f"b/{rel_path_str}",
-                lineterm="",
-            )
-        )
-        unified_diff_str = "\n".join(diff_lines)
+    # Preserve final-newline differences without the old doubled blank lines.
+    diff_lines = []
+    for line in difflib.unified_diff(
+        current_text.splitlines(keepends=True), proposed_content.splitlines(keepends=True),
+        fromfile=f"a/{rel_path_str}" if operation == "update" else "/dev/null",
+        tofile=f"b/{rel_path_str}",
+    ):
+        diff_lines.append(line.rstrip("\n"))
+        if not line.endswith("\n"):
+            diff_lines.append("\\ No newline at end of file")
+    unified_diff_str = "\n".join(diff_lines)
 
     if not unified_diff_str.strip():
         unified_diff_str = f"(No textual differences between current and proposed content for {rel_path_str})"
@@ -358,6 +426,7 @@ def create_doc_proposal(
         proposed_content=proposed_content,
         mode=mode, addition=addition, target_heading=target_heading, source_date=source_date, conflicts_with=conflicts,
         unified_diff=unified_diff_str,
+        diff_hunks=split_diff_hunks(unified_diff_str),
     )
 
     # Persist to local JSON file (pending_review -> flat root, via _save_proposal)
@@ -384,13 +453,19 @@ def format_proposal_for_mcp(proposal: DocProposal) -> str:
     if proposal.source_context:
         lines.append(f"- **Source Context:** {proposal.source_context}")
 
-    lines.append("\n#### Proposed Changes (Unified Diff)")
-    lines.append("```diff")
-    lines.append(proposal.unified_diff)
-    lines.append("```\n")
+    lines.append("\nThe full `proposed_content` is the exact apply payload; the diff is for review.")
+    hunks = split_diff_hunks(proposal.unified_diff)
+    for number, hunk in enumerate(hunks, 1):
+        lines.append(f"\n#### Change {number} of {len(hunks)}")
+        text = "\n".join([hunk["header"], *hunk["lines"]])
+        fence = "`" * max(3, max((len(m[0]) + 1 for m in re.finditer(r"`+", text)), default=3))
+        lines.extend([fence + "diff", text, fence])
+    if not hunks:
+        lines.append(proposal.unified_diff)
 
     lines.append("> [!IMPORTANT]")
-    lines.append("> This proposal is saved locally for review and has **NOT** modified `LLM_Wiki`.")
+    lines.append("> Applied to `LLM_Wiki`." if proposal.status == "applied" else
+                 "> This proposal has **NOT** modified `LLM_Wiki`.")
 
     return "\n".join(lines)
 
@@ -471,7 +546,11 @@ def _save_proposal(proposal: DocProposal, proposals_dir: Optional[Path] = None) 
     if existing is not None and existing != new_path:
         existing.unlink()
 
-    new_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
+    # One file per proposal. diff_hunks (one string per line, per change) is the
+    # readable view; unified_diff stays for older readers; proposed_content is
+    # the exact bytes apply writes.
+    proposal.diff_hunks = split_diff_hunks(proposal.unified_diff)
+    new_path.write_text(json.dumps(proposal.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def review_proposal(

@@ -686,7 +686,7 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             if target_path.startswith("WIKI/projects/") and project and project not in ("unknown", "other", "tmp-other"):
                 target_path = _canonicalize_doc_project_folder(target_path, project, existing_project_folders)
 
-        if not matched_existing and not target_path.startswith("RAW/"):
+        if not matched_existing:
             proposed_content = _ensure_frontmatter(
                 proposed_content, target_path=target_path, harness=harness, created_date=created_date, updated_date=updated_date
             )
