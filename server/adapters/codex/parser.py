@@ -160,6 +160,17 @@ def _clean_user_text(raw_text: str) -> str:
     return text.strip()
 
 
+def _extract_user_answers(payload: Any) -> Optional[dict[str, Any]]:
+    """A retained_context line: each question Codex asked and the user's answer."""
+    if not isinstance(payload, dict):
+        return None
+    parts = []
+    for qa in payload.get("questions") or []:
+        if isinstance(qa, dict) and (qa.get("question") or qa.get("answer")):
+            parts.append(f"Q: {str(qa.get('question') or '').strip()}\nA: {str(qa.get('answer') or '').strip()}")
+    return {"text": "\n\n".join(parts), "kind": "user_input_answers"} if parts else None
+
+
 def _extract_user_message(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     content = payload.get("content", [])
     if isinstance(content, str):
@@ -285,7 +296,24 @@ def parse_line(
         stats["skipped_known"] += 1
         return None
 
-    if ltype != "response_item":
+    payload = record.get("payload")
+    extracted: Optional[dict[str, Any]] = None
+    actor_type: str = "assistant"
+
+    if ltype == "retained_context":
+        # The user's answers to questions Codex asked mid-turn (request_user_input).
+        extracted = _extract_user_answers(payload)
+        actor_type = "user"
+    elif ltype == "compacted":
+        # Context compaction. Its replayed history (retained_context messages,
+        # replacement_history) repeats response_items already earlier in this
+        # file, so only a non-empty compaction summary is new content.
+        summary = (payload.get("message") or "").strip() if isinstance(payload, dict) else ""
+        if not summary:
+            stats["skipped_known"] += 1
+            return None
+        extracted = {"text": summary, "kind": "compaction_summary"}
+    elif ltype != "response_item":
         stats["skipped_unknown"] += 1
         if ltype not in _warned_unknown_types:
             _warned_unknown_types.add(str(ltype))
@@ -295,50 +323,42 @@ def parse_line(
                 conversation_id,
             )
         return None
-
-    payload = record.get("payload")
-    if not isinstance(payload, dict):
+    elif not isinstance(payload, dict):
         stats["skipped_empty"] += 1
         return None
-
-    ptype = payload.get("type")
-    if ptype in KNOWN_SKIPPED_PAYLOAD_TYPES:
-        stats["skipped_known"] += 1
-        return None
-
-    extracted: Optional[dict[str, Any]] = None
-    actor_type: str = "assistant"
-
-    if ptype == "message":
-        role = payload.get("role")
-        if role == "developer":
+    else:
+        ptype = payload.get("type")
+        if ptype in KNOWN_SKIPPED_PAYLOAD_TYPES:
             stats["skipped_known"] += 1
             return None
-        elif role == "user":
-            extracted = _extract_user_message(payload)
-            actor_type = "user"
-        elif role == "assistant":
-            extracted = _extract_assistant_message(payload)
-            actor_type = "assistant"
+        if ptype == "message":
+            role = payload.get("role")
+            if role == "developer":
+                stats["skipped_known"] += 1
+                return None
+            elif role == "user":
+                extracted = _extract_user_message(payload)
+                actor_type = "user"
+            elif role == "assistant":
+                extracted = _extract_assistant_message(payload)
+                actor_type = "assistant"
+            else:
+                stats["skipped_unknown"] += 1
+                return None
+        elif ptype in ("custom_tool_call", "function_call"):
+            extracted = _extract_tool_call(payload)
+        elif ptype in ("custom_tool_call_output", "function_call_output"):
+            extracted = _extract_tool_output(payload)
         else:
             stats["skipped_unknown"] += 1
+            if ptype not in _warned_unknown_types:
+                _warned_unknown_types.add(str(ptype))
+                logger.warning(
+                    "codex parser: unrecognized payload type %r, skipping (conversation %s)",
+                    ptype,
+                    conversation_id,
+                )
             return None
-    elif ptype in ("custom_tool_call", "function_call"):
-        extracted = _extract_tool_call(payload)
-        actor_type = "assistant"
-    elif ptype in ("custom_tool_call_output", "function_call_output"):
-        extracted = _extract_tool_output(payload)
-        actor_type = "assistant"
-    else:
-        stats["skipped_unknown"] += 1
-        if ptype not in _warned_unknown_types:
-            _warned_unknown_types.add(str(ptype))
-            logger.warning(
-                "codex parser: unrecognized payload type %r, skipping (conversation %s)",
-                ptype,
-                conversation_id,
-            )
-        return None
 
     if extracted is None:
         stats["skipped_empty"] += 1
@@ -346,7 +366,7 @@ def parse_line(
 
     # Derive unique turn identity
     ordinal = record.get("ordinal")
-    item_id = payload.get("id") or payload.get("call_id")
+    item_id = (payload.get("id") or payload.get("call_id")) if isinstance(payload, dict) else None
     if ordinal is not None:
         turn_id = str(ordinal)
     elif item_id:
