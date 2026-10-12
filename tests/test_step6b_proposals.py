@@ -45,7 +45,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         self.wiki_root = Path(self.temp_wiki.name)
 
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "proposals-docs"
 
         # Populate a minimal synthetic Wiki
         wiki_dir = self.wiki_root / "WIKI"

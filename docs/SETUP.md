@@ -315,7 +315,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `FALKORDB_USER` | No | — | FalkorDB ACL user every CMF client logs in as (alias `FALKORDB_USERNAME`). Unset: the built-in `default` user. |
 | `FALKORDB_PASSWORD` | No | — | Password for that user. |
 | `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
-| `CMF_STATE_DIR` | No | repo root | Where `doc-proposals/` and `episode-proposals/` are kept. |
+| `CMF_STATE_DIR` | No | repo root | Where `proposals-docs/` and `proposals-episode/` are kept. |
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
 | `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |

@@ -1,19 +1,19 @@
-"""episode-proposals/: a human-browsable file mirror for staged reasoning
+"""proposals-episode/: a human-browsable file mirror for staged reasoning
 episodes (Backlog, "Proposal-directory housekeeping," 2026-09-18).
 
 Staged reasoning episodes (the output of MS3.5's windowed extraction, and
 MS4a2's `capture_session`) have always lived only as `derived_memories`
 rows in SQLite (`imports/journal/journal.db`) -- unlike doc proposals,
-which are one JSON file per proposal under `doc-proposals/`. This module
+which are one JSON file per proposal under `proposals-docs/`. This module
 adds a write-through file projection alongside SQLite, which stays the
 sole source of truth: job tracking, `supersedes` lineage, and idempotency
 all depend on it, and nothing here is meant to be hand-edited as an
 alternate input path. Review still happens via `approve_episode`/
 `reject_episode` (or the review CLI) -- the mirror is read-only/
-informational, same convention `doc-proposals/`'s files follow once
+informational, same convention `proposals-docs/`'s files follow once
 MS6d's review/apply split exists for them too.
 
-Layout: `episode-proposals/{tier1,tier2}/{sha256(memory_id)}.json` (a
+Layout: `proposals-episode/{tier1,tier2}/{sha256(memory_id)}.json` (a
 memory_id can be long enough to exceed a filesystem's filename limit --
 hit for real backfilling the production journal; the real memory_id is
 still the first field inside the file), each with its own
@@ -66,10 +66,10 @@ def get_episode_proposals_dir(custom_dir: Optional[Path] = None) -> Path:
     else:
         env_state_dir = os.getenv("CMF_STATE_DIR")
         if env_state_dir:
-            p = Path(env_state_dir).expanduser().resolve() / "episode-proposals"
+            p = Path(env_state_dir).expanduser().resolve() / "proposals-episode"
         else:
             project_root = Path(__file__).resolve().parent.parent
-            p = project_root / "episode-proposals"
+            p = project_root / "proposals-episode"
     p.mkdir(parents=True, exist_ok=True)
     return p
 

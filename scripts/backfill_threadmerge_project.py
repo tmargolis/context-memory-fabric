@@ -49,8 +49,8 @@ from server.journal.store import DEFAULT_JOURNAL_PATH  # noqa: E402
 
 MERGE_PREFIX = "reason:threadmerge:"
 MERGE_REVIEWER = "pipeline-thread-merge"
-EPISODE_DIR = _ROOT / "episode-proposals"
-DOC_DIR = _ROOT / "doc-proposals"
+EPISODE_DIR = _ROOT / "proposals-episode"
+DOC_DIR = _ROOT / "proposals-docs"
 BAK_DIR = _ROOT / "imports" / "journal" / "bak"
 
 

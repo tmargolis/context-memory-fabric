@@ -44,7 +44,7 @@ class TestBackfillThreadmergeProject(unittest.TestCase):
         self.cs = ConsolidationStore(db_path=self.db)
         self.rev = ReviewStore(db_path=self.db)
         self.ep_dir = self.cs._episode_proposals_dir
-        self.doc_dir = self.root / "doc-proposals"
+        self.doc_dir = self.root / "proposals-docs"
         self.doc_dir.mkdir()
 
     def tearDown(self):

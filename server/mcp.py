@@ -553,7 +553,7 @@ async def capture_session(
     - Each "episode" item journals a lightweight evidence event, then stages a reasoning episode with
       approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human
       review, matching this project's default). Each "doc_proposal" item creates a pending proposal file
-      under doc-proposals/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported
+      under proposals-docs/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported
       individually; it does not prevent the other items in the same call from being captured.
     """
     if ctx is None:
@@ -636,13 +636,13 @@ async def propose_doc_update(
     - 'Propose a new research backlog note in TO-RESEARCH/audio-transcription.md.'
 
     CRITICAL SAFETY CONTRACT:
-    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under doc-proposals/ with SHA-256 hashes and a unified diff for human inspection.
+    - This tool DOES NOT modify LLM_Wiki. It creates a reviewable pending proposal record under proposals-docs/ with SHA-256 hashes and a unified diff for human inspection.
 
     DISTINCTIONS:
-    - Writes a pending proposal JSON file to local state (doc-proposals/). Does not write to Graphiti or modify canonical Wiki files.
+    - Writes a pending proposal JSON file to local state (proposals-docs/). Does not write to Graphiti or modify canonical Wiki files.
 
     SIDE EFFECTS:
-    - Creates a persistent proposal file on disk in doc-proposals/. Non-destructive to LLM_Wiki.
+    - Creates a persistent proposal file on disk in proposals-docs/. Non-destructive to LLM_Wiki.
     """
     try:
         proposal = create_doc_proposal(

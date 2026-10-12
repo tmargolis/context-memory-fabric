@@ -134,7 +134,7 @@ def results_for(conv_ids: list[str]) -> dict[str, dict]:
 
 def doc_proposal_count() -> int:
     n = 0
-    for p in (_ROOT / "doc-proposals").glob("*.json"):
+    for p in (_ROOT / "proposals-docs").glob("*.json"):
         try:
             n += json.loads(p.read_text()).get("source_harness") == "claude_cowork"
         except (OSError, json.JSONDecodeError):

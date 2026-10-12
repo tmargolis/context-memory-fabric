@@ -15,8 +15,8 @@ This module answers "which conversations have pending items and how many"
 -- the bucket-picking step an agent takes before listing one conversation's
 items via list_episode_proposals(conversation_id=...) /
 list_doc_proposals(conversation_id=...). It reads the same two read-only
-projections those tools already use (the episode-proposals file mirror,
-the doc-proposals file store) -- no new storage, no DB dependency.
+projections those tools already use (the proposals-episode file mirror,
+the proposals-docs file store) -- no new storage, no DB dependency.
 """
 
 from __future__ import annotations

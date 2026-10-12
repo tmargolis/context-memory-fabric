@@ -1,4 +1,4 @@
-"""episode-proposals/: file mirror for staged reasoning episodes
+"""proposals-episode/: file mirror for staged reasoning episodes
 (Backlog, "Proposal-directory housekeeping," 2026-09-18).
 """
 
@@ -59,7 +59,7 @@ class TestEpisodeMirror(unittest.TestCase):
         self.cons = ConsolidationStore(db_path=self.db_path)
         self.rev = ReviewStore(db_path=self.db_path)
         # ConsolidationStore/ReviewStore derive the mirror dir from db_path
-        self.mirror_root = self.db_path.parent / "episode-proposals"
+        self.mirror_root = self.db_path.parent / "proposals-episode"
 
     def tearDown(self):
         self.cons.close()
@@ -142,7 +142,7 @@ class TestEpisodeMirror(unittest.TestCase):
     def test_custom_db_path_isolates_the_mirror_dir(self):
         """A caller-supplied db_path (every isolated test, including this
         one) mirrors to a sibling directory next to it, not the real
-        project's episode-proposals/ -- checked structurally (against the
+        project's proposals-episode/ -- checked structurally (against the
         temp dir's own path) rather than by calling
         get_episode_proposals_dir() with no override, which would create
         the real project directory as a side effect."""
@@ -171,7 +171,7 @@ class TestEpisodeMirrorReaders(unittest.TestCase):
         self.db_path = Path(self._tmp.name) / "journal.db"
         self.cons = ConsolidationStore(db_path=self.db_path)
         self.rev = ReviewStore(db_path=self.db_path)
-        self.mirror_root = self.db_path.parent / "episode-proposals"
+        self.mirror_root = self.db_path.parent / "proposals-episode"
 
     def tearDown(self):
         self.cons.close()

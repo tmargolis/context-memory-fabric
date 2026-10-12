@@ -29,7 +29,7 @@ def test_canonical_map_precedence():
 
 
 def test_apply_rewrites_path_and_diff_headers(tmp_path):
-    doc_dir, wiki = tmp_path / "doc-proposals", tmp_path / "wiki"
+    doc_dir, wiki = tmp_path / "proposals-docs", tmp_path / "wiki"
     doc_dir.mkdir()
     (wiki / "WIKI" / "projects" / "Existing-One").mkdir(parents=True)
     a = _prop(doc_dir, "a", "WIKI/projects/existing-one/Page.md")
@@ -42,11 +42,11 @@ def test_apply_rewrites_path_and_diff_headers(tmp_path):
     assert "--- a/WIKI/projects/Existing-One/Page.md\n+++ b/WIKI/projects/Existing-One/Page.md" in d["unified_diff"]
     assert json.loads(b.read_text())["target_path"] == "WIKI/projects/loner/Page.md"
     assert json.loads(c.read_text())["target_path"] == "WIKI/Other/Page.md"
-    assert list((tmp_path / "bak").glob("doc-proposals-*.tar.gz"))
+    assert list((tmp_path / "bak").glob("proposals-docs-*.tar.gz"))
 
 
 def test_dry_run_writes_nothing(tmp_path):
-    doc_dir, wiki = tmp_path / "doc-proposals", tmp_path / "wiki"
+    doc_dir, wiki = tmp_path / "proposals-docs", tmp_path / "wiki"
     doc_dir.mkdir()
     (wiki / "WIKI" / "projects" / "Existing-One").mkdir(parents=True)
     a = _prop(doc_dir, "a", "WIKI/projects/existing-one/Page.md")

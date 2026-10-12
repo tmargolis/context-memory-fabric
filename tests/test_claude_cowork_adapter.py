@@ -274,7 +274,7 @@ def test_extract_pending_after_journal_only_backfill(tmp_path, consolidation_cal
 def test_cli_leaves_db_none_so_mirrors_go_to_project_root(monkeypatch):
     """Regression (2026-10-02 calibration batch): main() filled in the default
     journal path, and ConsolidationStore(<path>) wrote episode mirrors next
-    to the db instead of the project-root episode-proposals/."""
+    to the db instead of the project-root proposals-episode/."""
     from server.adapters.claude_cowork import cli
 
     seen = {}

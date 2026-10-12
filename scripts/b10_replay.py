@@ -36,7 +36,7 @@ def prepare(source: Path, out: Path):
             row = con.execute('SELECT e.conversation_id FROM derived_memories d JOIN events e ON e.event_id=d.source_event_id WHERE d.memory_id=?', (rec['item_id'],)).fetchone()
             if row and row[0]: required.add(row[0])
         else:
-            p = source / 'doc-proposals' / (rec['item_id'] + '.json')
+            p = source / 'proposals-docs' / (rec['item_id'] + '.json')
             if p.exists():
                 item = json.loads(p.read_text())
                 if item.get('source_conversation_id'): required.add(item['source_conversation_id'])
@@ -58,7 +58,7 @@ def prepare(source: Path, out: Path):
     for row in events:
         db.execute('INSERT OR IGNORE INTO events VALUES (' + ','.join('?' for _ in row) + ')', tuple(row))
     db.commit(); db.close()
-    protected = {str(p.relative_to(source)): digest(p) for p in (source/'doc-proposals').rglob('*.json')}
+    protected = {str(p.relative_to(source)): digest(p) for p in (source/'proposals-docs').rglob('*.json')}
     (out/'review-runs.json').write_text(json.dumps({'runs':runs,'recommendations':recs,'proposal_hashes':protected},indent=2))
     window_count=0; conversations=[]
     for conv in sorted(selected):
@@ -190,7 +190,7 @@ def run(source: Path, out: Path, version: str, seeded: bool = False):
             with spark_slot(source/'imports/journal/journal.db') as busy:
                 if not busy:
                     with SqliteEventStore(db) as js,ConsolidationStore(db) as cs:
-                        result=run_reasoning_consolidation(js,cs,policy,conversation_id=conv['conversation_id'],wiki_root=out/'wiki',proposals_dir=work/'state/doc-proposals')
+                        result=run_reasoning_consolidation(js,cs,policy,conversation_id=conv['conversation_id'],wiki_root=out/'wiki',proposals_dir=work/'state/proposals-docs')
                     break
             print('Spark busy; waiting 1500 seconds',flush=True);time.sleep(1500)
         print('END',datetime.now(timezone.utc).isoformat(),json.dumps(result),flush=True)

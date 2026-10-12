@@ -10,7 +10,7 @@ the corrected prompt. The journal's events are evidence and stay untouched.
 Removed, for conversations whose id contains `:agent-`:
 - consolidation_jobs, derived_memories, and their reviews / review_audit rows
   (the pipeline's own thread-merge rejections);
-- episode-proposals mirror files and doc-proposals naming such a conversation;
+- proposals-episode mirror files and proposals-docs naming such a conversation;
 - reasoning_threads: deleted when only subagents fed them, otherwise the
   subagent conversation/event ids are stripped and the episode count reduced.
 
@@ -41,7 +41,7 @@ PIPELINE_REVIEWERS = {"pipeline-thread-merge", "pipeline"}
 
 def _mirror_files() -> list[Path]:
     out = []
-    for folder in (ROOT / "episode-proposals", ROOT / "doc-proposals"):
+    for folder in (ROOT / "proposals-episode", ROOT / "proposals-docs"):
         if not folder.is_dir():
             continue
         for path in folder.rglob("*.json"):
@@ -111,7 +111,7 @@ def apply(conn: sqlite3.Connection, p: dict, db_path: Path) -> Path:
     backup = ROOT / "imports" / "backups" / f"discard-subagent-{stamp}"
     backup.mkdir(parents=True)
     conn.execute(f"VACUUM INTO '{backup / 'journal.db'}'")
-    for folder in ("episode-proposals", "doc-proposals"):
+    for folder in ("proposals-episode", "proposals-docs"):
         if (ROOT / folder).is_dir():
             shutil.copytree(ROOT / folder, backup / folder)
 

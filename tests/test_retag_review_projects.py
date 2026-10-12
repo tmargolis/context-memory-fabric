@@ -16,7 +16,7 @@ def _setup(tmp_path: Path):
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE events (conversation_id TEXT, harness TEXT, metadata_json TEXT)")
     conn.execute("CREATE TABLE derived_memories (memory_id TEXT PRIMARY KEY, project TEXT)")
-    ep_dir, doc_dir = tmp_path / "episode-proposals", tmp_path / "doc-proposals"
+    ep_dir, doc_dir = tmp_path / "proposals-episode", tmp_path / "proposals-docs"
     (ep_dir / "tier1" / "approved").mkdir(parents=True)
     doc_dir.mkdir()
     return conn, ep_dir, doc_dir

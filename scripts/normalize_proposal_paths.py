@@ -12,9 +12,9 @@ two casings of one folder collide. For each pending proposal under
 
 Anything else is left alone and listed. Rewrites `target_path` and the
 `--- a/` / `+++ b/` headers of `unified_diff` in the proposal JSON (flat
-doc-proposals/ root = pending_review only).
+proposals-docs/ root = pending_review only).
 
-Dry run by default. `--apply` tars doc-proposals/ into imports/journal/bak/
+Dry run by default. `--apply` tars proposals-docs/ into imports/journal/bak/
 first.
 
     uv run python scripts/normalize_proposal_paths.py --map SomeProject=Some-Project
@@ -38,7 +38,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 PREFIX = "WIKI/projects/"
-DOC_DIR = _ROOT / "doc-proposals"
+DOC_DIR = _ROOT / "proposals-docs"
 BAK_DIR = _ROOT / "imports" / "journal" / "bak"
 
 
@@ -111,7 +111,7 @@ def apply(p: dict[str, Any], doc_dir: Path, bak_dir: Path) -> None:
         print("nothing to write -- no backup taken")
         return
     bak_dir.mkdir(parents=True, exist_ok=True)
-    tar_path = bak_dir / f"doc-proposals-{datetime.now():%Y%m%d-%H%M%S}-pre-normalize-paths.tar.gz"
+    tar_path = bak_dir / f"proposals-docs-{datetime.now():%Y%m%d-%H%M%S}-pre-normalize-paths.tar.gz"
     with tarfile.open(tar_path, "w:gz") as tar:
         tar.add(doc_dir, arcname=doc_dir.name)
     print(f"backed up {doc_dir.name}/ -> {tar_path}")

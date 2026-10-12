@@ -143,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     # args.db stays None by default, as in the claude_code CLI: every store
     # treats None as the production journal, and ConsolidationStore(None) is
-    # what routes episode mirrors to the real project-root episode-proposals/
+    # what routes episode mirrors to the real project-root proposals-episode/
     # (a concrete db path puts them next to the db -- the 2026-09-23 bug).
     args = build_parser().parse_args(argv)
     return args.func(args)

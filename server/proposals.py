@@ -1,7 +1,7 @@
 """Durable knowledge proposal store and validation for Context Memory Fabric.
 
 Manages pending update/creation proposals for LLM_Wiki without modifying the
-canonical corpus. Proposals persist locally under doc-proposals/ for human
+canonical corpus. Proposals persist locally under proposals-docs/ for human
 review. Named generically (`DocProposal`, not `WikiProposal`) because the
 proposal/review lifecycle itself is provider-agnostic -- LLM_Wiki is the
 only knowledge provider that exists today (see MS5 in docs/plan-active.md),
@@ -121,11 +121,11 @@ def get_proposals_dir(custom_dir: Optional[Path] = None) -> Path:
     else:
         env_state_dir = os.getenv("CMF_STATE_DIR")
         if env_state_dir:
-            p = Path(env_state_dir).expanduser().resolve() / "doc-proposals"
+            p = Path(env_state_dir).expanduser().resolve() / "proposals-docs"
         else:
-            # Default to <project_root>/doc-proposals
+            # Default to <project_root>/proposals-docs
             project_root = Path(__file__).resolve().parent.parent
-            p = project_root / "doc-proposals"
+            p = project_root / "proposals-docs"
 
     p.mkdir(parents=True, exist_ok=True)
     return p

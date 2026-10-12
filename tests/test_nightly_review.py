@@ -19,8 +19,8 @@ LIVE_PAGE = "---\ntitle: Billing Jobs\n---\n\n# Billing Jobs\n\n" + "\n".join(f"
 def env(tmp_path, monkeypatch):
     monkeypatch.delenv("CMF_REVIEW_RULES_PATH", raising=False)
     db = tmp_path / "journal.db"
-    mirrors = tmp_path / "episode-proposals"
-    docs = tmp_path / "doc-proposals"
+    mirrors = tmp_path / "proposals-episode"
+    docs = tmp_path / "proposals-docs"
     wiki = tmp_path / "wiki"
     (wiki / "WIKI" / "projects" / "Acme").mkdir(parents=True)
     (wiki / "WIKI" / "projects" / "Acme" / "Billing-Jobs.md").write_text(LIVE_PAGE)
@@ -119,6 +119,43 @@ def test_recording_changes_nothing(env):
         assert rs._conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0
     assert len(list_episode_mirrors(tier="tier1", approval_state="queued_for_review", base_dir=env["mirrors"])) == 3
     assert {p.status for p in [get_proposal(i["item_id"], env["docs"]) for i in batch["items"] if i["item_type"] == "doc"]} == {"pending_review"}
+
+
+def test_summary_links_follow_current_episode_and_doc_locations(env):
+    from server.episode_proposals import _mirror_filename, move_episode_mirror
+    from server.proposals import review_proposal
+
+    batch = _batch(env)
+    result = rec.record(env["store"], batch["run_id"], [
+        {"label": i["label"], "verdict": "reject", "reason": "test"} for i in batch["items"]
+    ], proposals_dir=env["docs"])
+    for item in batch["items"]:
+        if item["item_type"] == "episode":
+            path = env["mirrors"] / "tier1" / _mirror_filename(item["item_id"])
+            move_episode_mirror(item["item_id"], "rejected", base_dir=env["mirrors"])
+            current = path.parent / "rejected" / path.name
+        else:
+            path = env["docs"] / f"{item['item_id']}.json"
+            review_proposal(item["item_id"], "rejected", proposals_dir=env["docs"])
+            current = path.parent / "rejected" / path.name
+        assert f"[JSON](<{path.resolve()}>)" in result["summary"]
+        summary = rec.format_summary(env["store"], batch["run_id"], proposals_dir=env["docs"])
+        assert f"[JSON](<{current.resolve()}>)" in summary
+        assert f"[JSON](<{path.resolve()}>)" not in summary
+
+
+def test_summary_reports_missing_json_instead_of_broken_link(env):
+    from server.episode_proposals import _mirror_filename
+
+    batch = _batch(env)
+    item = batch["items"][0]
+    path = env["mirrors"] / "tier1" / _mirror_filename(item["item_id"])
+    path.unlink()
+    result = rec.record(env["store"], batch["run_id"], [
+        {"label": item["label"], "verdict": "flag", "reason": "missing projection"}
+    ])
+    assert "JSON missing" in result["summary"]
+    assert str(path) not in result["summary"]
 
 
 def test_confirm_with_overrides_skip_and_flags(env):

@@ -5,7 +5,7 @@ from the user's own decisions on the `extract` policy (732 reviewed episodes,
 331 rejected / 75 applied doc proposals, as of 2026-10-02 --
 docs/CLAUDE-HARNESS-PROVENANCE-PLAN.md step 7b):
 
-Episodes (queued_for_review mirrors in episode-proposals/):
+Episodes (queued_for_review mirrors in proposals-episode/):
   priority  reasoning_kind decision / plan / rejected_alternative with >= 3
             evidence turns -- 57% approved historically (78% of all approvals)
   maybe     those kinds with 2 evidence turns, or any other kind with >= 5
@@ -14,7 +14,7 @@ Episodes (queued_for_review mirrors in episode-proposals/):
   (The model's own confidence is NOT used: its >= 0.9 bucket had the lowest
   approval rate, 9%.)
 
-Doc proposals (pending_review in doc-proposals/):
+Doc proposals (pending_review in proposals-docs/):
   priority  proposed content >= 1,500 chars (~25% applied)
   low       shorter (4% applied)
 
@@ -34,8 +34,8 @@ from pathlib import Path
 import sys
 
 _ROOT = Path(__file__).resolve().parent.parent
-EPISODE_DIR = _ROOT / "episode-proposals"
-DOC_DIR = _ROOT / "doc-proposals"
+EPISODE_DIR = _ROOT / "proposals-episode"
+DOC_DIR = _ROOT / "proposals-docs"
 OUT_DIR = _ROOT / "imports" / "review"
 
 STRONG_KINDS = {"decision", "plan", "rejected_alternative"}

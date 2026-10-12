@@ -84,17 +84,17 @@ CREATE INDEX IF NOT EXISTS idx_consolidation_jobs_status ON consolidation_jobs(s
 class ConsolidationStore:
     def __init__(self, db_path: Optional[Path] = None) -> None:
         # A caller-supplied db_path (every test that isolates itself passes
-        # one) automatically isolates the episode-proposals mirror too, as a
+        # one) automatically isolates the proposals-episode mirror too, as a
         # sibling directory next to it -- no test file needs to know this
         # mirror exists to avoid polluting the real project's
-        # episode-proposals/. None (production default) means "use the real
-        # project-root episode-proposals/" (server.episode_proposals's own
+        # proposals-episode/. None (production default) means "use the real
+        # project-root proposals-episode/" (server.episode_proposals's own
         # CMF_STATE_DIR/project-root convention). The production journal
         # passed explicitly counts as None too: the codex worker passes its
         # journal store's path, which put 31 mirrors in
-        # imports/journal/episode-proposals/, invisible to review (2026-10-03).
+        # imports/journal/proposals-episode/, invisible to review (2026-10-03).
         is_production = db_path is None or Path(db_path).resolve() == Path(DEFAULT_JOURNAL_PATH).resolve()
-        self._episode_proposals_dir = None if is_production else Path(db_path).parent / "episode-proposals"
+        self._episode_proposals_dir = None if is_production else Path(db_path).parent / "proposals-episode"
         db_path = db_path if db_path is not None else DEFAULT_JOURNAL_PATH
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -389,7 +389,7 @@ class ConsolidationStore:
                 base_dir=self._episode_proposals_dir,
             )
         except OSError:
-            logger.exception("episode-proposals mirror write failed for %s (non-fatal)", memory_id)
+            logger.exception("proposals-episode mirror write failed for %s (non-fatal)", memory_id)
 
     def stats(self) -> dict[str, Any]:
         total = self._conn.execute("SELECT COUNT(*) FROM derived_memories").fetchone()[0]

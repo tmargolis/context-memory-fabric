@@ -27,7 +27,7 @@ episodic       factual       mutation /       durable          context        pr
  write           read         re-date          read          assembly          write                 bulk import
    │              │              │              │                │              │                      │
    ▼              ▼              ▼              ▼                ▼              ▼                      ▼
-  Graphiti / FalkorDB (Episodic)             Markdown Wiki    Both Stores   doc-proposals/      Graphiti / FalkorDB
+  Graphiti / FalkorDB (Episodic)             Markdown Wiki    Both Stores   proposals-docs/      Graphiti / FalkorDB
   temporal graph validity tracking          (Wiki UNTOUCHED)  synthesized   (staging diffs)     (imports/ registry)
 ```
 
@@ -38,7 +38,7 @@ episodic       factual       mutation /       durable          context        pr
    - Preserves temporal validity (`valid_at`, `invalid_at`) so newer decisions supersede older ones without silently erasing history.
 3. **Durable Knowledge (`LLM_Wiki`):**
    - Curated Markdown notes, research reports, PDFs, and system blueprints.
-   - Proposed updates never overwrite your canonical documents directly; they are staged as unified diffs in `doc-proposals/` for human review.
+   - Proposed updates never overwrite your canonical documents directly; they are staged as unified diffs in `proposals-docs/` for human review.
 4. **Assembled Runtime Context (`get_context`):**
    - The primary retrieval interface. Concurrently queries both durable wiki notes and recent episodic decisions, returning synthesized Markdown with clear source attribution and temporal conflict resolution guidance.
 
@@ -76,7 +76,7 @@ You do not need to perform complex historical imports or data migrations to star
 1. **Connect your favorite client** (e.g. Claude Desktop or Cursor) via the [Setup Guide](docs/SETUP.md#connecting-your-mcp-client).
 2. **Retrieve context:** Ask questions like `"What is the current architecture of Project Aether?"` or `"What decisions did we make regarding battery specs?"` — your assistant calls `get_context` or `search_wiki`.
 3. **Store milestones:** At natural checkpoints, tell your assistant: `"Remember that we finalized the LoRa transmit interval to 5 minutes."` — it will invoke `remember()`.
-4. **Stage wiki changes:** When an assistant drafts a new architectural guideline or updates a specification, it calls `propose_doc_update()` to stage a reviewable diff in `doc-proposals/` without modifying your files.
+4. **Stage wiki changes:** When an assistant drafts a new architectural guideline or updates a specification, it calls `propose_doc_update()` to stage a reviewable diff in `proposals-docs/` without modifying your files.
 
 *(Historical memory imports from ChatGPT or Claude are supported via `import_memories` and `import_chatgpt_exports`, but are labeled **experimental** in this preview.)*
 

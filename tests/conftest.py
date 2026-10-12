@@ -58,7 +58,7 @@ import tempfile  # noqa: E402
 
 os.environ["CMF_STATE_DIR"] = tempfile.mkdtemp(prefix="cmf-test-state-")
 
-_REAL_STATE_DIRS = (_PROJECT_ROOT / "doc-proposals", _PROJECT_ROOT / "episode-proposals")
+_REAL_STATE_DIRS = (_PROJECT_ROOT / "proposals-docs", _PROJECT_ROOT / "proposals-episode")
 _REAL_IMPORT_REGISTRY = _PROJECT_ROOT / "imports" / "state" / "import_registry.json"
 
 

@@ -200,7 +200,7 @@ class TestExtractPolicyV1Pipeline(unittest.TestCase):
         self.cons_path = Path(self._tmp.name) / "consolidation.db"
         self.wiki_root = Path(self._tmp.name) / "wiki"
         self.wiki_root.mkdir()
-        self.proposals_dir = Path(self._tmp.name) / "doc-proposals"
+        self.proposals_dir = Path(self._tmp.name) / "proposals-docs"
         self.model = FakeModel()
 
     def tearDown(self):

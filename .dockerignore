@@ -24,8 +24,8 @@ secrets.*
 
 # Runtime data and state
 data/
-doc-proposals/
-episode-proposals/
+proposals-docs/
+proposals-episode/
 imports/
 *.db
 *.sqlite*

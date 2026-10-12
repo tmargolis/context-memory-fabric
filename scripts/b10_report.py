@@ -178,7 +178,7 @@ def _side_by_side(recs: list[dict], prod_con, source_root: Path, v16: dict, v17:
             groups[conv]["production"].append({**dict(row), "run": rec["run_id"], "label": rec["label"],
                                                "recommendation": rec["verdict"], "summary": rec["summary"]})
         else:
-            path = source_root / "doc-proposals" / f"{rec['item_id']}.json"
+            path = source_root / "proposals-docs" / f"{rec['item_id']}.json"
             p = json.loads(path.read_text()) if path.exists() else {}
             groups[p.get("source_conversation_id")]["docs"].append({**p, "run": rec["run_id"], "label": rec["label"],
                                                                      "recommendation": rec["verdict"]})
@@ -270,8 +270,8 @@ def build(source: Path, out: Path, links: dict[str, str] | None = None) -> dict:
     report_dir.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        v16 = _version_state(_snapshot(out / "1.6" / "journal.db", tmp), out / "1.6" / "state" / "doc-proposals")
-        v17 = _version_state(_snapshot(out / "1.7" / "journal.db", tmp), out / "1.7" / "state" / "doc-proposals")
+        v16 = _version_state(_snapshot(out / "1.6" / "journal.db", tmp), out / "1.6" / "state" / "proposals-docs")
+        v17 = _version_state(_snapshot(out / "1.7" / "journal.db", tmp), out / "1.7" / "state" / "proposals-docs")
         prod = _snapshot(source / "imports" / "journal" / "journal.db", tmp)
 
         src_con = sqlite3.connect(out / "source.db")

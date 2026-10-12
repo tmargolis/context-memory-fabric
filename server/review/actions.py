@@ -43,16 +43,16 @@ DEFAULT_REVIEWER = default_reviewer()
 def _episode_proposals_dir_for(review_store: ReviewStore) -> Optional[Path]:
     """Same db_path-derived isolation ConsolidationStore uses: a review_store
     pointed at a custom (e.g. test temp) db_path mirrors to a sibling
-    episode-proposals/ dir next to it, never the real project's."""
+    proposals-episode/ dir next to it, never the real project's."""
     if review_store.db_path == DEFAULT_JOURNAL_PATH:
         return None
-    return review_store.db_path.parent / "episode-proposals"
+    return review_store.db_path.parent / "proposals-episode"
 
 
 def _move_mirror_best_effort(
     review_store: ReviewStore, memory_id: str, new_status: str, reviewer: str, reason: Optional[str]
 ) -> None:
-    """episode-proposals/ file mirror follow-through -- best-effort, never
+    """proposals-episode/ file mirror follow-through -- best-effort, never
     allowed to fail a real review verdict that already committed."""
     try:
         move_episode_mirror(
@@ -60,7 +60,7 @@ def _move_mirror_best_effort(
             reviewer=reviewer, reason=reason,
         )
     except OSError:
-        logger.exception("episode-proposals mirror move failed for %s -> %s (non-fatal)", memory_id, new_status)
+        logger.exception("proposals-episode mirror move failed for %s -> %s (non-fatal)", memory_id, new_status)
 
 
 def approve_episode(

@@ -297,7 +297,7 @@ def record(store: RecommendationStore, run_id: str, recommendations: list[dict[s
     missing = [label for label, i in items.items() if i["item_id"] not in {s["item_id"] for s in saved}]
     store.save(run_id, saved)
     return {"run_id": run_id, "recorded": len(saved), "errors": errors, "not_recommended": missing,
-            "summary": format_summary(store, run_id)}
+            "summary": format_summary(store, run_id, proposals_dir=proposals_dir)}
 
 
 # --- summary ----------------------------------------------------------------------
@@ -311,7 +311,29 @@ def _cell(text: Optional[str], limit: int = 180) -> str:
 _VERDICT_WORD = {"approve": "**Approve.**", "reject": "**Reject.**", "flag": "**Flag.**"}
 
 
-def format_summary(store: RecommendationStore, run_id: str) -> str:
+def _json_link(store: RecommendationStore, row: sqlite3.Row, *,
+               episode_base_dir: Optional[Path] = None, proposals_dir: Optional[Path] = None) -> str:
+    """Resolve the current JSON location, including files moved after review."""
+    from server.episode_proposals import _locate_mirror, get_episode_proposals_dir
+    from server.proposals import _locate_proposal_file, get_proposals_dir
+
+    if row["item_type"] == "episode":
+        root = episode_base_dir
+        if root is None and store.db_path != DEFAULT_JOURNAL_PATH:
+            root = store.db_path.parent / "proposals-episode"
+        path = _locate_mirror(row["item_id"], get_episode_proposals_dir(root))
+    else:
+        root = proposals_dir
+        if root is None and store.db_path != DEFAULT_JOURNAL_PATH:
+            root = store.db_path.parent / "proposals-docs"
+        path = _locate_proposal_file(row["item_id"], get_proposals_dir(root))
+    if path is None:
+        return "JSON missing"
+    return f"[JSON](<{path.resolve()}>)"
+
+
+def format_summary(store: RecommendationStore, run_id: str, *,
+                   episode_base_dir: Optional[Path] = None, proposals_dir: Optional[Path] = None) -> str:
     recs = store.recommendations(run_id)
     if not recs:
         return f"Run `{run_id}`: no recommendations recorded."
@@ -324,14 +346,16 @@ def format_summary(store: RecommendationStore, run_id: str) -> str:
            f"{len(eps)} EP, {len(docs)} DOC: {counts['approve']} approve, {counts['reject']} reject, {counts['flag']} flagged for you. "
            f"{pending} awaiting your confirmation; nothing has been changed yet."]
     if eps:
-        out += ["", "**Episodes (EP)**", "", "| # | Statement | Reasoning |", "|---|---|---|"]
+        out += ["", "**Episodes (EP)**", "", "| # | Statement | Reasoning | File |", "|---|---|---|---|"]
         for r in eps:
-            out.append(f"| {r['label']} | {_cell(r['summary'])} | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)} |")
+            link = _json_link(store, r, episode_base_dir=episode_base_dir, proposals_dir=proposals_dir)
+            out.append(f"| {r['label']} | {_cell(r['summary'])} | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)} | {link} |")
     if docs:
-        out += ["", "**Doc proposals (DOC)**", "", "| # | Target path | Rationale |", "|---|---|---|"]
+        out += ["", "**Doc proposals (DOC)**", "", "| # | Target path | Rationale | File |", "|---|---|---|---|"]
         for r in docs:
             rebuild = f" Rebuild drafted as `{r['rebuild_proposal_id']}`." if r["rebuild_proposal_id"] else ""
-            out.append(f"| {r['label']} | `{r['summary']}` | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)}{rebuild} |")
+            link = _json_link(store, r, episode_base_dir=episode_base_dir, proposals_dir=proposals_dir)
+            out.append(f"| {r['label']} | `{r['summary']}` | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)}{rebuild} | {link} |")
     out += ["", f"Say **yes** to confirm (`confirm_review_recommendations(run_id=\"{run_id}\")`), or e.g. "
             "\"yes, but EP3 approve and skip DOC1\". Flagged items stay in the queue unless you give them a verdict. "
             "Confirming makes them live: approved docs are written to the wiki and approved episodes are promoted into memory."]

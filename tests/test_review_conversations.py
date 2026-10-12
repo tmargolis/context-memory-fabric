@@ -38,8 +38,8 @@ class TestConversationGroupedReview(unittest.TestCase):
         self.db_path = Path(self._tmp.name) / "journal.db"
         self.cons = ConsolidationStore(db_path=self.db_path)
         # ConsolidationStore derives the episode mirror dir from db_path
-        self.episode_mirror_dir = self.db_path.parent / "episode-proposals"
-        self.doc_proposals_dir = Path(self._tmp.name) / "doc-proposals"
+        self.episode_mirror_dir = self.db_path.parent / "proposals-episode"
+        self.doc_proposals_dir = Path(self._tmp.name) / "proposals-docs"
         self.wiki_root = Path(self._tmp.name) / "wiki"
         self.wiki_root.mkdir()
 

@@ -171,7 +171,7 @@ class TestCaptureSessionDocProposals(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "journal.db"
         self.wiki_root = Path(self.temp_dir.name) / "wiki"
-        self.proposals_dir = Path(self.temp_dir.name) / "doc-proposals"
+        self.proposals_dir = Path(self.temp_dir.name) / "proposals-docs"
         (self.wiki_root / "WIKI").mkdir(parents=True)
         _git("init", "-q", cwd=self.wiki_root)
         _git("config", "user.email", "test@example.com", cwd=self.wiki_root)

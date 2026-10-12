@@ -53,10 +53,24 @@ Scheduled-task features change often. Check your app's own help for the current 
 
 ## Reading a proposal
 
-Each proposal is one file, `doc-proposals/<proposal_id>.json` (or its `approved/` / `rejected/` subfolder):
+Each proposal is one file, `proposals-docs/<proposal_id>.json` (or its `approved/` / `rejected/` subfolder):
+
+Every EP and DOC row in a review display includes a clickable link to its own JSON file at its current location. Missing JSON projections must be reported and restored from authoritative state before requesting a decision; no Markdown or diff sidecars are needed.
 
 - `diff_hunks`: the changes, numbered, one string per line, so the review reads cleanly in any JSON viewer. `get_doc_proposal` shows the same changes as "Change N of M" sections.
 - `unified_diff`: the same diff as one text block, for older readers.
 - `proposed_content`: the complete, exact file apply writes after approval, checked against its SHA-256. A changed live page still blocks the apply.
 
 Frontmatter `source` entries on the existing page are kept in order and new ones are appended once (a second source turns a scalar into a list). This applies to `RAW/` pages too; a `source` field in a format CMF doesn't parse is left exactly as written. A page without frontmatter never gets one added. Older proposals without `diff_hunks` still load and render.
+
+## Episode mirrors and directory changes
+
+Episode JSON projections live under `proposals-episode/tier1/` and `tier2/`, with terminal review verdicts in each tier's `approved/` or `rejected/` subfolder. SQLite remains authoritative for the episode and review decision. Audit missing or stale projections without constructing a writable store:
+
+```sh
+python -m scripts.repair_episode_mirrors --journal imports/journal/journal.db --root proposals-episode
+```
+
+After reviewing the audit and backing up the proposal folder, add `--apply` to restore missing JSON files and synchronize stale review state/location. This writes projections only; it does not modify the journal, review verdicts, or graph. Existing consistent mirrors are left alone, and duplicate IDs cause refusal before writing.
+
+The 2026-10-12 directory rename left temporary `episode-proposals` → `proposals-episode` and `doc-proposals` → `proposals-docs` symlinks so already-running MCP servers and pollers keep using the same state. After an approved restart of all affected processes, those compatibility links can be removed; do not remove them while older code is still running.

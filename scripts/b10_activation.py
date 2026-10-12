@@ -84,7 +84,7 @@ def removed_line_fraction(live_text: str, proposed_text: str) -> float:
 
 
 def preflight(out: Path | None) -> int:
-    proposals_dir, wiki = _state_dir() / "doc-proposals", _wiki()
+    proposals_dir, wiki = _state_dir() / "proposals-docs", _wiki()
     open_items: list[dict] = []
     for path in sorted(proposals_dir.glob("*.json")) + sorted((proposals_dir / "approved").glob("*.json")):
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -178,14 +178,14 @@ def snapshot(out: Path) -> int:
     check = sqlite3.connect(out / "journal.db").execute("PRAGMA integrity_check").fetchone()[0]
     state = _state_dir()
     with tarfile.open(out / "proposal-state.tar.gz", "w:gz") as tar:
-        for name in ("doc-proposals", "episode-proposals"):
+        for name in ("proposals-docs", "proposals-episode"):
             if (state / name).exists():
                 tar.add(state / name, arcname=name)
     manifest = {
         "taken_at": datetime.now(timezone.utc).isoformat(),
         "journal_source": str(_journal()), "integrity_check": check,
         "files": {p.name: _sha(p) for p in sorted(out.iterdir()) if p.is_file()},
-        "proposal_files": {str(p.relative_to(state)): _sha(p) for name in ("doc-proposals", "episode-proposals")
+        "proposal_files": {str(p.relative_to(state)): _sha(p) for name in ("proposals-docs", "proposals-episode")
                            for p in sorted((state / name).rglob("*.json"))},
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

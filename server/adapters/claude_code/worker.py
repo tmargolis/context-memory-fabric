@@ -168,9 +168,9 @@ def _process_pending_unlocked(
         if run_consolidation and stats.conversations_touched:
             # Constructed lazily, here, not at the top of the function: a
             # caller-passed store is always honored, but the None fallback
-            # (real production episode-proposals/, not a sibling of
+            # (real production proposals-episode/, not a sibling of
             # journal_store.db_path -- that was the 2026-09-23 bug, mirrors
-            # landing in imports/journal/episode-proposals/ instead of the
+            # landing in imports/journal/proposals-episode/ instead of the
             # project root) must never touch the real journal.db/mirror
             # tree for a run_consolidation=False caller (every test in
             # tests/test_ms4b_worker.py relies on that).

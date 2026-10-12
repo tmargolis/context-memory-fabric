@@ -54,3 +54,5 @@ Frontmatter dates (`created`, `updated`) come from when the conversation happene
 ## Output
 
 End your run by calling `record_review_recommendations` with one entry per item (`label`, `verdict`, `reason`, optional `summary`), and show the user the summary it returns, unchanged.
+
+Every EP and DOC in a review display must include a clickable link to its own JSON proposal file. Use the file's current location, including its approved/rejected subfolder. If the JSON is missing, report the missing projection and repair it from the authoritative state before presenting the item for a decision. Do not create Markdown or diff sidecars.

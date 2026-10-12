@@ -10,7 +10,7 @@ Two fixes changed how a project is resolved after these items were staged:
   2. `CMF_PROJECT_ALIASES` folds one slug into another (applied after 1).
 
 Only NOT-yet-reviewed episodes (pending mirror files at the tier roots) and
-pending doc proposals (flat doc-proposals/ root) are touched; anything
+pending doc proposals (flat proposals-docs/ root) are touched; anything
 approved, rejected or promoted is history and stays as it is. A re-derived
 value of None never clears an existing project. The journal's events keep
 their original metadata (evidence is not rewritten).

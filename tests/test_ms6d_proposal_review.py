@@ -39,7 +39,7 @@ class TestMS6dProposalReview(unittest.TestCase):
         self.wiki_root = Path(self.temp_wiki.name)
 
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "proposals-docs"
 
         wiki_dir = self.wiki_root / "WIKI"
         wiki_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +285,7 @@ class TestReviewedContentApplies(unittest.TestCase):
         self._wiki = tempfile.TemporaryDirectory()
         self._props = tempfile.TemporaryDirectory()
         self.wiki_root = Path(self._wiki.name)
-        self.proposals_dir = Path(self._props.name) / "doc-proposals"
+        self.proposals_dir = Path(self._props.name) / "proposals-docs"
         (self.wiki_root / "WIKI").mkdir()
         self.page = self.wiki_root / "WIKI" / "page.md"
         self.lines = [f"line {i} of the existing page" for i in range(20)]
@@ -387,7 +387,7 @@ class TestPostApplyStaleness(unittest.IsolatedAsyncioTestCase):
 
 
 class TestProposalSubfolders(unittest.TestCase):
-    """2026-09-18: doc-proposals/ moves a proposal into approved/ or
+    """2026-09-18: proposals-docs/ moves a proposal into approved/ or
     rejected/ on a terminal verdict, instead of leaving every status flat
     in the root — found once the root grew to 78 undifferentiated files."""
 
@@ -395,7 +395,7 @@ class TestProposalSubfolders(unittest.TestCase):
         self.temp_wiki = tempfile.TemporaryDirectory()
         self.wiki_root = Path(self.temp_wiki.name)
         self.temp_proposals = tempfile.TemporaryDirectory()
-        self.proposals_dir = Path(self.temp_proposals.name) / "doc-proposals"
+        self.proposals_dir = Path(self.temp_proposals.name) / "proposals-docs"
 
         wiki_dir = self.wiki_root / "WIKI"
         wiki_dir.mkdir(parents=True, exist_ok=True)

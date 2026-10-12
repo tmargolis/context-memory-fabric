@@ -212,9 +212,9 @@ def _resolve_state_dir() -> Path:
     """
     env_state_dir = os.getenv("CMF_STATE_DIR")
     if env_state_dir:
-        return Path(env_state_dir).expanduser().resolve() / "doc-proposals"
+        return Path(env_state_dir).expanduser().resolve() / "proposals-docs"
     project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / "doc-proposals"
+    return project_root / "proposals-docs"
 
 
 def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:

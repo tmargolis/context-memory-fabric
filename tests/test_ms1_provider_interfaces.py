@@ -129,7 +129,7 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # (list/get/review/apply/bulk_reject_doc_proposals) + capture_session
         # (MS4a2; capture_note removed the same day, unused in production
         # and unreachable by any retrieval path -- see plan-active.md) +
-        # 4 episode-proposals review tools (list/get/review/bulk_review,
+        # 4 proposals-episode review tools (list/get/review/bulk_review,
         # found missing 2026-09-18 -- parity with the wiki proposal loop) +
         # list_review_conversations (found 2026-09-19, "review by conversation") +
         # promote_approved_episodes (found 2026-09-20, the queued_for_review ->

@@ -115,7 +115,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Do NOT call this automatically for every casual chat message", tool_dict["remember"].description)
 
         self.assertIn("DOES NOT modify LLM_Wiki", tool_dict["propose_doc_update"].description)
-        self.assertIn("doc-proposals/", tool_dict["propose_doc_update"].description)
+        self.assertIn("proposals-docs/", tool_dict["propose_doc_update"].description)
 
         # 6. Parameter descriptions. capture_health is a legitimate zero-argument
         # status tool (MS4a) — every other tool here takes at least one

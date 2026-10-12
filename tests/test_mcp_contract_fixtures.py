@@ -77,7 +77,7 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 18 as of MS4a2 (added capture_session).
         # 17 as of the same-day capture_note removal (unused in production,
         # unreachable by any retrieval path -- see plan-active.md).
-        # 21 as of the episode-proposals review tools (list/get/review/
+        # 21 as of the proposals-episode review tools (list/get/review/
         # bulk_review_episodes), found missing 2026-09-18 -- parity with
         # the wiki proposal review loop.
         # 22 as of list_review_conversations (found 2026-09-19, "review by

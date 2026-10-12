@@ -16,7 +16,7 @@ This script, driven by each event's own `metadata.entrypoint` and
   3. relabels the MCP-boundary fallback slug
      local_agent_mode_context_memory_fabric -> claude_cowork;
   4. rewrites `reasoning_threads.harnesses_json`, the episode mirror files
-     (episode-proposals/**, `"harness"`) and doc proposals (doc-proposals/**,
+     (proposals-episode/**, `"harness"`) and doc proposals (proposals-docs/**,
      `"source_harness"`) for the relabeled conversations, so
      list_review_conversations(harness=...) agrees with the journal.
 
@@ -52,8 +52,8 @@ from server.journal.store import DEFAULT_JOURNAL_PATH  # noqa: E402
 OLD = "claude_code"
 COWORK_FALLBACK_SLUG = "local_agent_mode_context_memory_fabric"
 COWORK = "claude_cowork"
-EPISODE_DIR = _ROOT / "episode-proposals"
-DOC_DIR = _ROOT / "doc-proposals"
+EPISODE_DIR = _ROOT / "proposals-episode"
+DOC_DIR = _ROOT / "proposals-docs"
 BAK_DIR = _ROOT / "imports" / "journal" / "bak"
 STAMP = "20261002-pre-provenance"
 

@@ -50,7 +50,7 @@ class ManualMergeTests(unittest.TestCase):
             self.assertEqual(self.cons.get_derived_memory(source)['superseded_by'],mid)
             self.assertEqual(self.rev.state_of(source),'rejected')
         self.assertEqual(self.rev.state_of('m2'),'pending')
-        self.assertIsNotNone(read_episode_mirror(mid,base_dir=self.path.parent/'episode-proposals'))
+        self.assertIsNotNone(read_episode_mirror(mid,base_dir=self.path.parent/'proposals-episode'))
         self.assertEqual(self.rev.conn.execute('SELECT count(*) FROM events').fetchone()[0],3)
 
     def test_retry_repairs_mirror_without_new_verdicts(self):
