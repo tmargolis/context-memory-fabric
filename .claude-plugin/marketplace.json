@@ -1,0 +1,16 @@
+{
+  "name": "context-memory-fabric",
+  "owner": {
+    "name": "Todd Margolis"
+  },
+  "metadata": {
+    "description": "Claude plugins for Context Memory Fabric."
+  },
+  "plugins": [
+    {
+      "name": "cmf-capture",
+      "source": "./plugins/cmf-capture",
+      "description": "Stop-hook capture checkpoints for Context Memory Fabric, in Claude Code and Cowork."
+    }
+  ]
+}

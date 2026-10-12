@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import re
 import os
 from typing import Any, Optional
 import uuid as uuidlib
@@ -87,8 +88,32 @@ def _client_info_for(session: Any) -> Optional[Any]:
     return getattr(client_params, "client_info", None) if client_params is not None else None
 
 
+_SURFACE_RE = re.compile(r"claude session \(([^)]+)\)")
+_CLAUDE_CONNECTOR_HARNESSES = ("claude_desktop", "claude_code", "claude_cowork")
+
+
+def surface_harness(base: str, source_description: Optional[str]) -> tuple[str, Optional[str]]:
+    """Refine a Claude connector's harness from the session entrypoint the
+    cmf-capture plugin reports ("claude session (<entrypoint>)").
+
+    Every Claude surface reaches CMF as the same connector client, so the
+    server can't tell Cowork from the Code tab itself. Returns the harness
+    and the raw entrypoint (kept in metadata even when it isn't mapped yet).
+    """
+    match = _SURFACE_RE.search(source_description or "")
+    if not match:
+        return base, None
+    entrypoint = match.group(1).strip()
+    if base not in _CLAUDE_CONNECTOR_HARNESSES:
+        return base, entrypoint
+    from server.adapters.claude_code.parser import harness_for_entrypoint
+
+    return harness_for_entrypoint(entrypoint, default=base), entrypoint
+
+
 def _journal_evidence(
-    evidence_text: str, project: Optional[str], session: Any, request_id: Any, db_path: Optional[Any] = None
+    evidence_text: str, project: Optional[str], session: Any, request_id: Any, db_path: Optional[Any] = None,
+    source_description: Optional[str] = None,
 ) -> SourceEvent:
     """Journal one item's evidence_text as a lightweight, synchronous
     source event -- deliberately NOT the fire-and-forget queue path
@@ -97,7 +122,7 @@ def _journal_evidence(
     episode; there is no later point to reconcile against.
     """
     client_info = _client_info_for(session)
-    harness = identity.resolve_harness(client_info)
+    harness, entrypoint = surface_harness(identity.resolve_harness(client_info), source_description)
     session_id = identity.resolve_session_id(session)
 
     redacted, redacted_count = filters.redact_secrets_and_count({"evidence": evidence_text})
@@ -126,7 +151,8 @@ def _journal_evidence(
         content_hash=content_hash,
         actor_type="user",
         date_precision=DatePrecision.NONE,
-        metadata={"client_version": identity.client_version(client_info), "redacted_field_count": redacted_count},
+        metadata={"client_version": identity.client_version(client_info), "redacted_field_count": redacted_count,
+                  **({"entrypoint": entrypoint} if entrypoint else {})},
     )
 
     journal_store = SqliteEventStore(db_path=db_path)
@@ -168,7 +194,8 @@ def _capture_episode_item(
     if not evidence_text:
         return SessionItemResult("episode", False, "", error="'evidence_text' is required for every item.")
 
-    event = _journal_evidence(evidence_text, project, session, request_id, db_path=db_path)
+    event = _journal_evidence(evidence_text, project, session, request_id, db_path=db_path,
+                              source_description=source_description)
 
     episode = ReasoningEpisode(
         category=ExtractionCategory.EPISODIC,
@@ -206,7 +233,8 @@ def _capture_episode_item(
 
 
 def _capture_doc_item(
-    item: dict[str, Any], session: Any = None, wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None
+    item: dict[str, Any], session: Any = None, wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None,
+    source_description: Optional[str] = None,
 ) -> SessionItemResult:
     target_path = (item.get("target_path") or "").strip()
     proposed_content = item.get("proposed_content") or ""
@@ -230,7 +258,7 @@ def _capture_doc_item(
             rationale=rationale,
             source_context=item.get("evidence_text"),
             source_conversation_id=identity.resolve_session_id(session) if session is not None else None,
-            source_harness=identity.resolve_harness(client_info) if session is not None else None,
+            source_harness=surface_harness(identity.resolve_harness(client_info), source_description)[0] if session is not None else None,
             wiki_root=wiki_root,
             proposals_dir=proposals_dir,
         )
@@ -274,7 +302,8 @@ def capture_session(
                         item, project, source_description, session, request_id, consolidation_store, db_path=db_path
                     )
                 elif destination == "doc_proposal":
-                    result = _capture_doc_item(item, session=session, wiki_root=wiki_root, proposals_dir=proposals_dir)
+                    result = _capture_doc_item(item, session=session, wiki_root=wiki_root, proposals_dir=proposals_dir,
+                                               source_description=source_description)
                 else:
                     result = SessionItemResult(
                         destination or "(missing)", False, "",
