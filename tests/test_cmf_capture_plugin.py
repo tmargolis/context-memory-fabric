@@ -17,10 +17,10 @@ def test_reason_matches_server_nudge():
 
 def test_throttle_loop_guard_and_minutes(tmp_path):
     state = tmp_path / 's.json'; p = json.dumps({'session_id': 'a'})
-    outs = [nudge.run(p, state, T0 + timedelta(seconds=i)) for i in range(7)]
-    assert [bool(o) for o in outs] == [False] * 5 + [True, False]  # 6th stop nudges; the reply's stop passes
-    assert outs[5]['decision'] == 'block'
-    assert nudge.run(json.dumps({'session_id': 'a', 'stop_hook_active': True}), state, T0 + timedelta(seconds=8)) == {}
+    outs = [nudge.run(p, state, T0 + timedelta(seconds=i)) for i in range(6)]
+    assert [bool(o) for o in outs] == [False] * 4 + [True, False]  # 5th stop nudges; the reply's stop passes
+    assert outs[4]['decision'] == 'block'
+    assert nudge.run(json.dumps({'session_id': 'a', 'stop_hook_active': True}), state, T0 + timedelta(seconds=7)) == {}
     assert nudge.run(json.dumps({'session_id': 'b'}), state, T0) == {}
     assert nudge.run(json.dumps({'session_id': 'b'}), state, T0 + timedelta(minutes=31))['decision'] == 'block'
 
@@ -30,7 +30,7 @@ def test_surface_from_transcript(tmp_path):
     t.write_text('\n'.join(json.dumps({'entrypoint': e, 'type': 'user'}) for e in ('cli', 'local-agent')) + '\n')
     assert nudge.surface(str(t)) == 'local-agent'
     state = tmp_path / 's.json'
-    for i in range(5): nudge.run(json.dumps({'session_id': 'c', 'transcript_path': str(t)}), state, T0)
+    for i in range(4): nudge.run(json.dumps({'session_id': 'c', 'transcript_path': str(t)}), state, T0)
     out = nudge.run(json.dumps({'session_id': 'c', 'transcript_path': str(t)}), state, T0)
     assert out['reason'].endswith('source_description="claude session (local-agent)".')
 

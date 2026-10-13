@@ -10,7 +10,7 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 **MS5 (knowledge-provider generalization) closed 2026-09-28**; its record is in [plan-history.md](plan-history.md#ms5--knowledge-provider-generalization-2026-09-28). What it deliberately left out is [MS11](#ms11--knowledge-provider-follow-ons-from-ms5).
 
-**Claude surface provenance + Cowork capture (unplanned, found in MS9 Phase 5) closed 2026-10-03**; its record is in [plan-history.md](plan-history.md#claude-surface-provenance-and-cowork-capture-found-2026-10-02-closed-2026-10-03). Capture now separates the Claude CLI (`claude_code`), Desktop Code tab (`claude_desktop_code`) and Cowork (`claude_cowork`). What it left open is in the [Backlog](#claude-surface-provenance-lost-transcripts-and-cowork-capture-found-2026-10-02-ms9-phase-5).
+**Claude surface provenance + Cowork capture (unplanned, found in MS9 Phase 5) closed 2026-10-03**; its record is in [plan-history.md](plan-history.md#claude-surface-provenance-and-cowork-capture-found-2026-10-02-closed-2026-10-03). Capture now separates the Claude CLI (`claude_code`), Desktop Code tab (`claude_desktop_code`) and Cowork (`claude_cowork`). What it left open is in the [Backlog](plan-history.md#claude-surface-provenance-lost-transcripts-and-cowork-capture-found-2026-10-02-ms9-phase-5).
 
 **extract@1.6 backfill review: Phases 0–4 closed 2026-10-04** (record in [plan-history.md](plan-history.md#extract16-backfill-review-phases-03-and-the-phase-4-pilot-2026-10-03); 60 approved docs applied, 443 approved episodes promoted across 23 batches, 8 failed on timeout, 1 superseded skipped). Post-Phase-4 items queued.
 
@@ -112,14 +112,15 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B05 | Codex hook lifecycle verification | **Closed 2026-10-12** → [plan-history.md](plan-history.md#b05--codex-hook-lifecycle-verification-closed-2026-10-12) |
 | B06 | Recurring review operations and outstanding promotions | **Closed 2026-10-12** → [plan-history.md](plan-history.md#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12) |
 | [B07](#b07--promotion-reliability-and-identity) | Promotion reliability and identity | Uncertain reproduction/compute |
-| [B08](#b08--project-organization-and-retrieval-dilution) | Project organization and retrieval dilution | Decision, migration, and replay package |
+| B08 | Project organization and retrieval dilution | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b08--project-organization-and-retrieval-dilution-closed-2026-10-13) |
 | [B09](#b09--entity-extraction-quality-and-residual-graph-cleanup) | Entity extraction quality and residual graph cleanup | Reconcile completed work; remaining scope uncertain |
 | B10 | Extraction policy 1.7 | **Closed 2026-10-12** → [plan-history.md](plan-history.md#b10--extraction-policy-17-closed-2026-10-12) |
 | [B11](#b11--context-retrieval-and-assembly) | Context retrieval and assembly | Broad retrieval package; embedding/evaluation |
-| [B12](#b12--capture-coverage-and-historical-source-recovery) | Capture coverage and historical source recovery | Access/coverage decisions and historical processing |
+| B12 | Capture coverage and historical source recovery | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b12--capture-coverage-and-historical-source-recovery-closed-2026-10-13) |
 | [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
 | [B15](#b15--test-graph-compatibility) | Test graph compatibility | Verify state; possible validation prerequisite |
+| [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Split from B08; inference build + merge experiment, replay-gated |
 
 ### Recurring review operations
 
@@ -159,72 +160,6 @@ Found while repairing Phase 2b. These four memories were promoted twice, once on
   - **Replay at `now`:** unchanged (Hit@8 82.5%, MRR 0.434; only A10 moved, 5 → 6).
 - [ ] **Find why they were promoted twice on 09-23.** All four were promoted within a minute (18:56). The 09-23 promotion pass didn't see the 09-13 promotions as already promoted, probably the same stale-ledger problem as Phase 2b, since 09-13 rows went to `mem-fabric-local-wiki` and not `mem-fabric-local`.
 
-### B08 — Project organization and retrieval dilution
-
-One coordinated group: settle the project representation, classify/migrate old slugs, evaluate project-aware ranking, and evaluate related-episode rollups. Preserve the separate experimental comparisons, replay gates, and prohibition on pruning approved episodes. Ranking success alone does not close the representation, migration, or merge questions. Requires user decisions, graph rehearsals, and measured inference/replay work; not a low-compute quick completion.
-
-#### Project nodes vs. entity property (open since before MS7b)
-
-User's question, not yet settled: do `:Project`/`IN_PROJECT` nodes and edges (33 `Project` nodes and 2,090 `IN_PROJECT` edges in `mem-fabric-local` as of 2026-09-30 (1,946 from entities, 144 from episodes, 0 from notes), built by `tag_projects.py`) earn their place as first-class graph structure, or would `entity.project = ["proj1", "proj2"]` as a plain property serve the same purpose more simply? Paused rather than decided — visualizing the current graph in FalkorDB Browser showed the project layer isn't wrong, just not obviously pulling its weight next to the noise from the wiki-only entity layer above. Revisit once the extraction-quality items above are resolved, since they're currently confounding how legible the project layer looks.
-
-**Moved out of MS9 task 7 (User, 2026-10-06); undecided.** What the code shows:
-
-- **Retrieval never reads it.** `server/context.py` and `server/retrieval_expansion.py` don't touch `:Project` or `IN_PROJECT`; Phase 3's expansion follows typed `MENTIONS` only. Today the layer is for Browser viewing, not retrieval.
-- **Episodes already use a property** (`e.project` + a project label, `server/consolidation/graph_tagging.py`), which fits since an episode belongs to one project. Only entities get project membership, through `IN_PROJECT`, and an entity can belong to several projects.
-- **Upkeep:** every promotion writes the edges, `tag_projects.py` recomputes them, and `merge_entities.py`, `retract_episodes.py` and `repair_p2b_episodes.py` each have to handle them. MS4e's `Workstream` label exists only to avoid clashing with `Project`. Notes and the Phase 4 wiki entities have no `IN_PROJECT` edges at all.
-
-**The options:**
-
-- **A. Keep the hub nodes.** Renaming or merging a slug changes one node, and a node can hold project metadata later. But the layer adds 33 hubs and about 2,090 edges that retrieval never reads, stores projects one way for episodes and another for entities, and becomes a risk if any traversal is ever untyped.
-- **B. Use `entity.project = [...]`.** One model for episodes and entities, a cheap `WHERE 'x' IN n.project` filter, no hub nodes, and fewer edge types for the maintenance tools. But a slug rename becomes a bulk `SET`, and project metadata would need a small registry. Analysis leaned B.
-
-**Separate question: does project help retrieval at all?** Only if ranking uses it, and then A and B are equivalent. Candidates:
-
-- a soft boost for results in the query's inferred project(s), which works fine with entities in several projects;
-- a project-bounded addition to the Phase 3 expansion;
-- an explicit `get_context(project=...)` parameter (ties to MS10 scopes).
-
-Test it as an MS8 replay policy (Hit@8 / MRR) before building. A recent person-and-contact lookup miss (2026-10-06) was missing data in CMF, not a ranking problem, so project tagging wouldn't have helped. The Gmail provider (MS11), person entities, and the entity-summary arm in Assembly refinements are the more relevant levers there.
-
-**Evidence that project-aware ranking could help (2026-10-06).** The replay drop at `now` after 10-02 (Hit@8 90.0% → 82.5%, MRR 0.515 → 0.434; see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)) is one project crowding out others. 219 new `claude-cowork-career-*` episodes now take a large share of the 130 slots that episodes added since 10-03 hold, out of 480 across the 60 cases.
-
-- **A6** (a dataviz decision) and **C1** (Interlock) lost their gold answers to career and other off-target episodes.
-- **C5, C15 and C19** slipped from rank 1.
-
-A soft boost for results in the query's inferred project(s), or a per-project cap on the memory slots, would target exactly this. Measure it on these cases first, after refreshing stale gold such as C16, whose new career episodes are valid answers.
-
-#### Promoted-episode project-slug migration (found 2026-10-03, extract@1.6 review)
-
-The review split the old `project-epsilon` project into a job-search project and a plugin-development project, and folded several near-duplicate slugs together (mappings live in the gitignored `.env`: `CMF_PROJECT_ALIASES`, `CMF_PROJECT_FOLDER_MAP`, `CMF_COWORK_SCHEDULED_TASK_PROJECTS`). Pending items were retagged with `scripts/retag_review_projects.py`; episodes already **promoted** still carry the old slugs in FalkorDB and the journal (as of 2026-10-03: 89 job-search/plugin, 114 vault, 26 finance).
-
-- [ ] Inventory and classify the promoted episodes; User approves the table.
-- [ ] Dry-run retag script for graph tags + `derived_memories.project` + approved mirrors; rehearse on a graph copy, back up, apply with approval, MS8 replay.
-- [ ] Decide on episode names that embed an old slug (recommend: keep them as identifiers).
-
-#### Project-aware ranking (deferred out of MS9, 2026-10-07)
-
-Goal: stop one project from taking most of the 8 memory slots on a query about something else. The evidence is in the [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) item (A6, C1, C5, C15, C19). Test each variant as an MS8 replay policy before building; none is built.
-
-- **Soft boost.** Score bonus for episodes in the query's inferred project(s). Cannot hide a right answer, but depends on the guess.
-- **Per-project cap.** No project may hold more than N of the 8 slots. Needs no guess, but can cut a right answer when a question really is about one project (D1–D3 are exactly that), so consider a cap that applies only when the extra results score far below the top ones.
-- **Which signal (open, User to decide).** Keep **project** (a tag) and **workstream** (an extracted entity type, kept apart from `:Project` on purpose, see [FIX-GRAPH-PLAN.md](FIX-GRAPH-PLAN.md)) separate:
-  - *Project tag:* `e.project` is on 1,073 of 1,074 episodes (19 are `misc`), but only 147 episodes have an `IN_PROJECT` edge and 2,157 of 4,919 entities do, so ranking must read the property. Granularity is uneven: `career` is a whole area (238 episodes) while small slugs behave like workstreams.
-  - *Workstream entities:* finer (a company or an effort) and already followed by Phase 3's `MENTIONS` expansion, but only as good as extraction, and not measured.
-  - Run both variants in the replay and compare.
-- **Related.** `:Project` nodes vs. a property (same item above), and `get_context(project=...)` ties to [MS10](#ms10--distribution-and-ecosystem) scopes.
-
-#### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
-
-The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
-
-- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
-- **How, sequentially on scratch graphs (never production):**
-  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
-  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
-  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
-  - Any production change needs a new ruling from User, a backup first, and before/after counts.
-- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
-
 ### B09 — Entity extraction quality and residual graph cleanup
 
 Keep the extraction causes and resulting cleanup together to avoid repeatedly repairing the same artifacts. Reconcile the September findings with completed MS9 work, identify the remaining population, choose the extraction approach, and validate any approved repair. Historical counts are not a current deletion list. Compute and scope remain uncertain; no bulk cleanup is authorized by this grouping.
@@ -248,11 +183,11 @@ Surfaced visually inspecting `mem-fabric-local` in FalkorDB Browser after promot
 - [ ] **The real candidate set is graph-wide zero-`MENTIONS` entities — measured at 1,219**, which is very likely the same population the "Wiki entity-extraction quality" item above already names (`~1,219 entities mentioned by a note but by no episode/fact/project`) — worth confirming they're the same set before treating this as two separate backlog items. Even a zero-`MENTIONS` entity can carry real `RELATES_TO` fact text (as `100MB limit` shows) — "safe to delete" here means "won't break graph structure or dangling references," not "zero information loss." Needs a categorization pass (genuine standalone facts vs. junk — config values, restated instructions, extraction artifacts) before deleting anything, not a bulk sweep.
 - **Planned in [MS9 — Graph quality for retrieval](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)** (2026-09-29): the merge tool, the candidate report and the wiki-only entity categorization live there.
 - **Forward fix:** [MS4e](plan-history.md#ms4e--entity-extraction-quality-forward-only-2026-09-28) stops new noise at extraction time. Its optional Phase 5 report, this item's candidate list, moved to MS9 task 1b.
-- **Relates to:** [Wiki entity-extraction quality](#wiki-entity-extraction-quality-found-2026-09-17-closing-ms7b) (root-cause side of the same noise) and [Project nodes vs. entity property](#project-nodes-vs-entity-property-open-since-before-ms7b) (paused partly *because of* this same noise).
+- **Relates to:** [Wiki entity-extraction quality](#wiki-entity-extraction-quality-found-2026-09-17-closing-ms7b) (root-cause side of the same noise) and [Project nodes vs. entity property](plan-history.md#project-nodes-vs-entity-property-open-since-before-ms7b--decided-and-applied-2026-10-13) (paused partly *because of* this same noise; decided 2026-10-13).
 
 ### B11 — Context retrieval and assembly
 
-Keep all assembly refinements together: semantic wiki retrieval, conflict/staleness signals, omissions, intent and time modes, templates, token budgets, explanations, reranking, entity summaries/history if adopted, and residual eval cases. B03 supplies note dates; B08 owns project-specific experiments. Deferred/conditional options keep their existing status. This is a broad group with corpus embedding and evaluation costs, not a small zero-Spark task.
+Keep all assembly refinements together: semantic wiki retrieval, conflict/staleness signals, omissions, intent and time modes, templates, token budgets, explanations, reranking, entity summaries/history if adopted, and residual eval cases. B03 supplies note dates; B16 owns project-specific experiments. Deferred/conditional options keep their existing status. This is a broad group with corpus embedding and evaluation costs, not a small zero-Spark task.
 
 #### Assembly refinements (deferred out of MS7)
 
@@ -285,28 +220,6 @@ The graph holds every wiki `[[link]]` as a `(:Note)-[:REFERENCES]->(:Note)` edge
 - [ ] **Investigate whether link expansion improves retrieval.** For a retrieved note, also offer the notes it links to (sources it cites) and the notes linking to it, ranked and capped like the entity expansion in `server/retrieval_expansion.py`. Measure with the MS7 eval harness (and MS8 replay) against the current baseline before keeping it; watch context size, since hub notes (index, timelines) link widely.
 - **Prerequisite done 2026-10-10:** 27 stub paths left stale by the `RAW/RESEARCH/Household` → `RAW/Household` move were repaired (`scripts/sweep_wiki_graph.py --repath-notes`, mapping in `imports/state/note_repath_20261011T034013Z.json`). Run the sweep with `--repath-notes` after future folder moves. One orphan Note (`TO-RESEARCH/…ChatGPT Work.md`, file deleted 2026-09-13, no edges) remains.
 
-### B12 — Capture coverage and historical source recovery
-
-Group local transcript recovery, remote/Cowork capture and attribution, scheduled-task capture policy, and missing Gemini export records. Preserve the completed provenance/test records and all user deferrals. Source access and capture choices must be resolved; the Gemini item includes review and promotion, not merely journaling. Historical recovery/extraction may be substantial.
-
-#### Claude surface provenance, lost transcripts and Cowork capture (found 2026-10-02, MS9 Phase 5)
-
-**Done 2026-10-03; record in [plan-history.md](plan-history.md#claude-surface-provenance-and-cowork-capture-found-2026-10-02-closed-2026-10-03)**, working checklist in [CLAUDE-HARNESS-PROVENANCE-PLAN.md](CLAUDE-HARNESS-PROVENANCE-PLAN.md). In short: harness now comes from each transcript line's `entrypoint` (`claude_code` / `claude_desktop_code` / `claude_cowork`); eval and temp-dir runs are out of the journal; the Phase 2b episode damage it uncovered in `mem-fabric-local` is repaired and the Code-tab episodes are renamed `claude-desktop-code-*`; Cowork has an adapter, a 15-minute poller and a full backfill (964 conversations journaled, 460 extracted); all pollers share one Spark slot. Still open:
-
-- [ ] **Lost transcripts (provenance steps 6a/6b).** Claude Code's 30-day cleanup deleted 56 CLI and 39 Code-tab transcripts before capture (`cleanupPeriodDays` is now 36500). No local copy exists; the typed prompts of the 56 CLI sessions are journaled as partial `user_prompt.history` events. Searching further needs Full Disk Access (Time Machine depth), the NAS shares mounted, and User's answer on whether "Todds-Air" was another machine. Manifest: `imports/source/claude-restore/manifest.json` (local).
-- [ ] **Cloud-session transcripts (deferred, User 2026-10-02).** At least 8 Code sessions ran in the cloud, and 6 Cowork sessions were handed off to it after starting locally; none of that is on disk.
-- [ ] **Cowork sessions are no longer on disk (found 2026-10-08, MS10a).** *2026-10-12: confirmed (no local Cowork transcript since 10-01; every Claude surface reaches CMF as connector client `claude-ai`, so MCP events can't tell Cowork apart). Built the `cmf-capture` plugin (`plugins/cmf-capture/`, marketplace `tmargolis/context-memory-fabric`): an in-session Stop hook that triggers `capture_session` checkpoints in Cowork and Claude Code and reports the entrypoint, which `capture_session` now uses to label captures. Next: install in Cowork, run one task, verify the checkpoint and its entrypoint value; then decide on recovering 10-06+ Cowork sessions from a Claude data export.* Original finding: The Cowork poller runs cleanly every 15 minutes but has journaled nothing since 10-06: the newest local transcript under `local-agent-mode-sessions/` is from 2026-09-22, while `remote-session-spaces.json` (updated 2026-10-08) lists 73 remote sessions. Cowork appears to run sessions remotely now, so their transcripts never reach the adapter. Today's Cowork review pass shows up only as MCP-boundary `mcp_tool_call` events, attributed to `claude_code`. Checked 2026-10-08: nothing under `~/Library/Application Support/Claude/` holds them. The only trace is the claude.ai web cache (`IndexedDB/https_claude.ai_0.indexeddb.leveldb`), a partial, private-format copy of what's on screen: not a capture source. Options: (a) MCP-boundary capture, already running, but attributed to `claude_code`, so give those events the real client surface; (b) `capture_session` checkpoints, already asked for in the server instructions; (c) a claude.ai data export, if it includes Cowork sessions (check with one export first).
-- [ ] **Recurring Cowork scheduled tasks (decided 2026-10-03: journal-only).** `project-epsilon-daily-schedule`, `daily-research-sweep`, `project-epsilon-dashboard-refresh` and `social-media-analytics` (~470 sessions, ~7 Spark-hours) stay unextracted; the 8 other channels were extracted. Open option: add `weekly-status-brief` to `CMF_COWORK_EXTRACT_SCHEDULED_TASKS` in the Cowork poller's plist so new briefs are extracted as they land.
-- [x] **The 6 pre-existing `remember`-path test failures** (`test_mcp_contract_fixtures`, `test_ms4e_extraction_profile`), present since `6fa4056`'s naming automation. *No longer failing as of 2026-10-08 (full non-live suite: 898 passed, 0 failed), after MS9's close-out test repairs.*
-- **Relates to:** [MS9](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07) (Phase 5 finding; the Phase 2b repair) and [Double-promoted memories](#double-promoted-memories-in-mem-fabric-local-found-2026-10-02-provenance-step-5a).
-
-#### Gemini Apps records missing from the April Takeout (found 2026-10-08, export cleanup)
-
-The only Gemini import ran on 2026-09-04, from the September Takeout (`Takeout 3`). The older April 22 export (`Takeout 5`, unpacked 2026-09-08) was never imported, and 226 of its 4,452 Gemini Apps records (Oct 2024 to Apr 2026) have no matching event in the journal, apparently because Google left them out of the later export. Matching was done by timestamp. The exports moved to the NAS on 2026-10-08: `/Volumes/nas-data/docs/Takeout`.
-
-- [ ] **Run `journal_gemini_apps_export` (`server/importers/gemini.py`) on `Takeout 5/My Activity/Gemini Apps/MyActivity.json`** from the NAS copy. It has no CLI; call it from Python as the original import did. Event IDs are a hash of content plus conversation ID, so the ~4,200 records already in the journal should come back as `*_deduped`. Check that before trusting it: `*_journaled` should be about 226 prompts plus their responses, not thousands. Then run the normal review and promotion pass on the new rows.
-- Not imported from any export and not planned: AI Mode (107 records in `Takeout 3`, 88 in `Takeout 5`), NotebookLM (480 files), Workspace Studio, gems/scheduled actions, and the attachments in `Takeout 4`. Each would need its own importer.
-
 ### B13 — Historical graph rebuild
 
 Optional and paused. Preserve the existing checkpoint and original scope; do not resume merely because the backlog is regrouped. Many Spark hours, so excluded from the current low-compute shortlist.
@@ -332,6 +245,26 @@ Separate infrastructure prerequisite, previously buried under recurring review. 
 #### Test graph vector-dimension mismatch (carried from corpus review)
 
 - **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
+
+### B16 — Project-aware retrieval
+
+Split out of B08 when it closed (2026-10-13). B08 settled the representation (`entity.project` / `e.project` properties) and measured the ceiling: an oracle project boost lifts MRR 0.485 → 0.740 on all 66 cases (`imports/replay/b08-project-rerank-ceiling-20261013.json`); a per-project cap does not help. Record: [plan-history.md](plan-history.md#b08--project-organization-and-retrieval-dilution-closed-2026-10-13). Related to [B09](#b09--entity-extraction-quality-and-residual-graph-cleanup) only through the graph's entity quality; this group is retrieval work and B11 defers project-specific experiments to it. Any production retrieval change is gated by an MS8 replay.
+
+#### Query-time project inference
+
+- [ ] Build query-time project inference (a classifier or heuristic guessing the query's project — nothing like this exists today; `get_context` has no project parameter) and wire the boost into `recall_mem`'s fusion, gated by another MS8 replay before any production retrieval change.
+
+#### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
+
+The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
+
+- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
+- **How, sequentially on scratch graphs (never production):**
+  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
+  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
+  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
+  - Any production change needs a new ruling from User, a backup first, and before/after counts.
+- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
 
 ---
 

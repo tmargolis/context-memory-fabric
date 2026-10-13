@@ -6,7 +6,7 @@ It needs the CMF connector in the same app (claude.ai: Settings → Connectors).
 
 ## What it does
 
-- **When:** at most once per 6 turns, or after 30 minutes and at least 2 turns (`CMF_NUDGE_MIN_TURNS`, `CMF_NUDGE_MIN_MINUTES`). The turn that answers a checkpoint is never checkpointed again, so it can't loop.
+- **When:** at most once per 5 turns, or after 30 minutes and at least 2 turns (`CMF_NUDGE_MIN_TURNS`, `CMF_NUDGE_MIN_MINUTES`). The turn that answers a checkpoint is never checkpointed again, so it can't loop.
 - **What:** the same checkpoint text as CMF's own Stop hook (`server/adapters/capture_nudge.py`). Claude decides what is worth keeping, and everything it captures lands in the normal review queue.
 - **Attribution:** every Claude app reaches CMF as one connector client, so CMF can't tell Cowork from the Code tab by itself. The hook reads the session's `entrypoint` and asks Claude to pass `source_description="claude session (<entrypoint>)"`, which CMF uses to label the capture (`claude_cowork`, `claude_desktop_code`, `claude_code`).
 - **Fails open:** any error lets the session stop normally.

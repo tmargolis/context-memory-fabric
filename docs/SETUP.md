@@ -269,7 +269,7 @@ A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turn
 .venv/bin/python3 -m server.adapters.capture_nudge uninstall --harness all
 ```
 
-- The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 6), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
+- The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 5), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
 - **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing. Its `hooks.json` uses `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "..."}]}]}}`. If `/hooks` reports an unknown top-level `SessionStart` or `Stop`, rerun the Codex hook installer (`.venv/bin/python3 -m server.adapters.codex.cli hooks install`); it backs up and migrates the old flat format while preserving existing handlers. Close and reopen `/hooks` to review the corrected definitions. Installation/status does not prove that hooks are trusted or firing.
 - **Each nudge costs one extra agent step**, and the session must have CMF connected. Without it the agent just finishes.
 - Antigravity has no pre-compaction hook, and Claude Code's and Codex's can't prompt the agent, so a very long session is covered only by the periodic nudges.
@@ -319,7 +319,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
 | `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
-| `CMF_NUDGE_MIN_TURNS` | No | `6` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](#capture-checkpoints-no-transcript-reading)). |
+| `CMF_NUDGE_MIN_TURNS` | No | `5` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](#capture-checkpoints-no-transcript-reading)). |
 | `CMF_NUDGE_MIN_MINUTES` | No | `30` | Or nudge after this many minutes, once there are at least 2 replies. |
 | `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |
 | `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |

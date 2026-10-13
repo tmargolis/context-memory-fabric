@@ -49,7 +49,7 @@ from server.journal.store import DEFAULT_JOURNAL_PATH
 HARNESSES = ("claude_code", "codex", "antigravity")
 NUDGE_MARKER = "cmf-capture-nudge"
 
-DEFAULT_MIN_TURNS = 6
+DEFAULT_MIN_TURNS = 5
 DEFAULT_MIN_MINUTES = 30.0
 # Sessions idle this long are dropped from the state file.
 STATE_TTL_SECONDS = 7 * 24 * 3600

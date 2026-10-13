@@ -1,6 +1,6 @@
 {
   "name": "cmf-capture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Context Memory Fabric capture checkpoints: every few turns, a Stop hook asks Claude to record what was decided or learned with CMF's capture_session tool. Works in Claude Code and in Cowork, including cloud sessions. Needs the CMF connector.",
   "author": {
     "name": "Todd Margolis"

@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 import sys
 
-DEFAULT_MIN_TURNS = 6
+DEFAULT_MIN_TURNS = 5
 DEFAULT_MIN_MINUTES = 30.0
 STATE_TTL_SECONDS = 7 * 24 * 3600
 
