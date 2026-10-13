@@ -1913,7 +1913,7 @@ def main():
             return super().format(record)
 
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(_ShortNameFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setFormatter(_ShortNameFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
     # Which FalkorDB graph this process will actually read/write is easy to
@@ -1996,7 +1996,16 @@ def main():
         if oauth_provider is not None:
             logger.info(f"OAuth enabled -- issuer {_oauth_issuer_url}, consent page at {_oauth_issuer_url}/oauth/consent")
 
-        uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info")
+        # uvicorn's own lines (access log on stdout, startup on stderr) carry
+        # no timestamp by default; prefix one to match the app log format.
+        import copy
+        from uvicorn.config import LOGGING_CONFIG
+        log_config = copy.deepcopy(LOGGING_CONFIG)
+        for fmt in log_config["formatters"].values():
+            fmt["fmt"] = "%(asctime)s " + fmt["fmt"]
+            fmt["datefmt"] = "%Y-%m-%d %H:%M:%S"
+
+        uvicorn.run(starlette_app, host=args.host, port=args.port, log_level="info", log_config=log_config)
     else:
         app.run(transport="stdio")
 
