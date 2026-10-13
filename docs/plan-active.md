@@ -119,7 +119,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B12 | Capture coverage and historical source recovery | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b12--capture-coverage-and-historical-source-recovery-closed-2026-10-13) |
 | [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
-| [B15](#b15--test-graph-compatibility) | Test graph compatibility | Verify state; possible validation prerequisite |
+| B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
 | [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Split from B08; inference build + merge experiment, replay-gated |
 
 ### Recurring review operations
@@ -237,14 +237,6 @@ Deliberately deferred by the user. Retain the completed hardening context and th
 Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pull/6) and consciously merged without fixing (User, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`. Four of the five items were closed 2026-09-28 ([plan-history.md](plan-history.md#auth-hardening-deferred-out-of-ms6c-2026-09-16-closed-2026-09-28)); the one left is deliberately deferred.
 
 - [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
-
-### B15 — Test graph compatibility
-
-Separate infrastructure prerequisite, previously buried under recurring review. Verify whether the reported dimension mismatch still exists before proposing a compatible test-graph rebuild. Complete with approved isolated graph preparation and a bounded live check; never change dimensions on an existing graph in place. This may gate live validation of other groups and needs explicit operational approval.
-
-#### Test graph vector-dimension mismatch (carried from corpus review)
-
-- **Also found, unrelated to the review pass itself:** the `cmf_test` FalkorDB graph's vector index is still 1024-dim (Gemini-era) while the configured embedder produces 768-dim (local/nomic) — every `live`-marked test that calls `remember()` against `cmf_test` currently fails with a vector-dimension mismatch, independent of any of this session's code changes (confirmed by re-running before/after). `cmf_test` was never migrated alongside `mem-fabric-local` in the Spark migration; needs the same treatment (`docs/spark-phase7-ab-log.md`'s migration steps, applied to the test graph).
 
 ### B16 — Project-aware retrieval
 

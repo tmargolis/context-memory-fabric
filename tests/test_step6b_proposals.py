@@ -10,6 +10,7 @@ Validates:
 - Full 5-way semantic contract (remember, recall, search_wiki, propose_doc_update, get_context)
 """
 
+import asyncio
 import hashlib
 import os
 from pathlib import Path
@@ -190,14 +191,16 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
         # 1. MCP Tool Registration
         tools = await app.list_tools()
         tool_names = {t.name for t in tools}
-        expected_tools = {
+        core_tools = {
             "remember", "recall_mem", "search_wiki", "get_context", "propose_doc_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_health",  # MS4a MCP-boundary capture
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
+            "search_knowledge",  # MS5 knowledge providers
         }
-        self.assertEqual(tool_names, expected_tools, f"Expected exactly {expected_tools}, got {tool_names}")
+        # Review tools (B06 and later) are added over time; the core contract must stay.
+        self.assertLessEqual(core_tools, tool_names, f"Missing core tools: {core_tools - tool_names}")
 
         # 2. Direct Episodic Write
         rem_res = await mcp_remember(
@@ -205,10 +208,14 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             name="step6b_orion_sqlite_decision",
             source_description="Semantic boundary test",
         )
-        self.assertIn("Memory stored successfully", rem_res)
+        self.assertIn("queued for background ingestion", rem_res)
 
-        # 3. Direct Episodic Read
-        recall_res = await mcp_recall(query="Project Orion database", max_results=3)
+        # Ingestion is asynchronous on the local-model path; poll until it lands.
+        for _ in range(60):
+            recall_res = await mcp_recall(query="Project Orion database", max_results=3)
+            if 'SQLite' in recall_res:
+                break
+            await asyncio.sleep(5)
         self.assertIn("SQLite", recall_res)
 
         # 4. Canonical Durable Read
@@ -221,7 +228,7 @@ class TestStep6BProposals(unittest.IsolatedAsyncioTestCase):
             proposed_content="# Proposed Personal Context Service Update\nSynthetic proposal content.",
             rationale="Test proposal via MCP tool",
         )
-        self.assertIn("Wiki Update Proposal Generated", prop_res)
+        self.assertIn("Doc Update Proposal Generated", prop_res)
         self.assertIn("NOT", prop_res)
         self.assertIn("modified `LLM_Wiki`", prop_res)
 

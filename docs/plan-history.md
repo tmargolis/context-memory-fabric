@@ -1585,6 +1585,16 @@ The only Gemini import ran on 2026-09-04, from the September Takeout (`Takeout 3
   - [x] Remaining: review/promote whatever extraction did produce.
 - Not imported from any export and not planned: AI Mode (107 records in `Takeout 3`, 88 in `Takeout 5`), NotebookLM (480 files), Workspace Studio, gems/scheduled actions, and the attachments in `Takeout 4`. Each would need its own importer.
 
+### B15 — Test graph compatibility (closed 2026-10-13)
+
+**Closed 2026-10-13; no graph rebuild needed.** The reported `cmf_test` vector-dimension mismatch (1024-dim Gemini-era index vs. the 768-dim nomic embedder) no longer exists: `cmf_test` was empty with no 1024-dim index, and live `remember()` writes into it succeeded. `pytest -m live` showed 7 passed / 3 failed. None of the failures was a dimension error; all three were stale assertions that the default `-m "not live"` run had hidden:
+
+- `test_step6b_proposals::test_full_five_tool_mcp_contract` required exactly the original 12 MCP tools (there are now 30) and the old "Wiki Update Proposal Generated" header (renamed to "Doc Update Proposal" in B06). It now checks that the core tool set is still registered.
+- `test_step6_mcp_tools::test_remember_and_recall_tools` and the step-6B contract expected "Memory stored successfully"; `remember` now replies "queued for background ingestion". Both now accept that reply and poll `recall_mem` until the memory lands.
+- `test_fixgraph_merge::test_end_to_end_merge_on_throwaway_graph` built `IN_PROJECT` edges, which `merge_entities.py` has refused since B08. Its fixture now uses the `project` property and asserts that the merge unions it.
+
+All 10 `live` tests pass. No production graph was touched.
+
 ### B06 historical queue snapshots (archived 2026-10-11)
 
 Historical measurements moved from the active B06 standing-operation item on 2026-10-11, when B06 remained open. B06 subsequently [closed 2026-10-12](#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12).

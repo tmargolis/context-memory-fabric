@@ -155,9 +155,14 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             name="phase1_step6_atlas_test_memory",
             source_description="Step 6 MCP test suite",
         )
-        self.assertIn("Memory stored successfully", remember_resp)
+        self.assertIn("queued for background ingestion", remember_resp)
 
-        recall_resp = await mcp_recall(query="Project Atlas database", max_results=3)
+        # Ingestion is asynchronous on the local-model path; poll until it lands.
+        for _ in range(60):
+            recall_resp = await mcp_recall(query="Project Atlas database", max_results=3)
+            if 'PostgreSQL' in recall_resp:
+                break
+            await asyncio.sleep(5)
         self.assertIsInstance(recall_resp, str)
         self.assertIn("### Episodic Memory Search Results", recall_resp)
         self.assertIn("PostgreSQL", recall_resp)

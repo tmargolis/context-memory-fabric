@@ -67,12 +67,11 @@ def test_end_to_end_merge_on_throwaway_graph():
     except Exception:
         pytest.skip("FalkorDB not reachable")
     graph.query("""CREATE
-      (ep:Episodic {uuid:'ep', name:'ep1'}), (n:Note {uuid:'n', name:'note1'}), (p:Project {uuid:'p', name:'cmf'}),
-      (k:Entity {uuid:'k', name:'Alex', wiki_type:'person', summary:'', group_id:'g'}),
-      (d:Entity:Person {uuid:'d', name:'Alex Morgan', summary:'Engineer.', group_id:'g'}),
+      (ep:Episodic {uuid:'ep', name:'ep1'}), (n:Note {uuid:'n', name:'note1'}),
+      (k:Entity {uuid:'k', name:'Alex', wiki_type:'person', summary:'', group_id:'g', project:['cmf']}),
+      (d:Entity:Person {uuid:'d', name:'Alex Morgan', summary:'Engineer.', group_id:'g', project:['cmf', 'interlock']}),
       (o:Entity {uuid:'o', name:'Denver', group_id:'g'}),
       (ep)-[:MENTIONS {uuid:'m1'}]->(k), (ep)-[:MENTIONS {uuid:'m2'}]->(d), (n)-[:MENTIONS {uuid:'m3'}]->(d),
-      (k)-[:IN_PROJECT]->(p), (d)-[:IN_PROJECT]->(p),
       (d)-[:RELATES_TO {uuid:'f1', fact:'Alex Morgan lives in Denver', source_node_uuid:'d', target_node_uuid:'o',
                         fact_embedding: vecf32([0.1,0.2,0.3])}]->(o),
       (o)-[:RELATES_TO {uuid:'f2', fact:'Denver is home to Alex Morgan', source_node_uuid:'o', target_node_uuid:'d'}]->(d),
@@ -96,7 +95,8 @@ def test_end_to_end_merge_on_throwaway_graph():
         # structural duplicates dropped, unique ones moved
         assert q("MATCH (:Episodic {uuid:'ep'})-[r:MENTIONS]->(k {uuid:'k'}) RETURN count(r)")[0][0] == 1
         assert q("MATCH (:Note {uuid:'n'})-[r:MENTIONS]->(k {uuid:'k'}) RETURN r.uuid")[0][0] == "m3"
-        assert q("MATCH (k {uuid:'k'})-[r:IN_PROJECT]->() RETURN count(r)")[0][0] == 1
+        # project membership (a property since B08) is unioned onto the kept node
+        assert q("MATCH (k {uuid:'k'}) RETURN k.project")[0][0] == ["cmf", "interlock"]
         # node properties: rename + re-embed, labels union, empty summary filled, aliases
         name, summ, aliases, vec, labels = q("MATCH (k {uuid:'k'}) RETURN k.name, k.summary, k.aliases, k.name_embedding, labels(k)")[0]
         assert name == "Alex Morgan" and summ == "Engineer." and "Person" in labels
