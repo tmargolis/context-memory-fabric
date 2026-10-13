@@ -76,23 +76,21 @@ def harness_label_for(harness: Optional[str]) -> Optional[str]:
     return label or None
 
 
-def _rows(result: Any) -> list:
-    return result[0] if result and isinstance(result[0], list) else (result or [])
-
-
 async def tag_promoted_episode(
     driver: Any,
     episode_name: str,
     project: Optional[str],
     harness: Optional[str],
 ) -> None:
-    """Apply project + harness labels/edges to one just-promoted Episodic node.
+    """Apply project + harness labels, and project membership, to one
+    just-promoted Episodic node and the entities it mentions.
 
     Safe to call with project/harness = None (skips whichever is missing)
-    and safe to call more than once (every write is MERGE/SET, matching
-    tag_projects.py's own idempotency). Does NOT reset/recompute existing
-    edges graph-wide the way tag_projects.py does -- it only adds this one
-    episode's own edges, so it's cheap enough to run on every promotion.
+    and safe to call more than once (every write is idempotent, matching
+    tag_projects.py's own idempotency). Does NOT recompute every mentioning
+    entity's full project list graph-wide the way tag_projects.py does -- it
+    only appends this one episode's project to its own mentioned entities,
+    so it's cheap enough to run on every promotion.
     """
     h_label = harness_label_for(harness)
     if h_label:
@@ -111,29 +109,18 @@ async def tag_promoted_episode(
         project=project,
     )
 
-    # Primary link: this episode's mentioned entities get the IN_PROJECT
-    # edge (entities can legitimately belong to more than one project;
-    # episodes can't -- same design tag_projects.py uses).
-    linked = await driver.execute_query(
+    # Mentioned entities get `project` added to their own project list (an
+    # entity can legitimately belong to more than one project; an episode
+    # can't, so episodes just get the plain property set above -- no hub
+    # node, no fallback edge: the property on the episode itself already
+    # covers the "nothing extracted" case that used to need one).
+    await driver.execute_query(
         "MATCH (e:Episodic {name: $name})-[:MENTIONS]->(n:Entity) "
-        "MERGE (proj:Project {name: $label}) "
-        "MERGE (n)-[:IN_PROJECT]->(proj) "
-        "RETURN count(n) AS linked",
+        "SET n.project = CASE WHEN n.project IS NULL THEN [$project] "
+        "WHEN NOT $project IN n.project THEN n.project + $project ELSE n.project END",
         name=episode_name,
-        label=p_label,
+        project=project,
     )
-    mention_count = _rows(linked)[0]["linked"] if _rows(linked) else 0
-
-    # No extracted entities at all -- direct Episodic->Project fallback so
-    # the episode isn't orphaned from its project's hub.
-    if not mention_count:
-        await driver.execute_query(
-            "MATCH (e:Episodic {name: $name}) "
-            "MERGE (proj:Project {name: $label}) "
-            "MERGE (e)-[:IN_PROJECT]->(proj)",
-            name=episode_name,
-            label=p_label,
-        )
 
 
 def get_default_tag_fn() -> TagFn:

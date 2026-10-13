@@ -13,57 +13,43 @@ server/consolidation/graph_tagging.py) -- so day-to-day review-and-promote
 no longer depends on remembering to run this script. This full-graph pass
 is still the right tool for a repair/backfill: a fresh graph rebuild, a
 `derived_memories.project` value corrected retroactively, or anything
-promoted before the inline tagging was wired in (found the same day: 68 of
-79 claude_code episodes had zero IN_PROJECT edges because nothing had ever
-tagged them, going all the way back to MS4b's original build).
+promoted before the inline tagging was wired in.
 
 Per episode, this sets:
   - `e.project`          plain string property, the raw project id exactly
                           as recorded in derived_memories.project (e.g.
                           "my-project"). For exact-match filters.
   - a direct label        a friendly, Cypher-safe slug -- underscores, no
-                          dashes -- with NO "ep_" prefix (that prefix was
-                          the pre-2026-09-12 convention; dropped at the
-                          user's 2026-09-12 request). DISPLAY_OVERRIDES below
-                          renames specific project ids to a nicer label
-                          (a deployment-specific map in
+                          dashes -- with NO "ep_" prefix. DISPLAY_OVERRIDES
+                          below renames specific project ids to a nicer
+                          label (a deployment-specific map in
                           server/consolidation/graph_tagging.py, empty by
                           default -- add an entry to give a project id a
                           different label).
 
-`(:Project {name})` hub nodes -- always `:Project`, never `:Entity` -- link
-primarily to `:Entity` nodes, not `:Episodic` (changed 2026-09-12 at the user's request:
-entities are the more useful clustering target, and unlike episodes an
-entity can legitimately belong to more than one project). This is
-many-to-many by construction: an entity gets one `[:IN_PROJECT]` edge per
-distinct project among the episodes that `[:MENTIONS]` it. Confirmed safe
-against Graphiti -- graphiti_core's build_communities() and every query in
-server/providers/memory_graphiti.py match explicit relationship types
-(RELATES_TO, MENTIONS), never an untyped `-[r]-`, so an extra IN_PROJECT
-edge on :Entity is invisible to all of them.
-
-~25% of episodes have zero extracted entities (no `MENTIONS` edges at
-all -- a known extraction gap, see the MS7 eval notes), and an
-entity-only link would leave those completely disconnected from their
-project's hub. So episodes with zero `MENTIONS` get a direct
-`Episodic-[:IN_PROJECT]->Project` edge as a fallback (added 2026-09-12
-after `gemini-example-007` / `claude-example-006` were found orphaned by
-the entity-only version). An episode with at least one entity relies
-solely on that entity's link -- it does not also get a direct edge -- so
-every promoted episode is represented in its project's hub cluster
-exactly one way.
+Per entity: `n.project`, a plain list of the distinct raw project ids among
+the episodes that `[:MENTIONS]` it (an entity can legitimately belong to
+more than one project, unlike an episode). Replaced the `(:Project {name})`
+hub-node-and-`[:IN_PROJECT]`-edge layer on 2026-10-13: retrieval never read
+it (`server/context.py` / `server/retrieval_expansion.py` match only typed
+`MENTIONS`/`RELATES_TO`), it covered only entities (episodes always used
+the plain property above), and a property is the cheaper filter
+(`WHERE 'x' IN n.project`, no traversal) if project ever becomes a ranking
+signal. No orphan-episode fallback is needed either way: an episode with
+zero extracted entities still has its own `e.project` property, so it was
+never actually disconnected from "its project" -- only from the hub *node*,
+which no longer exists to be disconnected from.
 
 Source of truth for which episode belongs to which project is the journal
 ledger (imports/journal/journal.db): promotions.graph_name/episode_name
 joined to derived_memories.project -- not anything already in FalkorDB.
-Entity (and orphan-episode) project membership is then derived from the
-graph's own MENTIONS edges plus the e.project property this script just
-set, not the ledger.
+Entity project membership is then derived from the graph's own MENTIONS
+edges plus the e.project property this script just set, not the ledger.
 
-Idempotent and self-healing: every run first deletes ALL existing
-Episodic-[:IN_PROJECT]->Project edges and recomputes both the entity
-links and the orphan-episode fallback from scratch, so it stays correct
-even if an episode's entity count changes between runs (e.g. re-extraction).
+Idempotent and self-healing: every run recomputes every entity's `project`
+list from scratch (cleared first, not unioned forward), so it stays correct
+even if an episode's entity count changes between runs (e.g. re-extraction)
+or an episode's project was corrected retroactively.
 
 Usage:
     python scripts/tag_projects.py --graph mem-fabric-local
@@ -125,64 +111,35 @@ async def _tag_episodes(driver, rows) -> tuple[int, list[str]]:
     return tagged, missing
 
 
-async def _reset_episode_project_edges(driver) -> int:
-    """Delete every Episodic-[:IN_PROJECT]->Project edge so the orphan-fallback pass below is a clean recompute."""
+async def _reset_entity_projects(driver) -> int:
+    """Clear every Entity.project so the recompute below starts from scratch."""
     result = await driver.execute_query(
-        "MATCH (:Episodic)-[r:IN_PROJECT]->(:Project) DELETE r RETURN count(r) AS n"
+        "MATCH (n:Entity) WHERE n.project IS NOT NULL REMOVE n.project RETURN count(n) AS n"
     )
     recs = result[0] if result and isinstance(result[0], list) else (result or [])
     return recs[0]["n"] if recs else 0
 
 
 async def _link_entities_to_projects(driver) -> dict[str, int]:
-    """One [:IN_PROJECT] edge per (entity, distinct project among its mentioning episodes).
+    """Each entity's `project` becomes the sorted list of distinct raw project ids
+    among the episodes that `[:MENTIONS]` it.
 
-    Reads e.project directly off the graph (set by _tag_episodes above), not the ledger --
-    this only needs to know what's actually mentioned, not what was promoted.
-    """
-    pairs_result = await driver.execute_query(
-        "MATCH (e:Episodic)-[:MENTIONS]->(n:Entity) "
-        "WHERE e.project IS NOT NULL "
-        "RETURN DISTINCT n.uuid AS entity_uuid, e.project AS project"
-    )
-    pairs = pairs_result[0] if pairs_result and isinstance(pairs_result[0], list) else (pairs_result or [])
-
-    by_project: dict[str, int] = {}
-    for pair in pairs:
-        entity_uuid = pair["entity_uuid"]
-        label = _label_for(pair["project"])
-        await driver.execute_query(
-            "MATCH (n:Entity {uuid: $entity_uuid}) "
-            "MERGE (proj:Project {name: $label}) "
-            "MERGE (n)-[:IN_PROJECT]->(proj)",
-            entity_uuid=entity_uuid,
-            label=label,
-        )
-        by_project[label] = by_project.get(label, 0) + 1
-    return by_project
-
-
-async def _link_orphan_episodes_to_projects(driver) -> dict[str, int]:
-    """Direct Episodic->Project fallback for episodes with zero MENTIONS (no extracted entities) --
-    otherwise entity-less episodes are completely disconnected from their project's hub.
+    Reads e.project directly off the graph (set by _tag_episodes above), not the
+    ledger -- this only needs to know what's actually mentioned, not what was promoted.
     """
     rows_result = await driver.execute_query(
-        "MATCH (e:Episodic) WHERE e.project IS NOT NULL AND NOT (e)-[:MENTIONS]->(:Entity) "
-        "RETURN e.uuid AS uuid, e.project AS project"
+        "MATCH (e:Episodic)-[:MENTIONS]->(n:Entity) WHERE e.project IS NOT NULL "
+        "WITH n, collect(DISTINCT e.project) AS projects "
+        "SET n.project = projects "
+        "RETURN n.uuid AS entity_uuid, projects"
     )
     rows = rows_result[0] if rows_result and isinstance(rows_result[0], list) else (rows_result or [])
 
     by_project: dict[str, int] = {}
     for row in rows:
-        label = _label_for(row["project"])
-        await driver.execute_query(
-            "MATCH (e:Episodic {uuid: $uuid}) "
-            "MERGE (proj:Project {name: $label}) "
-            "MERGE (e)-[:IN_PROJECT]->(proj)",
-            uuid=row["uuid"],
-            label=label,
-        )
-        by_project[label] = by_project.get(label, 0) + 1
+        for project in row["projects"]:
+            label = _label_for(project)
+            by_project[label] = by_project.get(label, 0) + 1
     return by_project
 
 
@@ -218,19 +175,13 @@ async def _run(args: argparse.Namespace) -> int:
         if len(missing) > 20:
             print(f"  ... and {len(missing) - 20} more", file=sys.stderr)
 
-    reset = await _reset_episode_project_edges(driver)
+    reset = await _reset_entity_projects(driver)
     if reset:
-        print(f"\nReset {reset} existing Episodic->Project edge(s) before recomputing.")
+        print(f"\nCleared project on {reset} entity/entities before recomputing.")
 
     by_project = await _link_entities_to_projects(driver)
-    print(f"\nLinked entities to {len(by_project)} project(s) via MENTIONS:")
+    print(f"\nSet entity.project via MENTIONS, touching {len(by_project)} project(s):")
     for label, count in sorted(by_project.items(), key=lambda kv: -kv[1]):
-        print(f"  {label}: {count}")
-
-    orphan_by_project = await _link_orphan_episodes_to_projects(driver)
-    orphan_total = sum(orphan_by_project.values())
-    print(f"\nLinked {orphan_total} entity-less episode(s) directly to {len(orphan_by_project)} project(s):")
-    for label, count in sorted(orphan_by_project.items(), key=lambda kv: -kv[1]):
         print(f"  {label}: {count}")
 
     return 0 if not missing else 1

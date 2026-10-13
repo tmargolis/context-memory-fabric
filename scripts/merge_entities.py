@@ -11,14 +11,16 @@ cluster's duplicates into its kept node:
   properties (source_node_uuid / target_node_uuid) are rewritten to the kept
   node.
 - A structural edge the kept node already has (a second MENTIONS from the
-  same episode or note, a second IN_PROJECT to the same project) is dropped.
-  RELATES_TO facts are never dropped: a fact between two twins becomes a
-  self-loop on the kept node and is counted.
+  same episode or note) is dropped. RELATES_TO facts are never dropped: a
+  fact between two twins becomes a self-loop on the kept node and is counted.
 - The kept node gets the union of labels, a wiki_type if it had none, the
-  duplicate's summary only if its own is empty, and the fuller name where
-  the cluster has one (re-embedding name_embedding with CMF's embedder).
-  Removed names go into a plain `aliases` list for audit; summaries are not
-  rewritten (see FIX-GRAPH-PLAN Phase 1 results).
+  duplicate's summary only if its own is empty, the union of both nodes'
+  `project` list (a duplicate's own project membership would otherwise be
+  lost when it's deleted -- `project` is a plain property, not an edge, so
+  it isn't covered by the structural-edge move above), and the fuller name
+  where the cluster has one (re-embedding name_embedding with CMF's
+  embedder). Removed names go into a plain `aliases` list for audit;
+  summaries are not rewritten (see FIX-GRAPH-PLAN Phase 1 results).
 - The duplicate is deleted once it has no edges left. Each merge is appended
   to a JSONL ledger so it can be replayed onto a rebuilt graph.
 
@@ -49,7 +51,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 FIX = _ROOT / "imports" / "fixgraph"
-STRUCTURAL = ("MENTIONS", "IN_PROJECT", "REFERENCES")
+STRUCTURAL = ("MENTIONS", "REFERENCES")
 FACTS = "RELATES_TO"
 ALLOWED = set(STRUCTURAL) | {FACTS}
 _LABEL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -135,12 +137,14 @@ class Db:
 
 
 def node(db: Db, uuid: str) -> dict | None:
-    rows = db.q("MATCH (e:Entity {uuid:$u}) RETURN e.name, labels(e), e.wiki_type, e.summary, e.aliases", u=uuid)
+    rows = db.q("MATCH (e:Entity {uuid:$u}) RETURN e.name, labels(e), e.wiki_type, e.summary, e.aliases, e.project",
+                u=uuid)
     if not rows:
         return None
-    name, labels, wt, summ, aliases = rows[0]
+    name, labels, wt, summ, aliases, project = rows[0]
     return {"name": name, "labels": list(labels), "wiki_type": wt or None,
-            "summary": summ or "", "aliases": list(aliases) if aliases else []}
+            "summary": summ or "", "aliases": list(aliases) if aliases else [],
+            "project": list(project) if project else []}
 
 
 def edge_plan(db: Db, dup: str) -> dict[str, int]:
@@ -198,6 +202,7 @@ def merge_group(db: Db, g: Group, vectors: dict[str, list[float]]) -> dict:
     removed_names: list[str] = []
     labels = list(keep["labels"])
     wiki_type, summary = keep["wiki_type"], keep["summary"]
+    project = list(keep["project"])
     for dup in g.dups:
         d = node(db, dup)
         if d is None:
@@ -212,6 +217,9 @@ def merge_group(db: Db, g: Group, vectors: dict[str, list[float]]) -> dict:
                 labels.append(lab)
         wiki_type = wiki_type or d["wiki_type"]
         summary = summary or d["summary"]
+        for p in d["project"]:
+            if p not in project:
+                project.append(p)
         removed_names.append(d["name"])
         rec["merged"].append({"uuid": dup, "name": d["name"], "edges_before": plan})
         if db.apply:
@@ -222,12 +230,15 @@ def merge_group(db: Db, g: Group, vectors: dict[str, list[float]]) -> dict:
                 raise RuntimeError(f"{g.source}: {dup} still has {left} edges after the move")
             db.q("MATCH (d:Entity {uuid:$d}) DELETE d", write=True, d=dup)
     rec["aliases"] = merged_aliases(keep["aliases"], removed_names, keep["name"], g.name)
+    rec["project"] = project
     rec["renamed"] = g.name != keep["name"]
     if db.apply and rec["merged"]:
         for lab in labels:
             if lab not in keep["labels"]:
                 db.q(f"MATCH (k:Entity {{uuid:$k}}) SET k:{lab}", write=True, k=g.keep)
         db.q("MATCH (k:Entity {uuid:$k}) SET k.aliases = $a", write=True, k=g.keep, a=rec["aliases"])
+        if project != keep["project"]:
+            db.q("MATCH (k:Entity {uuid:$k}) SET k.project = $p", write=True, k=g.keep, p=project)
         if wiki_type and not keep["wiki_type"]:
             db.q("MATCH (k:Entity {uuid:$k}) SET k.wiki_type = $w", write=True, k=g.keep, w=wiki_type)
         if summary and not keep["summary"]:

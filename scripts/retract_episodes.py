@@ -5,7 +5,7 @@ For each episode listed in --episodes-file:
 2. For facts (RELATES_TO) where this episode is in r.episodes:
    - If this episode is the ONLY provenance (len(r.episodes) == 1), delete the fact.
    - If other episodes also support the fact, remove this episode from r.episodes.
-3. Deletes any IN_PROJECT edges on the episode, then deletes the Episodic node.
+3. Deletes the Episodic node.
 4. Cleans up entities that are now completely orphaned (0 MENTIONS from any episode
    or note, and 0 RELATES_TO edges). Entities supported by other episodes or
    notes remain untouched.
@@ -100,7 +100,6 @@ def retract_episode(db: Db, ep_name: str) -> dict:
 
         # Delete structural edges and the episode node
         db.q("MATCH (ep:Episodic {uuid: $u})-[r:MENTIONS]->() DELETE r", write=True, u=ep_uuid)
-        db.q("MATCH (ep:Episodic {uuid: $u})-[r:IN_PROJECT]->() DELETE r", write=True, u=ep_uuid)
         db.q("MATCH (ep:Episodic {uuid: $u}) DELETE ep", write=True, u=ep_uuid)
 
         # Check for completely orphaned entities among those mentioned

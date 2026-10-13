@@ -150,18 +150,6 @@ def _create_args(props: dict) -> tuple[str, dict]:
     return ", ".join(sets), params
 
 
-def copy_project_tags(g, b, node_uuids: list[str]) -> int:
-    """Copy recreated entities' (:Entity)-[:IN_PROJECT]->(:Project) tags from the
-    backup. They carry no uuid (scripts/tag_projects.py MERGEs them), so
-    restore-edges' uuid diff can't see them. Returns edges created."""
-    made = 0
-    for nu in node_uuids:
-        for (proj,) in b.ro_query("MATCH (n {uuid: $u})-[:IN_PROJECT]->(p:Project) RETURN p.name", {"u": nu}).result_set:
-            made += g.query("MATCH (n {uuid: $u}) MERGE (p:Project {name: $p}) MERGE (n)-[r:IN_PROJECT]->(p) "
-                            "RETURN count(r)", {"u": nu, "p": proj}).relationships_created or 0
-    return int(made)
-
-
 def restore_edges(graph: str, backup: str, apply: bool) -> int:
     g, b = _graph(graph), _graph(backup)
     q = ("MATCH (a)-[r]->(c) WHERE r.uuid IS NOT NULL AND NOT type(r) = 'MENTIONS' "
@@ -192,11 +180,10 @@ def restore_edges(graph: str, backup: str, apply: bool) -> int:
         sets, params = _create_args(eprops)
         params.update({"a": a, "c": c})
         g.query(f"MATCH (s {{uuid: $a}}), (t {{uuid: $c}}) CREATE (s)-[x:`{rtype}`]->(t) SET {sets}", params)
-    tags = copy_project_tags(g, b, list(nodes_needed))
     after = counts(g)
     left = [row[0] for row in b.ro_query(q).result_set
             if row[0] not in {r[0] for r in g.ro_query(q).result_set}]
-    ok = not left and after["nodes"] == before["nodes"] + len(nodes_needed) and after["edges"] == before["edges"] + len(edges) + tags
+    ok = not left and after["nodes"] == before["nodes"] + len(nodes_needed) and after["edges"] == before["edges"] + len(edges)
     print(f"{graph}: {before} -> {after}")
     print("VERIFY OK" if ok else f"VERIFY FAILED (still missing {len(left)})")
     return 0 if ok else 3
