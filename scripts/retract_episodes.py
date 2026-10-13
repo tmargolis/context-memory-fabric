@@ -11,7 +11,7 @@ For each episode listed in --episodes-file:
    notes remain untouched.
 5. Appends each retraction to a JSONL ledger so it is auditable and replayable.
 
-Refuses any graph not named fixgraph-* (scratch graphs only).
+Refuses graphs outside fixgraph-* or dated mem-fabric-b16-merge-* scratch graphs.
 
 Usage:
     uv run python scripts/retract_episodes.py --graph fixgraph-p2b            # dry run
@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -38,6 +39,8 @@ DEFAULT_LEDGER = FIX / "retract_ledger.jsonl"
 class Db:
     def __init__(self, graph: str, apply: bool):
         from server.core.falkordb_conn import falkordb_client
+        if not allowed_scratch_graph(graph):
+            raise ValueError("Retractions require a scratch graph")
         self.g, self.graph, self.apply = falkordb_client().select_graph(graph), graph, apply
 
     def q(self, cypher: str, write: bool = False, **params) -> list[list]:
@@ -52,6 +55,10 @@ class Db:
         facts = self.q("MATCH ()-[r:RELATES_TO]->() RETURN count(r)")[0][0]
         mentions = self.q("MATCH ()-[r:MENTIONS]->() RETURN count(r)")[0][0]
         return {"nodes": n, "edges": e, "episodes": eps, "entities": ents, "facts": facts, "mentions": mentions}
+
+
+def allowed_scratch_graph(graph: str) -> bool:
+    return graph.startswith("fixgraph-") or bool(re.fullmatch(r"mem-fabric-b16-merge-\d{8}", graph))
 
 
 def retract_episode(db: Db, ep_name: str) -> dict:
@@ -126,8 +133,8 @@ def main() -> int:
     ap.add_argument("--ledger", default=str(DEFAULT_LEDGER))
     args = ap.parse_args()
 
-    if not args.graph.startswith("fixgraph-"):
-        print(f"refusing {args.graph!r}: retractions run on fixgraph-* scratch graphs only", file=sys.stderr)
+    if not allowed_scratch_graph(args.graph):
+        print(f"refusing {args.graph!r}: retractions require fixgraph-* or dated B16 scratch graphs", file=sys.stderr)
         return 2
 
     ep_names = [line.strip() for line in Path(args.episodes_file).read_text().splitlines()
