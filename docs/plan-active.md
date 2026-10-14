@@ -121,6 +121,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
 | B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
 | [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Split from B08; inference build + merge experiment, replay-gated |
+| [B17](#b17--project-taxonomy-consolidation) | Project taxonomy consolidation | Retag migration (B08 pattern); gates B16's final inference rerun |
 
 ### Recurring review operations
 
@@ -248,6 +249,8 @@ Split out of B08 when it closed (2026-10-13). B08 settled the representation (`e
 
 **Execution compatibility notes.** B08's requested 24-wide pool actually returned at most 16 candidates; no production pool or ranking behavior was changed. Graphiti's automatic index setup was suppressed and retrieval forced through `GRAPH.RO_QUERY` inside the experiment processes. Retraction accepts only the existing `fixgraph-*` convention or a dated B16 scratch name. Merge grading resolves original stable IDs from production read-only, retains strict grades, and reports explicit member-to-roll-up gold mapping separately. The initial copy reply failed after creating the previously absent destination; initial counts were computed but not persisted. Episode identity/content and all node properties matched before scratch writes, but the full edge verification was stopped at User's request. Before-ingestion counts were subsequently recorded; Spark steps held `imports/journal/spark_job.lock`.
 
+**2026-10-13 labeling follow-up (User).** User labeled the 20 wiki-domain cases (B1–B20) and confirmed A6 and A20 (labels in gitignored `tests/fixtures/ms7_eval/b16-project-labels.json`). Six cases (B5, B13, B15, B17, B18, B19) were labeled `ai-research`, a project that doesn't exist yet; they are scored as "no boost is correct." Re-scored from saved predictions (no retrieval): A right 7, wrong 0 on the B cases, so **21 of 21 correct across all labeled guesses**; C @ 0.3 right 7, wrong 6 (mostly career or a single-project guess on AI-research queries); B @ 0.3 right 5, wrong 8; E @ 0.001 right 3, wrong 1, abstains on 16. **User ruled E not worth pursuing; A alone is the candidate.** C and the merge are dropped. The final A rerun waits for [B17](#b17--project-taxonomy-consolidation), because A matches on project slugs and aliases that B17 changes.
+
 #### Query-time project inference
 
 - [ ] Build query-time project inference (a classifier or heuristic guessing the query's project — nothing like this exists today; `get_context` has no project parameter) and wire the boost into `recall_mem`'s fusion, gated by another MS8 replay before any production retrieval change.
@@ -263,6 +266,27 @@ The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after
   - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
   - Any production change needs a new ruling from User, a backup first, and before/after counts.
 - **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
+
+### B17 — Project taxonomy consolidation
+
+Raised by User 2026-10-13 while labeling B16 eval cases. Several projects are too small or overlapping to be useful as retrieval signals, and one needed project doesn't exist. Do the retag as one migration, then re-run B16's A-only inference comparison with updated aliases and labels.
+
+#### Proposed changes (User, 2026-10-13)
+
+- [ ] **Fold `ai-industry` (1 episode) into `dev-tools`.**
+- [ ] **Rename `mac-infra` to `infra`** and fold in `local-llm` (3 Spark-connectivity episodes), `backup`, `driverescueattempt1` and `driverescueattempt2`.
+- [ ] **Create `ai-research`.** Candidates are research-flavored episodes now scattered across `context-memory-fabric`, `career`, `writing` and `misc` (e.g. `chatgpt-writing-001`, the semantic layer for agents). B5, B13, B15, B17, B18 and B19 are its eval cases.
+- [ ] **Define `work` vs `career`.** Today `career` holds the job search; what belongs in `work` (past and current employment, work projects such as the metric store) isn't defined. Write the boundary rule first, then retag by it. B11 (metric store) moves to `work`: relabel the eval case and check whether its related episodes move too.
+- [ ] **Common-word slugs cause false matches in A.** Adding the held-out group E (2026-10-13; 7 questions that don't name their project, in gitignored `queries.json`) showed A matching ordinary words: "writing to the lawyer" → `writing`, "work my neighbor's concerns" → `work`. A's 21-of-21 record came from queries that happened to avoid these words. When renaming, prefer distinctive slugs, and give A a match list instead of matching every slug: aliases plus distinctive slugs only, never common words like `work`, `writing`, `personal`, `misc`, `archive`, `backup`, `health`, `travel`, `photo`, `audio`. Then re-score group E.
+- [ ] **Wider pass:** review the other small or vague projects (e.g. `misc` 19, `writing` 5, `personal` vs `personal-admin`, `archive`, `health`, `travel`, `capacities-mcp`) and propose merges, renames or retags. User rules on each before anything changes.
+
+#### How (B08 pattern)
+
+- Inventory: episode and entity counts per affected project in `mem-fabric-local`, checked against `promotions` / `derived_memories`, not stale notes.
+- Proposal table for User: source project → target, count, sample episodes. `ai-research` candidates get a per-episode list (review batches of at most 50).
+- Rehearse on a scratch `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0`), then production with a backup first and before/after counts. Use `scripts/retag_promoted_projects.py`: update `e.project`, `entity.project` lists, `derived_memories.project` rows (scoped by memory_id), and approved mirror files. Remove stale per-project Cypher labels (`tag_projects.py` adds but never removes them).
+- Update `CMF_PROJECT_ALIASES` / `CMF_PROJECT_FOLDER_MAP` in `.env` so old slugs still resolve and future capture uses the new names. Remap the eval labels (e.g. `mac-infra` → `infra`).
+- Then: MS8 replay at `now` for no regression, and re-run B16's A-only comparison. No Spark-heavy work expected; retagging is property writes.
 
 ---
 
