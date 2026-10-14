@@ -28,47 +28,9 @@ from server.replay.runner import _WikiIndex, resolve_gold
 from server.replay.snapshot import graph_episode_rows, memory_names
 
 
-def normalized(text):
-    words = re.findall(r"[a-z0-9]+", text.lower())
-    # Conservative English plural normalization (avoid shortening e.g. 'analysis').
-    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "is", "us")) else w
-                    for w in words)
-
-
-def contains(query, name):
-    term = normalized(name)
-    return bool(term) and f" {term} " in f" {normalized(query)} "
-
-
-def choose(scores, threshold):
-    ranked = sorted(((p, s) for p, s in scores.items() if s > 0), key=lambda x: (-x[1], x[0]))
-    if not ranked:
-        return None, 0.0
-    total = sum(s for _, s in ranked)
-    top = ranked[0][1]
-    second = ranked[1][1] if len(ranked) > 1 else 0.0
-    margin = (top - second) / total
-    return (ranked[0][0] if margin > threshold else None), margin
-
-
-# Project slugs and aliases that are ordinary words in a query ("writing to the
-# lawyer", "work my neighbor's concerns", "3D-printed enclosures"). Method A
-# never matches these; their projects stay reachable through other labels.
-# B17, 2026-10-14: found with held-out eval group E.
-COMMON_WORD_LABELS = frozenset({
-    "work", "personal", "writing", "misc", "archive", "backup", "health", "travel",
-    "photo", "audio", "website", "vehicle", "3d", "exhibition", "claude",
-})
-
-
-def alias_scores(query, projects, aliases):
-    result = Counter()
-    for project in projects:
-        labels = {project} | {a for a, p in aliases.items() if p == project}
-        labels = {label for label in labels if normalized(label) not in COMMON_WORD_LABELS}
-        if any(contains(query, label) for label in labels):
-            result[project] = 1.0
-    return result
+from server.project_inference import (  # noqa: E402  -- shared with recall_mem's boost
+    COMMON_WORD_LABELS, alias_scores, build_centroids, centroid_scores, choose, contains, normalized,
+)
 
 
 def entity_scores(query, entities, sizes):
@@ -86,36 +48,6 @@ def candidate_scores(pool, proj_of):
         if p := fact_project(fact, proj_of):
             result[p] += 1.0 / rank
     return result
-
-
-def centroid_scores(vector, centroids):
-    if vector is None:
-        return {}
-    norm = math.sqrt(sum(x*x for x in vector))
-    if norm == 0:
-        return {}
-    result = {}
-    for p, center in centroids.items():
-        if len(center) != len(vector):
-            raise ValueError("Query and centroid embedding dimensions differ")
-        cnorm = math.sqrt(sum(x*x for x in center))
-        if cnorm:
-            result[p] = max(0.0, sum(a*b for a, b in zip(vector, center)) / norm / cnorm)
-    return result
-
-
-def build_centroids(rows, width=768):
-    sums, counts = {}, Counter()
-    for project, vector in rows:
-        if not project or vector is None:
-            continue
-        if len(vector) != width:
-            raise ValueError("Stored episode embedding dimension differs from 768")
-        if project not in sums:
-            sums[project] = [0.0] * width
-        sums[project] = [a+b for a, b in zip(sums[project], vector)]
-        counts[project] += 1
-    return {p: [v/counts[p] for v in values] for p, values in sums.items()}
 
 
 def inference_metrics(predictions):
@@ -187,7 +119,7 @@ async def run(args):
     sizes = Counter(p for _, ps in entities for p in set(ps))
     centroids = build_centroids(g.ro_query(
         "MATCH (e:Episodic) WHERE e.project IS NOT NULL AND e.content_embedding IS NOT NULL "
-        "RETURN e.project, e.content_embedding").result_set)
+        "RETURN e.project, e.content_embedding").result_set, width=768)
     aliases = project_aliases()
     mapping = {}
     gold_projects = proj_of

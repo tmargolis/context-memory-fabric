@@ -120,7 +120,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
 | B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
-| [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Split from B08; inference build + merge experiment, replay-gated |
+| [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Boost built behind `CMF_PROJECT_BOOST` (off), replay-gated; awaiting User's go to enable |
 | B17 | Project taxonomy consolidation | **Closed 2026-10-14** → [plan-history.md](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14) |
 
 ### Recurring review operations
@@ -269,7 +269,18 @@ Split out of B08 when it closed (2026-10-13). B08 settled the representation (`e
 
 #### Query-time project inference
 
-- [ ] Build query-time project inference (a classifier or heuristic guessing the query's project — nothing like this exists today; `get_context` has no project parameter) and wire the boost into `recall_mem`'s fusion, gated by another MS8 replay before any production retrieval change.
+**2026-10-14 implementation (User chose A then E, accepting a few false positives).**
+
+- **Built behind a flag, off by default.** `server/project_inference.py` holds A (name/alias, common words excluded) and E (nearest per-project mean episode embedding, margin `CMF_PROJECT_BOOST_E_MARGIN`, default 0.001). `recall_mem` reads a 24-wide fused pool when `CMF_PROJECT_BOOST` is `a` or `a_then_e`, moves facts whose source episode is in the inferred project to the front, cuts to `max_results`, and marks them `project_boost` (shown in MCP output). E reuses the query embedding the vector arm already makes, so the embedding count is unchanged; centroids are rebuilt from stored vectors every `CMF_PROJECT_CENTROID_TTL` seconds (default 3600). Settings documented in `.env.example`; tests in `tests/test_project_inference.py`.
+- **MS8 replay gate (production policy, 73 cases, read-only, production unchanged):** boost off vs `a_then_e`. Original 46 memory cases: Hit@8 / MRR 0.891 / 0.485 → **0.935 / 0.674**. Group E: 1.000 / 0.433 → 0.857 / 0.619. **27 cases improved, 2 regressed** (A20 rank 2 → 3; E2 rank 5 → miss, E guessed `career`). Reports: `imports/replay/b16-gate-boost-{off,a_then_e}-20261014.json`.
+- **Wiki notes tagged with projects.** The entity signal was too noisy (generic entities pull job-role notes toward `finance`), so path/filename rules are the source of truth: `server/wiki_projects.py`, rules in the gitignored `imports/state/wiki_project_rules.txt` (they name wiki files). They reproduce 20 of User's 21 B-case labels (B17's note is named as Interlock; its query was labeled `ai-research`). `scripts/sweep_wiki_graph.py --note-projects-only` sets `Note.project` (and every full sweep refreshes it): 318 of 433 notes tagged, rehearsed on `slugmigration-rehearsal-notes-20261014`, production backup `mem-fabric-local.pre-note-projects-20261014`, counts unchanged. About 60% of the corpus resolves to a project; most of the rest is the mixed `RAW/Capacities` export and AI-research notes (no project by design).
+- **Wiki-side boost tested offline** (`scripts/experiment_wiki_project_boost.py`, 40 cases with gold wiki notes, same A-then-E guesses): Wiki@8 unchanged at 0.875, wiki MRR 0.690 → 0.708 (oracle 0.750); improved C2, C8, C17, C20, regressed B5. A small gain, because lexical wiki search already ranks most gold notes high. Not wired.
+
+- [x] Build query-time project inference and wire the boost into `recall_mem`, gated by an MS8 replay. Done 2026-10-14 behind `CMF_PROJECT_BOOST` (off).
+- [ ] **Turn it on (User's call):** set `CMF_PROJECT_BOOST=a_then_e` in `.env` and restart the MCP server.
+- [ ] **Grow group E** to 15–20 questions (ideally User-written) and recheck E's margin; 7 cases are too few to tune it.
+- [ ] **Optional: wiki-side boost in `get_context`** behind the same flag, if the memory boost holds up in use.
+- [ ] **Optional: expansion snippets.** `get_context`'s episode→note expansion attaches only a note's opening sentence; pulling the section that matches the query would make expanded notes more useful (B11).
 
 #### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
 

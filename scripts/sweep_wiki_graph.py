@@ -303,8 +303,9 @@ async def repath_notes(driver, wiki_root: Path, dry_run: bool, log_dir: Optional
 
 
 async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_root: Path, dry_run: bool,
-                note_dates_only: bool = False, repath: bool = False) -> dict:
+                note_dates_only: bool = False, repath: bool = False, note_projects_only: bool = False) -> dict:
     from server.providers.memory_graphiti import get_graphiti
+    from server.wiki_projects import refresh_note_projects
 
     graphiti = get_graphiti(graph_name=graph_name)
     driver = graphiti.driver
@@ -313,6 +314,9 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         out["repath"] = await repath_notes(driver, wiki_root, dry_run, log_dir=Path("imports/state"))
     if note_dates_only:
         out["note_dates"] = await refresh_note_dates(driver, wiki_root, dry_run)
+        return out
+    if note_projects_only:
+        out["note_projects"] = await refresh_note_projects(driver, dry_run)
         return out
 
     dup_groups = await find_duplicate_groups(driver)
@@ -366,6 +370,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
             "confirmed_vouched": len(confirmed_vouched),
             "candidates": len(candidates),
             "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=True),
+            "note_projects": await refresh_note_projects(driver, dry_run=True),
             **({"repath": out["repath"]} if repath else {}),
         }
 
@@ -392,6 +397,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         "confirmed_vouched": len(confirmed_vouched),
         "candidates": len(candidates),
         "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=False),
+        "note_projects": await refresh_note_projects(driver, dry_run=False),
         **({"repath": out["repath"]} if repath else {}),
     }
 
@@ -406,6 +412,8 @@ def main() -> None:
     parser.add_argument("--note-dates-only", action="store_true", help="Only refresh :Note dates (pass 3)")
     parser.add_argument("--repath-notes", action="store_true",
                         help="First point :Note nodes whose file moved at its new path (unique file name match)")
+    parser.add_argument("--note-projects-only", action="store_true",
+                        help="Only refresh :Note projects from the wiki project rules (server/wiki_projects.py)")
     args = parser.parse_args()
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name
@@ -414,7 +422,8 @@ def main() -> None:
     wiki_root = args.wiki_root or get_corpus_root()
 
     result = asyncio.run(sweep(args.graph_name, args.min_episodes, args.idf_threshold, wiki_root, args.dry_run,
-                               note_dates_only=args.note_dates_only, repath=args.repath_notes))
+                               note_dates_only=args.note_dates_only, repath=args.repath_notes,
+                               note_projects_only=args.note_projects_only))
     print(json.dumps(result, indent=1))
 
 

@@ -48,7 +48,7 @@ def test_centroids_dimension_guard_and_cosine():
     assert centers['a'] == [.5, .5]
     assert choose(centroid_scores([1, 0], centers), .1)[0] == 'a'
     with pytest.raises(ValueError):
-        build_centroids([('a', [1])])
+        build_centroids([('a', [1])], width=768)
     with pytest.raises(ValueError):
         centroid_scores([1], centers)
 

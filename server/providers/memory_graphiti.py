@@ -793,6 +793,7 @@ def _provenance_from_source_description(source_description: Optional[str]) -> st
 
 _EPISODE_VECTOR_INDEX: dict[str, bool] = {}
 _EPISODE_VECTOR_K = 6  # vector-arm candidates fed into the RRF merge (head only)
+_PROJECT_BOOST_POOL = 24  # fused pool read before the B16 project boost cuts to max_results
 
 
 async def _graph_has_episode_vector_index(graphiti: Graphiti) -> bool:
@@ -823,14 +824,18 @@ async def _graph_has_episode_vector_index(graphiti: Graphiti) -> bool:
     return present
 
 
-async def _episode_vector_search(graphiti: Graphiti, query: str, k: int) -> list[dict[str, Any]]:
+async def _episode_vector_search(
+    graphiti: Graphiti, query: str, k: int, vec: Optional[list[float]] = None
+) -> list[dict[str, Any]]:
     """KNN over Episodic.content_embedding — the synthesized statement itself,
     reachable even when qwen extracted zero entities for it. Returns fact-shaped
-    dicts; [] if the graph has no such index or the query cannot be embedded."""
+    dicts; [] if the graph has no such index or the query cannot be embedded.
+    `vec` reuses a query embedding the caller already has."""
     if k <= 0 or not await _graph_has_episode_vector_index(graphiti):
         return []
     try:
-        vec = await graphiti.embedder.create(query)
+        if vec is None:
+            vec = await graphiti.embedder.create(query)
         lit = "[" + ",".join(f"{x:.7f}" for x in vec) + "]"
         rows = await graphiti.driver.execute_query(
             f"CALL db.idx.vector.queryNodes('Episodic', 'content_embedding', {int(k)}, vecf32({lit})) "
@@ -904,7 +909,7 @@ async def _resolve_episode_index(graphiti: Graphiti, uuids: list[str]) -> dict[s
         rows = await graphiti.driver.execute_query(
             "MATCH (e:Episodic) WHERE e.uuid IN $uuids "
             "RETURN e.uuid AS uuid, e.name AS name, e.content AS content, "
-            "e.source_description AS source_description",
+            "e.source_description AS source_description, e.project AS project",
             uuids=uniq,
         )
     except Exception as e:  # pragma: no cover - defensive
@@ -917,6 +922,7 @@ async def _resolve_episode_index(graphiti: Graphiti, uuids: list[str]) -> dict[s
             "name": r.get("name") or r["uuid"],
             "content": r.get("content") or "",
             "provenance": _provenance_from_source_description(r.get("source_description")),
+            "project": r.get("project"),
         }
     return out
 
@@ -948,6 +954,8 @@ def format_memory_results_for_mcp(facts: list[dict[str, Any]], query: str) -> st
             lines.append(f"- **Superseded At:** `{invalid_at}`")
         if episode_labels:
             lines.append(f"- **Source Episodes:** `{', '.join(episode_labels)}`")
+        if item.get("project_boost"):
+            lines.append(f"- **Project boost:** `{item['project_boost']}`")
         for se in source_eps:
             if not se.get("content"):
                 continue
@@ -1032,8 +1040,20 @@ async def recall_mem(
         f"({len(results)} raw result(s))"
     )
 
+    # B16 project boost: read a wider fused pool, then move the inferred
+    # project's facts to the front and cut back to max_results. Off by default.
+    from server import project_inference
+    boost_mode = project_inference.mode()
+    pool_size = max(max_results, _PROJECT_BOOST_POOL) if boost_mode != "off" else max_results
+    query_vec = None
+    if boost_mode == "a_then_e":
+        try:  # the vector arm's own embedding, computed once and shared with E
+            query_vec = await graphiti.embedder.create(query)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"recall_mem: query embedding for project inference failed ({e!r})")
+
     edge_facts: list[dict[str, Any]] = []
-    for edge in results[: max(max_results, 10)]:
+    for edge in results[: max(pool_size, 10)]:
         fact_data = {
             "fact": getattr(edge, "fact", str(edge)),
             "valid_at": getattr(edge, "valid_at", None),
@@ -1057,8 +1077,8 @@ async def recall_mem(
     # Cap the vector arm at its high-confidence head — its rank 7+ hits are
     # semantic neighbours, not real matches, and they add noise the consumer
     # then weaves in (e.g. an unrelated storage episode read as a "backend").
-    vector_facts = await _episode_vector_search(graphiti, query, min(max_results, _EPISODE_VECTOR_K))
-    facts = _rrf_merge(edge_facts, vector_facts, limit=max_results)
+    vector_facts = await _episode_vector_search(graphiti, query, min(max_results, _EPISODE_VECTOR_K), vec=query_vec)
+    facts = _rrf_merge(edge_facts, vector_facts, limit=pool_size)
 
     # Attach each fact's source-episode synthesized statement + provenance so a
     # consumer sees the reasoning behind the terse RELATES_TO edge, not just the
@@ -1068,9 +1088,25 @@ async def recall_mem(
     )
     for f in facts:
         srcs = [ep_index[u] for u in (f.get("episodes") or []) if u in ep_index]
-        f["source_episodes"] = srcs
+        f["source_episodes"] = [{k: v for k, v in s.items() if k != "project"} for s in srcs]
         if srcs:
             f["episode_names"] = [s["name"] for s in srcs]
+            f["episode_projects"] = [s["project"] for s in srcs if s.get("project")]
+
+    if boost_mode != "off":
+        try:
+            inferred = await project_inference.infer_project(
+                query, query_vec, graphiti.driver, resolve_target_database(), current_mode=boost_mode)
+        except Exception as e:  # pragma: no cover - defensive: never fail recall over the boost
+            logger.warning(f"recall_mem: project inference failed ({e!r}); unboosted")
+            inferred = {"project": None}
+        facts = project_inference.boost(facts, inferred["project"], max_results)
+        if inferred["project"]:
+            logger.info(f"recall_mem: project boost {inferred['project']!r} via {inferred['method']} "
+                        f"(margin {inferred['margin']:.4f})")
+            for f in facts:
+                if inferred["project"] in (f.get("episode_projects") or []):
+                    f["project_boost"] = inferred["project"]
 
     if format_for_mcp:
         return format_memory_results_for_mcp(facts, query)
