@@ -51,10 +51,21 @@ def choose(scores, threshold):
     return (ranked[0][0] if margin > threshold else None), margin
 
 
+# Project slugs and aliases that are ordinary words in a query ("writing to the
+# lawyer", "work my neighbor's concerns", "3D-printed enclosures"). Method A
+# never matches these; their projects stay reachable through other labels.
+# B17, 2026-10-14: found with held-out eval group E.
+COMMON_WORD_LABELS = frozenset({
+    "work", "personal", "writing", "misc", "archive", "backup", "health", "travel",
+    "photo", "audio", "website", "vehicle", "3d", "exhibition", "claude",
+})
+
+
 def alias_scores(query, projects, aliases):
     result = Counter()
     for project in projects:
         labels = {project} | {a for a, p in aliases.items() if p == project}
+        labels = {label for label in labels if normalized(label) not in COMMON_WORD_LABELS}
         if any(contains(query, label) for label in labels):
             result[project] = 1.0
     return result

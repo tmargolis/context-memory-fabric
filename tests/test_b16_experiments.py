@@ -25,6 +25,16 @@ def test_aliases_boundaries_and_normalization():
     assert alias_scores('scarier', {'career'}, {}) == {}
 
 
+def test_aliases_skip_common_word_labels():
+    projects = {'work', 'writing', 'personal', 'infra', 'interlock'}
+    aliases = {'travel': 'personal', 'archive': 'infra', 'interlock-core': 'interlock'}
+    assert alias_scores('Did I bring in an engineer before writing to the lawyer?', projects, aliases) == {}
+    assert alias_scores("How did I work my neighbor's concerns into the letter?", projects, aliases) == {}
+    assert alias_scores('Which travel archive did I keep?', projects, aliases) == {}
+    assert alias_scores('What changed in interlock-core?', projects, aliases) == {'interlock': 1}
+    assert alias_scores('Is the infra NAS healthy?', projects, aliases) == {'infra': 1}
+
+
 def test_entity_inverse_size_and_rank_vote():
     scores = entity_scores('Alpha and Beta', [('Alpha', ['a', 'b']), ('Beta', ['a'])], {'a': 10, 'b': 2})
     assert scores == {'a': .2, 'b': .5}
