@@ -12,8 +12,8 @@ MS7/MS8 eval (plan-active.md, B16):
      beats the runner-up by a margin.
 
 Mode (env, read per call):
-  CMF_PROJECT_BOOST            off (default) | a | a_then_e
-  CMF_PROJECT_BOOST_E_MARGIN   default 0.001 -- E's margin, (top - second) / sum
+  CMF_PROJECT_BOOST            a_then_e (default) | a | off
+  CMF_PROJECT_BOOST_E_MARGIN   default 0.0006 -- E's margin, (top - second) / sum (tuned 2026-10-15)
   CMF_PROJECT_CENTROID_TTL     seconds before centroids are rebuilt, default 3600
 
 No LLM call and no extra embedding call: E reuses recall's query vector, and
@@ -42,7 +42,7 @@ MODES = ("off", "a", "a_then_e")
 
 
 def mode() -> str:
-    m = (os.getenv("CMF_PROJECT_BOOST") or "off").strip().lower()
+    m = (os.getenv("CMF_PROJECT_BOOST") or "a_then_e").strip().lower()
     if m not in MODES:
         logger.warning(f"CMF_PROJECT_BOOST={m!r} is not one of {MODES}; treating as off")
         return "off"
@@ -152,7 +152,7 @@ async def infer_project(query: str, query_vector, driver, graph_key: str,
     if guess:
         return {"project": guess, "method": "A", "margin": margin}
     if m == "a_then_e" and query_vector is not None:
-        threshold = float(os.getenv("CMF_PROJECT_BOOST_E_MARGIN") or 0.001)
+        threshold = float(os.getenv("CMF_PROJECT_BOOST_E_MARGIN") or 0.0006)
         guess, margin = choose(centroid_scores(query_vector, centroids), threshold)
         if guess:
             return {"project": guess, "method": "E", "margin": margin}

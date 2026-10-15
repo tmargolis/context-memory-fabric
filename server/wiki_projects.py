@@ -1,80 +1,56 @@
-"""Wiki path -> project, from a local rules file (B16, 2026-10-14).
+"""Wiki note -> project, from the note's `project:` frontmatter (B16).
 
-The wiki has no project metadata, and the entities a note mentions are too
-noisy to infer one (generic entities pull job-role notes toward `finance`).
-Folder and filename conventions are reliable, so a short ordered list of glob
-rules is the source of truth. It lives outside the repo because it names
-specific wiki files:
+The wiki file is the single source of truth (User, 2026-10-15): a note's
+project is the `project: <slug>` line in its leading YAML frontmatter. Notes
+without one have no project. The 2026-10-14 path/filename rules file that
+first tagged notes was written into frontmatter on 2026-10-15 and retired.
 
-    CMF_WIKI_PROJECT_RULES_FILE  (default imports/state/wiki_project_rules.txt)
-
-Format: `<glob> = <project>` per line, `#` comments, first match wins, `*`
-matches across folders (fnmatch). Unmatched paths have no project. Used by
-scripts/tag_note_projects.py (Note.project) and the wiki-side project boost.
+Used by scripts/sweep_wiki_graph.py to set Note.project.
 """
 from __future__ import annotations
 
-from fnmatch import fnmatchcase
-import os
 from pathlib import Path
+import re
 from typing import Optional
 
-_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT = _ROOT / "imports" / "state" / "wiki_project_rules.txt"
-_cache: dict[str, tuple[float, list[tuple[str, str]]]] = {}
+_FRONTMATTER = re.compile(r"---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", re.S)
+_PROJECT = re.compile(r"^project:[ \t]*([^\r\n]*)$", re.M)
 
 
-def rules_path() -> Path:
-    return Path(os.environ.get("CMF_WIKI_PROJECT_RULES_FILE") or _DEFAULT).expanduser()
+def frontmatter_project(text: str) -> Optional[str]:
+    """`project:` from a leading frontmatter block: a scalar slug, or a one-item
+    inline list. None when absent, empty, or a list of several."""
+    m = _FRONTMATTER.match(text.lstrip("﻿"))
+    if not m:
+        return None
+    p = _PROJECT.search(m.group(1))
+    if not p:
+        return None
+    value = p.group(1).split(" #", 1)[0].strip()
+    if value.startswith("[") and value.endswith("]"):
+        items = [i.strip() for i in value[1:-1].split(",") if i.strip()]
+        value = items[0] if len(items) == 1 else ""
+    value = value.strip("\"'").strip()
+    return value or None
 
 
-def parse_rules(text: str) -> list[tuple[str, str]]:
-    rules = []
-    for n, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        glob, sep, project = line.rpartition("=")
-        if not sep or not glob.strip() or not project.strip():
-            raise ValueError(f"wiki project rules line {n}: expected '<glob> = <project>'")
-        rules.append((glob.strip(), project.strip()))
-    return rules
-
-
-def load_rules(path: Optional[Path] = None) -> list[tuple[str, str]]:
-    """Rules from `path` (default rules_path()), re-read when the file changes; [] if absent."""
-    path = path or rules_path()
+def project_for_file(wiki_root: Path, rel_path: str) -> Optional[str]:
     try:
-        mtime = path.stat().st_mtime
+        text = (Path(wiki_root) / rel_path.lstrip("/")).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return []
-    key = str(path)
-    if key not in _cache or _cache[key][0] != mtime:
-        _cache[key] = (mtime, parse_rules(path.read_text(encoding="utf-8")))
-    return _cache[key][1]
+        return None
+    return frontmatter_project(text)
 
 
-def project_for_path(rel_path: str, rules: Optional[list[tuple[str, str]]] = None) -> Optional[str]:
-    rel_path = rel_path.lstrip("/")
-    for glob, project in rules if rules is not None else load_rules():
-        if fnmatchcase(rel_path, glob):
-            return project
-    return None
-
-
-async def refresh_note_projects(driver, dry_run: bool) -> dict:
+async def refresh_note_projects(driver, wiki_root: Path, dry_run: bool) -> dict:
     """Set every :Note's `project` (a one-item list, like Entity.project) from
-    the rules; remove it where no rule matches. Idempotent. Run by
-    scripts/sweep_wiki_graph.py, so new or moved notes are tagged too."""
-    rules = load_rules()
-    if not rules:
-        return {"skipped": f"no rules file at {rules_path()}"}
+    its file's frontmatter; remove it where the file has none. Idempotent."""
     res = await driver.execute_query("MATCH (n:Note) RETURN n.note_path AS path, n.project AS project")
     recs = res[0] if res and isinstance(res[0], list) else (res or [])
     set_rows, clear = [], []
     tagged = 0
     for r in recs:
-        want = project_for_path(r["path"] or "", rules)
+        want = project_for_file(wiki_root, r["path"] or "") if r["path"] else None
         tagged += want is not None
         have = r["project"]
         if want and have != [want]:

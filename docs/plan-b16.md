@@ -1,6 +1,6 @@
 # B16 execution plan — project inference comparison + career episode merge
 
-Written 2026-10-13 for handoff to another harness. Backlog context: [plan-active.md § B16](plan-active.md#b16--project-aware-retrieval). Prior result this builds on: [plan-history.md § B08](plan-history.md#b08--project-organization-and-retrieval-dilution-closed-2026-10-13).
+Written 2026-10-13 for handoff to another harness. Backlog context: [plan-active.md § B16](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15). Prior result this builds on: [plan-history.md § B08](plan-history.md#b08--project-organization-and-retrieval-dilution-closed-2026-10-13).
 
 ## Goal
 

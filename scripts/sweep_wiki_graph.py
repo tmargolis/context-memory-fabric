@@ -316,7 +316,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         out["note_dates"] = await refresh_note_dates(driver, wiki_root, dry_run)
         return out
     if note_projects_only:
-        out["note_projects"] = await refresh_note_projects(driver, dry_run)
+        out["note_projects"] = await refresh_note_projects(driver, wiki_root, dry_run)
         return out
 
     dup_groups = await find_duplicate_groups(driver)
@@ -370,7 +370,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
             "confirmed_vouched": len(confirmed_vouched),
             "candidates": len(candidates),
             "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=True),
-            "note_projects": await refresh_note_projects(driver, dry_run=True),
+            "note_projects": await refresh_note_projects(driver, wiki_root, dry_run=True),
             **({"repath": out["repath"]} if repath else {}),
         }
 
@@ -397,7 +397,7 @@ async def sweep(graph_name: str, min_episodes: int, idf_threshold: float, wiki_r
         "confirmed_vouched": len(confirmed_vouched),
         "candidates": len(candidates),
         "note_dates": await refresh_note_dates(driver, wiki_root, dry_run=False),
-        "note_projects": await refresh_note_projects(driver, dry_run=False),
+        "note_projects": await refresh_note_projects(driver, wiki_root, dry_run=False),
         **({"repath": out["repath"]} if repath else {}),
     }
 
@@ -413,7 +413,7 @@ def main() -> None:
     parser.add_argument("--repath-notes", action="store_true",
                         help="First point :Note nodes whose file moved at its new path (unique file name match)")
     parser.add_argument("--note-projects-only", action="store_true",
-                        help="Only refresh :Note projects from the wiki project rules (server/wiki_projects.py)")
+                        help="Only refresh :Note projects from each note's project: frontmatter (server/wiki_projects.py)")
     args = parser.parse_args()
 
     os.environ["FALKORDB_DATABASE"] = args.graph_name

@@ -74,6 +74,15 @@ class TestNoteDates(unittest.TestCase):
         self.assertEqual((d["created_source"], d["created_at"][:10]), ("frontmatter", "2025-12-01"))
         self.assertEqual((d["updated_source"], d["updated_at"][:10]), ("git", "2026-05-01"))
 
+    def test_metadata_only_commit_does_not_move_updated(self):
+        self.repo.commit("2026-10-15T10:00:00-05:00", {"WIKI/new.md": "---\nproject: x\n---\nnew, edited\n"},
+                         msg="Add project frontmatter\n\nCMF-Metadata-Only: true")
+        self.index.refresh()
+        self.assertEqual(self.dates("WIKI/new.md")["updated_at"][:10], "2026-06-01")
+        self.repo.commit("2026-10-16T10:00:00-05:00", {"WIKI/new.md": "---\nproject: x\n---\nreal edit\n"})
+        self.index.refresh()
+        self.assertEqual(self.dates("WIKI/new.md")["updated_at"][:10], "2026-10-16")
+
     def test_rename_keeps_the_original_add(self):
         d = self.dates("WIKI/sub/renamed.md")
         self.assertEqual(d["created_source"], "git-import-upper-bound")

@@ -3,12 +3,12 @@ import asyncio
 import pytest
 
 from server import project_inference as pi
-from server.wiki_projects import parse_rules, project_for_path
+from server.wiki_projects import frontmatter_project
 
 
-def test_mode_defaults_off_and_rejects_unknown(monkeypatch):
+def test_mode_defaults_a_then_e_and_rejects_unknown(monkeypatch):
     monkeypatch.delenv("CMF_PROJECT_BOOST", raising=False)
-    assert pi.mode() == "off"
+    assert pi.mode() == "a_then_e"
     monkeypatch.setenv("CMF_PROJECT_BOOST", "A_then_E")
     assert pi.mode() == "a_then_e"
     monkeypatch.setenv("CMF_PROJECT_BOOST", "always")
@@ -53,10 +53,10 @@ def test_centroid_width_guard():
         pi.build_centroids([("a", [1.0])], width=768)
 
 
-def test_wiki_rules_first_match_wins_and_reject_bad_lines():
-    rules = parse_rules("# c\nWIKI/projects/Interlock* = interlock\nWIKI/projects/* = misc\n\n")
-    assert project_for_path("WIKI/projects/Interlock-Lessons.md", rules) == "interlock"
-    assert project_for_path("/WIKI/projects/Other.md", rules) == "misc"
-    assert project_for_path("RAW/x.md", rules) is None
-    with pytest.raises(ValueError):
-        parse_rules("WIKI/projects/*")
+def test_wiki_project_from_frontmatter():
+    assert frontmatter_project("---\ntype: x\nproject: interlock\n---\n# T\n") == "interlock"
+    assert frontmatter_project("\ufeff---\r\nproject: 'jspace'\r\n---\r\n") == "jspace"
+    assert frontmatter_project("---\nproject: [work]\n---\n") == "work"
+    assert frontmatter_project("---\ncapacities_project: ['[[X]]']\nproject: []\n---\n") is None
+    assert frontmatter_project("---\ncapacities_project: work\n---\n") is None
+    assert frontmatter_project("# no frontmatter\nproject: work\n") is None

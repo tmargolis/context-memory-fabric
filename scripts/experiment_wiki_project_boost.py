@@ -3,7 +3,7 @@
 Takes the project guesses already saved by experiment_project_inference.py
 (A, then E when A abstains), runs the replay's lexical wiki search for a wider
 pool, moves results whose path maps to the guessed project
-(server/wiki_projects.py) to the front, and grades the top k against each
+(their `project:` frontmatter, server/wiki_projects.py) to the front, and grades the top k against each
 case's gold wiki notes. Outputs stay in the ignored imports/replay/ and carry
 case IDs and numbers only.
 
@@ -48,15 +48,13 @@ def main() -> int:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
     from server.replay.runner import _WikiIndex
-    from server.wiki_projects import load_rules, project_for_path
+    from server.wiki_projects import project_for_file
 
     out = Path(args.out)
     if not out.resolve().is_relative_to((ROOT / "imports/replay").resolve()):
         raise SystemExit("Outputs must stay in the ignored imports/replay directory")
-    rules = load_rules()
-    if not rules:
-        raise SystemExit("No wiki project rules file; see server/wiki_projects.py")
-    project_of = lambda p: project_for_path(p, rules)  # noqa: E731
+    wiki_root = Path(os.environ["LLM_WIKI_PATH"]).expanduser()
+    project_of = lambda p: project_for_file(wiki_root, p)  # noqa: E731
 
     preds = json.loads(Path(args.predictions).read_text())["predictions"]
     first = {p["case_id"]: p for p in preds[args.first]}

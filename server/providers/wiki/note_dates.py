@@ -26,7 +26,8 @@ stored in the graph.
 
 **updated_at**: ``git``, the last commit that touched the file (exact since
 Auto-sync resumed 2026-09-11), else ``frontmatter`` ``updated:``, else
-``disk`` mtime.
+``disk`` mtime. Commits carrying the ``CMF-Metadata-Only: true`` trailer are
+skipped for updated_at (metadata edits aren't content changes).
 
 A note with no file and no history gets ``None`` dates, never an invented
 "now".
@@ -48,6 +49,9 @@ from typing import Any, Optional
 
 CREATED_SOURCES = ("frontmatter", "filename", "git", "disk-pre-import", "git-import-upper-bound", "disk")
 NOTE_DATE_FIELDS = ("created_at", "updated_at")  # what a Note node stores
+# A wiki commit whose message has this trailer only edited metadata (e.g. the
+# 2026-10-15 `project:` frontmatter pass), so it doesn't move updated_at.
+METADATA_ONLY_TRAILER = "CMF-Metadata-Only: true"
 
 _FM_RE = {key: re.compile(rf"^{key}:\s*([^\n\r]+)", re.M) for key in ("created", "updated")}
 
@@ -141,11 +145,13 @@ class GitDateIndex:
             dated = sorted((parse_date(_git(self.repo, "show", "-s", "--format=%cI", r).strip()), r) for r in roots)
             self.root_date, self.root_commit = dated[0]
         rev_range = f"{self.head}..{head}" if incremental else head
+        metadata_only = frozenset(_git(self.repo, "log", "--format=%H", "--extended-regexp",
+                                       f"--grep=^{METADATA_ONLY_TRAILER}", rev_range).split())
         self._apply(_git(self.repo, "-c", "core.quotePath=false", "log", "-z", "--reverse", "-M",
-                         "--name-status", "--format=%x01%H%x01%cI", rev_range))
+                         "--name-status", "--format=%x01%H%x01%cI", rev_range), metadata_only)
         self.head = head
 
-    def _apply(self, log: str) -> None:
+    def _apply(self, log: str, metadata_only: frozenset = frozenset()) -> None:
         chunks = log.split("\x01")
         # ['', hash, "date\0\nSTATUS\0path\0...", hash, ...]
         for i in range(1, len(chunks) - 1, 2):
@@ -180,7 +186,8 @@ class GitDateIndex:
                     self.last.pop(path, None)
                 else:  # M, T and anything else that changes content in place
                     self.first.setdefault(path, (when, commit))
-                    self.last[path] = when
+                    if commit not in metadata_only:
+                        self.last[path] = when
 
 
 _INDEXES: dict[Path, GitDateIndex] = {}

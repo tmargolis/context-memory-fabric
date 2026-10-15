@@ -2,7 +2,7 @@
 
 The milestones still to do, in execution order. Index and decisions log: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Completed milestones: [plan-history.md](plan-history.md).
 
-**MS10a (second-user readiness) closed 2026-10-08**; its record is in [plan-history.md](plan-history.md#ms10a--second-user-readiness-2026-10-08). **B06 closed 2026-10-12** ([record](plan-history.md#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12)); review continues under [standing operations](#recurring-review-operations). Remaining work is in the [Backlog](#backlog), followed by [MS10](#ms10--distribution-and-ecosystem). **MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07), and what it left open is in the [Backlog](#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
+**MS10a (second-user readiness) closed 2026-10-08**; its record is in [plan-history.md](plan-history.md#ms10a--second-user-readiness-2026-10-08). **B06 closed 2026-10-12** ([record](plan-history.md#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12)); review continues under [standing operations](#recurring-review-operations). Remaining work is in the [Backlog](#backlog), followed by [MS10](#ms10--distribution-and-ecosystem). **MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07), and what it left open is in the [Backlog](plan-history.md#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
 
 **MS4b and MS4b-antigravity closed 2026-09-28**, and their record is in [plan-history.md](plan-history.md#ms4b--claude-code-transcript-adapter-build-backfill-re-derivation-review-2026-09-18--09-22). **MS4d (Codex) closed 2026-09-30 (Gemini CLI dropped per user steer)**, and its record is in [plan-history.md](plan-history.md#ms4d--codex-transcript-adapter-and-ongoing-capture-2026-09-30). **MS4c (OpenClaw) remains on hold (User, 2026-09-28).** Its plan is kept intact below but not scheduled. What the active coding adapters keep capturing goes to the recurring review pass ([Backlog](#backlog)).
 
@@ -120,7 +120,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | [B13](#b13--historical-graph-rebuild) | Historical graph rebuild | Paused; many Spark hours |
 | [B14](#b14--oauth-audience-preservation) | OAuth audience preservation | User-deferred |
 | B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
-| [B16](#b16--project-aware-retrieval) | Project-aware retrieval | Boost built behind `CMF_PROJECT_BOOST` (off), replay-gated; awaiting User's go to enable |
+| B16 | Project-aware retrieval | **Closed 2026-10-15** → [plan-history.md](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15) |
 | B17 | Project taxonomy consolidation | **Closed 2026-10-14** → [plan-history.md](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14) |
 
 ### Recurring review operations
@@ -188,7 +188,7 @@ Surfaced visually inspecting `mem-fabric-local` in FalkorDB Browser after promot
 
 ### B11 — Context retrieval and assembly
 
-Keep all assembly refinements together: semantic wiki retrieval, conflict/staleness signals, omissions, intent and time modes, templates, token budgets, explanations, reranking, entity summaries/history if adopted, and residual eval cases. B03 supplies note dates; B16 owns project-specific experiments. Deferred/conditional options keep their existing status. This is a broad group with corpus embedding and evaluation costs, not a small zero-Spark task.
+Keep all assembly refinements together: semantic wiki retrieval, conflict/staleness signals, omissions, intent and time modes, templates, token budgets, explanations, reranking, entity summaries/history if adopted, expansion snippets, and residual eval cases. B03 supplies note dates; [B16](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15) delivered the `recall_mem` project boost, and its wiki-side result and expansion snippets now live here. Deferred/conditional options keep their existing status. This is a broad group with corpus embedding and evaluation costs, not a small zero-Spark task.
 
 #### Assembly refinements (deferred out of MS7)
 
@@ -221,6 +221,18 @@ The graph holds every wiki `[[link]]` as a `(:Note)-[:REFERENCES]->(:Note)` edge
 - [ ] **Investigate whether link expansion improves retrieval.** For a retrieved note, also offer the notes it links to (sources it cites) and the notes linking to it, ranked and capped like the entity expansion in `server/retrieval_expansion.py`. Measure with the MS7 eval harness (and MS8 replay) against the current baseline before keeping it; watch context size, since hub notes (index, timelines) link widely.
 - **Prerequisite done 2026-10-10:** 27 stub paths left stale by the `RAW/RESEARCH/Household` → `RAW/Household` move were repaired (`scripts/sweep_wiki_graph.py --repath-notes`, mapping in `imports/state/note_repath_20261011T034013Z.json`). Run the sweep with `--repath-notes` after future folder moves. One orphan Note (`TO-RESEARCH/…ChatGPT Work.md`, file deleted 2026-09-13, no edges) remains.
 
+#### Project-aware wiki ranking (from B16, dropped 2026-10-15)
+
+B16 tested moving wiki results from the inferred project to the front, the wiki-side twin of the `recall_mem` boost. **Dropped (User, 2026-10-15); recorded here so it isn't re-run blind.**
+
+- **Result** (`scripts/experiment_wiki_project_boost.py`, 40 cases with gold wiki notes, A-then-E guesses, 2026-10-14, `imports/replay/b16-wiki-boost-20261014.json`): Wiki@8 unchanged at 0.875, wiki MRR 0.690 → 0.708 (oracle 0.750); improved C2, C8, C17, C20, regressed B5. The gain is small because lexical `search_wiki` already ranks most gold notes high.
+- **Would misfire on `ai-research` queries:** E guesses `interlock` or `openclaw` for the six `ai-research` B cases (one episode is too thin a centroid).
+- Revisit only if `search_wiki` semantic retrieval (above) widens the candidate set enough for ordering to matter. Notes now carry a `project:` frontmatter line and `Note.project`, so the input is ready.
+
+#### Expansion snippets (from B16)
+
+- [ ] **Pull the matching section, not the opening sentence.** `get_context`'s episode→note expansion attaches only a note's opening sentence; pulling the section that best matches the query would make expanded notes more useful.
+
 ### B13 — Historical graph rebuild
 
 Optional and paused. Preserve the existing checkpoint and original scope; do not resume merely because the backlog is regrouped. Many Spark hours, so excluded from the current low-compute shortlist.
@@ -238,61 +250,6 @@ Deliberately deferred by the user. Retain the completed hardening context and th
 Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pull/6) and consciously merged without fixing (User, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`. Four of the five items were closed 2026-09-28 ([plan-history.md](plan-history.md#auth-hardening-deferred-out-of-ms6c-2026-09-16-closed-2026-09-28)); the one left is deliberately deferred.
 
 - [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
-
-### B16 — Project-aware retrieval
-
-Split out of B08 when it closed (2026-10-13). B08 settled the representation (`entity.project` / `e.project` properties) and measured the ceiling: an oracle project boost lifts MRR 0.485 → 0.740 on all 66 cases (`imports/replay/b08-project-rerank-ceiling-20261013.json`); a per-project cap does not help. Record: [plan-history.md](plan-history.md#b08--project-organization-and-retrieval-dilution-closed-2026-10-13). Related to [B09](#b09--entity-extraction-quality-and-residual-graph-cleanup) only through the graph's entity quality; this group is retrieval work and B11 defers project-specific experiments to it. Any production retrieval change is gated by an MS8 replay.
-
-**2026-10-13 B16 experiment results — Gate 2.** Gate 1 clusters approved; 52 roll-ups replaced 124 of 221 scoped episodes in `mem-fabric-b16-merge-20261013`, leaving 97 scoped episodes untouched. All 66 cases ran under both standard replay policies; production-policy baseline Hit@8/MRR/Wiki@8 = **0.8913/0.4853/0.8750**, reproducing the B08 baseline; oracle boost MRR **0.7399**. Name/alias A @ **0.1** gives **0.9130/0.5431/0.8750**, with no retrieval regressions and no wrong guesses on labeled cases. Centroid E @ **0.001** (reference) gives **0.8913/0.6330/0.8750**, with no retrieval regressions and one wrong project guess (A20). Classification accuracy/confident-wrong use the 46 cases with a gold episode project; 20 cases have no such label and their guesses are reported separately. Fine centroid thresholds were scored offline from cached predictions; this is exploratory threshold selection, not held-out validation. Signal computation measured on the scratch comparison averaged **0.82 ms** for A and **4.28 ms** for E, with no extra per-query embedding or LLM call.
-
-**Merge recommendation: no.** Lineage-aware merge-only Hit@8/MRR/Wiki@8 = **0.8478/0.4545/0.8750**, with rank regressions A6, A10, C1, C6, A11 and D3; A6, C1 and A11 became misses. D4–D6 ranks stayed unchanged. Merge + A @ 0.1 gives **0.8478/0.5080/0.8750**; merge + E @ 0.001 gives **0.8478/0.6138/0.8750**, still missing A6, C1 and A11. Mean provenance rate: baseline **0.6932**, merge **0.6875**, merge + E **0.7330**. Recommend A @ 0.1 as the conservative deployment candidate if separately approved; E @ 0.001 is the stronger experimental reference and needs independent validation. No production retrieval wiring, model/configuration changes, journal rewrites or production graph writes. Production remained **6,639 nodes / 16,419 edges / 1,157 episodes**; scratch ended at **6,551 / 16,026 / 1,085**. Retain the scratch for review; no graph deletion performed. Results and per-case tables: `imports/replay/b16-results-20261013.{json,md}`; all draft, raw-draft, cluster, retraction and replay artifacts remain local under `imports/replay/`. Safety/grading/replay checks: **39 tests and four subtests passed**, live test excluded. C6 differed between controlled scratch replay (rank 5) and pooled comparison (rank 2); both observations are retained and the no-merge recommendation does not depend on that discrepancy.
-
-**Execution compatibility notes.** B08's requested 24-wide pool actually returned at most 16 candidates; no production pool or ranking behavior was changed. Graphiti's automatic index setup was suppressed and retrieval forced through `GRAPH.RO_QUERY` inside the experiment processes. Retraction accepts only the existing `fixgraph-*` convention or a dated B16 scratch name. Merge grading resolves original stable IDs from production read-only, retains strict grades, and reports explicit member-to-roll-up gold mapping separately. The initial copy reply failed after creating the previously absent destination; initial counts were computed but not persisted. Episode identity/content and all node properties matched before scratch writes, but the full edge verification was stopped at User's request. Before-ingestion counts were subsequently recorded; Spark steps held `imports/journal/spark_job.lock`.
-
-**2026-10-13 labeling follow-up (User).** User labeled the 20 wiki-domain cases (B1–B20) and confirmed A6 and A20 (labels in gitignored `tests/fixtures/ms7_eval/b16-project-labels.json`). Six cases (B5, B13, B15, B17, B18, B19) were labeled `ai-research`, a project that doesn't exist yet; they are scored as "no boost is correct." Re-scored from saved predictions (no retrieval): A right 7, wrong 0 on the B cases, so **21 of 21 correct across all labeled guesses**; C @ 0.3 right 7, wrong 6 (mostly career or a single-project guess on AI-research queries); B @ 0.3 right 5, wrong 8; E @ 0.001 right 3, wrong 1, abstains on 16. **User ruled E not worth pursuing; A alone is the candidate.** C and the merge are dropped. The final A rerun waited for [B17](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14), because A matches on project slugs and aliases that B17 changed.
-
-**2026-10-14 post-B17 rerun.** All 73 cases (66 original + held-out group E, 7 questions that name no project) on `mem-fabric-local`, read-only, after B17's retag and A's common-word fix; production counts unchanged. Scored with User's labels (`ai-research` cases count abstaining as correct). Results: `imports/replay/b16-inference-postb17-20261014.{json,md}`.
-
-| Variant | Original 66: Hit@8 / MRR | Right / wrong | Group E: Hit@8 / MRR | Right / wrong | Regressions |
-|---|---|---|---|---|---|
-| baseline | 0.891 / 0.485 | — | 1.000 / 0.433 | — | — |
-| oracle | 0.935 / 0.743 | 46 / 0 | 1.000 / 0.857 | 7 / 0 | — |
-| **A (fixed)** | 0.913 / **0.558** | **21 / 0** | 1.000 / 0.433 | 0 / 0 (abstains) | none |
-| E @ 0.001 | 0.913 / 0.643 | 32 / 4 | 0.857 / 0.619 | 3 / 1 | A20, E2 |
-| A → E @ 0.001 | 0.935 / 0.674 | 41 / 3 | 0.857 / 0.619 | 3 / 1 | A20, E2 |
-| C @ 0.3 | 0.913 / 0.625 | 36 / 9 | 0.857 / 0.548 | 3 / 1 | E2 |
-
-- **A is safe and helps where a project is named,** but does nothing for group E, confirming User's concern that the original set favored named projects.
-- **E helps group E** (MRR 0.433 → 0.619) but its one wrong guess there (E2 → `career`) pushes E2's answer out of the top 8, and it regresses A20 (`DelayedVideoTablet` vs labeled `jspace`). Its other wrong guesses are on wiki-gold `ai-research` cases, which don't affect retrieval.
-- Signal cost per query: A 0.55 ms, E 2.96 ms; no extra embedding or LLM calls.
-- **Next:** decide whether to wire A alone into `recall_mem` now (gated by an MS8 replay), and grow group E (ideally User-written questions) to 15–20 before judging E. Seven cases are too few.
-
-#### Query-time project inference
-
-**2026-10-14 implementation (User chose A then E, accepting a few false positives).**
-
-- **Built behind a flag, off by default.** `server/project_inference.py` holds A (name/alias, common words excluded) and E (nearest per-project mean episode embedding, margin `CMF_PROJECT_BOOST_E_MARGIN`, default 0.001). `recall_mem` reads a 24-wide fused pool when `CMF_PROJECT_BOOST` is `a` or `a_then_e`, moves facts whose source episode is in the inferred project to the front, cuts to `max_results`, and marks them `project_boost` (shown in MCP output). E reuses the query embedding the vector arm already makes, so the embedding count is unchanged; centroids are rebuilt from stored vectors every `CMF_PROJECT_CENTROID_TTL` seconds (default 3600). Settings documented in `.env.example`; tests in `tests/test_project_inference.py`.
-- **MS8 replay gate (production policy, 73 cases, read-only, production unchanged):** boost off vs `a_then_e`. Original 46 memory cases: Hit@8 / MRR 0.891 / 0.485 → **0.935 / 0.674**. Group E: 1.000 / 0.433 → 0.857 / 0.619. **27 cases improved, 2 regressed** (A20 rank 2 → 3; E2 rank 5 → miss, E guessed `career`). Reports: `imports/replay/b16-gate-boost-{off,a_then_e}-20261014.json`.
-- **Wiki notes tagged with projects.** The entity signal was too noisy (generic entities pull job-role notes toward `finance`), so path/filename rules are the source of truth: `server/wiki_projects.py`, rules in the gitignored `imports/state/wiki_project_rules.txt` (they name wiki files). They reproduce 20 of User's 21 B-case labels (B17's note is named as Interlock; its query was labeled `ai-research`). `scripts/sweep_wiki_graph.py --note-projects-only` sets `Note.project` (and every full sweep refreshes it): 318 of 433 notes tagged, rehearsed on `slugmigration-rehearsal-notes-20261014`, production backup `mem-fabric-local.pre-note-projects-20261014`, counts unchanged. About 60% of the corpus resolves to a project; most of the rest is the mixed `RAW/Capacities` export and AI-research notes (no project by design).
-- **Wiki-side boost tested offline** (`scripts/experiment_wiki_project_boost.py`, 40 cases with gold wiki notes, same A-then-E guesses): Wiki@8 unchanged at 0.875, wiki MRR 0.690 → 0.708 (oracle 0.750); improved C2, C8, C17, C20, regressed B5. A small gain, because lexical wiki search already ranks most gold notes high. Not wired.
-
-- [x] Build query-time project inference and wire the boost into `recall_mem`, gated by an MS8 replay. Done 2026-10-14 behind `CMF_PROJECT_BOOST` (off).
-- [ ] **Turn it on (User's call):** set `CMF_PROJECT_BOOST=a_then_e` in `.env` and restart the MCP server.
-- [ ] **Grow group E** to 15–20 questions (ideally User-written) and recheck E's margin; 7 cases are too few to tune it.
-- [ ] **Optional: wiki-side boost in `get_context`** behind the same flag, if the memory boost holds up in use.
-- [ ] **Optional: expansion snippets.** `get_context`'s episode→note expansion attaches only a note's opening sentence; pulling the section that matches the query would make expanded notes more useful (B11).
-
-#### Merge related episodes: career tailoring threads (deferred out of MS9, 2026-10-07)
-
-The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after 447 episodes arrived on 10-03 and later (see [MS9 task 7](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07)). User ruled it episode-volume dilution and closed MS9, and wants to know whether merging related episodes helps or hurts. **No prune experiment (User, 2026-10-07), and "removing approved episodes is not the remedy" stands.**
-
-- **Why a merge could help.** A word-overlap check found no near-duplicates among the 237 `claude-cowork-career-*` episodes, but sibling clusters exist: one company's resume tailoring (`career-078/079/080`), a second requisition at another (`090/091/092`), and an employer-sections consolidation (`068/075`). One roll-up episode per cluster could free slots without losing the information.
-- **How, sequentially on scratch graphs (never production):**
-  - Scope to the 447 episodes added since 2026-10-03 first; widen to all production episodes only if it works.
-  - Take a fresh `GRAPH.COPY` (wait for `rdb_bgsave_in_progress:0` between copies), group the career episodes by company or application, write one summary episode per group on Spark (check `spark_job.lock` is free), and retract the originals in that copy.
-  - Replay all 66 cases of `ms7_eval/queries.json` with `scripts/replay_eval.py`. Group `D-prune` (D1–D6) is already in the file: D1–D3 are the merge-sensitive tailoring clusters and D4–D6 are single-fact decisions that a merge must not lose. Compare Hit@8, MRR, Wiki@8 and `provenance_rate`, and watch A6, C1, C5, C15, C19 and D1–D3 case by case.
-  - Any production change needs a new ruling from User, a backup first, and before/after counts.
-- **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
 
 ---
 

@@ -87,6 +87,9 @@ async def run(args):
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
     os.environ["FALKORDB_DATABASE"] = args.graph
+    # The experiment applies each method's boost itself; recall_mem's own
+    # production boost (CMF_PROJECT_BOOST in .env) would pre-boost the pool.
+    os.environ["CMF_PROJECT_BOOST"] = "off"
     from server.core.falkordb_conn import falkordb_client
     from server.core.config import load_config
     from server.consolidation.project_aliases import project_aliases
