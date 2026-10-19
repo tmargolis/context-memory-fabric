@@ -41,6 +41,8 @@ What a yes does (`confirm_review_recommendations`):
 
 From any other chat or app, `list_review_recommendations` shows the latest unconfirmed run again, and `confirm_review_recommendations` confirms it. Items a run has recommended on aren't offered to the next run; a night with nothing new reports so. Each run covers at most 50 items, oldest first; a backlog is worked through over several nights.
 
+A run you won't confirm (stale, its items decided some other way) can be closed with `close_review_run(run_id, reason)`. It records no verdict; the run stops showing as unconfirmed, and its items that are still queued go to the next run.
+
 ## Notes per app
 
 Scheduled-task features change often. Check your app's own help for the current steps; these notes are as of October 2026.
