@@ -1798,6 +1798,10 @@ async def list_review_recommendations(
             return "No review run is waiting for confirmation."
         others = [r for r in store.unconfirmed_runs() if r != run_id]
         text = format_summary(store, run_id)
+        run = store.run(run_id)
+        if run is not None and run["closed_at"]:
+            why = f": {run['close_reason']}" if run["close_reason"] else ""
+            text += f"\n\nThis run was closed on {run['closed_at']}{why}. It can't be confirmed."
     if others:
         text += f"\n\nAlso unconfirmed: {', '.join(f'`{r}`' for r in others)}."
     return text
@@ -1864,6 +1868,40 @@ async def confirm_review_recommendations(
         lines.append(f"- **Promoting in the background:** {', '.join(live['promoting'])}, one at a time "
                      f"(1-4 minutes each). Progress: `{live['promote_log']}`.")
     return "\n".join(lines)
+
+
+@app.tool(
+    title="Close Review Run",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def close_review_run(
+    run_id: Annotated[str, Field(description="The unconfirmed run to close.")],
+    reason: Annotated[Optional[str], Field(description="Why it is being closed, e.g. 'stale, items decided elsewhere'.")] = None,
+) -> str:
+    """Close a nightly review run without confirming it. Records no verdict.
+
+    WHEN TO USE:
+    - Only when the user asks to close or dismiss a run, typically a stale one whose items were
+      decided some other way. Never on your own initiative.
+
+    CRITICAL SAFETY CONTRACT:
+    - Changes nothing in the review queue, memory or the wiki. The run stops showing as unconfirmed
+      and can no longer be confirmed. Its items that are still queued are offered to the next run.
+    """
+    from server.review.recommendations import RecommendationStore, close_run
+
+    try:
+        with RecommendationStore() as store:
+            result = close_run(store, run_id, reason)
+    except ValueError as e:
+        return f"Could not close: {e}"
+    return (f"Closed run `{result['run_id']}`. No verdicts recorded; "
+            f"{result['released']} pending recommendation(s) released.")
 
 
 def main():

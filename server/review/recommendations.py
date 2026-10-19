@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS review_runs (
     started_at TEXT NOT NULL,
     recorded_at TEXT,
     confirmed_at TEXT,
+    closed_at TEXT,
+    close_reason TEXT,
     item_count INTEGER NOT NULL,
     items_json TEXT NOT NULL
 );
@@ -88,6 +90,10 @@ class RecommendationStore:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(review_runs)")}
+        for col in ("closed_at", "close_reason"):  # added 2026-10-18 for close_run
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE review_runs ADD COLUMN {col} TEXT")
         self._conn.commit()
 
     def close(self) -> None:
@@ -125,13 +131,14 @@ class RecommendationStore:
     def latest_unconfirmed_run(self) -> Optional[str]:
         row = self._conn.execute(
             "SELECT run_id FROM review_runs WHERE recorded_at IS NOT NULL AND confirmed_at IS NULL "
-            "ORDER BY recorded_at DESC LIMIT 1"
+            "AND closed_at IS NULL ORDER BY recorded_at DESC LIMIT 1"
         ).fetchone()
         return row["run_id"] if row else None
 
     def unconfirmed_runs(self) -> list[str]:
         rows = self._conn.execute(
-            "SELECT run_id FROM review_runs WHERE recorded_at IS NOT NULL AND confirmed_at IS NULL ORDER BY recorded_at"
+            "SELECT run_id FROM review_runs WHERE recorded_at IS NOT NULL AND confirmed_at IS NULL "
+            "AND closed_at IS NULL ORDER BY recorded_at"
         ).fetchall()
         return [r["run_id"] for r in rows]
 
@@ -160,6 +167,18 @@ class RecommendationStore:
             (status, final_verdict, _now(), run_id, item_id),
         )
         self._conn.commit()
+
+    def mark_closed(self, run_id: str, reason: Optional[str]) -> int:
+        """Close a run; its still-pending recommendations become 'closed'. Returns how many."""
+        now = _now()
+        with self._conn:
+            released = self._conn.execute(
+                "UPDATE review_recommendations SET status = 'closed', decided_at = ? WHERE run_id = ? AND status = 'pending'",
+                (now, run_id),
+            ).rowcount
+            self._conn.execute("UPDATE review_runs SET closed_at = ?, close_reason = ? WHERE run_id = ?",
+                               (now, reason, run_id))
+        return released
 
     def mark_confirmed(self, run_id: str) -> None:
         self._conn.execute("UPDATE review_runs SET confirmed_at = ? WHERE run_id = ?", (_now(), run_id))
@@ -267,6 +286,8 @@ def record(store: RecommendationStore, run_id: str, recommendations: list[dict[s
         raise ValueError(f"Unknown run_id {run_id!r}. Start one with get_review_batch.")
     if run["confirmed_at"]:
         raise ValueError(f"Run {run_id} is already confirmed.")
+    if run["closed_at"]:
+        raise ValueError(f"Run {run_id} was closed.")
     items = {i["label"]: i for i in json.loads(run["items_json"])}
     by_id = {i["item_id"]: i for i in items.values()}
 
@@ -392,6 +413,8 @@ def confirm(
     run = store.run(run_id)
     if run is None:
         raise ValueError(f"Unknown run_id {run_id!r}.")
+    if run["closed_at"]:
+        raise ValueError(f"Run {run_id} was closed on {run['closed_at']}; it can't be confirmed.")
     reviewer = reviewer or default_reviewer()
     overrides = {k.strip().upper() if k.strip().upper().startswith(("EP", "DOC")) else k.strip(): v.strip().lower()
                  for k, v in (overrides or {}).items()}
@@ -458,6 +481,29 @@ def _confirm_doc(item_id, rebuild_id, final, reviewer, reason, proposals_dir, ge
         rebuilt = get_proposal(rebuild_id, proposals_dir)
         if rebuilt is not None and rebuilt.status == "pending_review":
             review_proposal(rebuild_id, "rejected", reviewer=reviewer, notes=reason, proposals_dir=proposals_dir)
+
+
+# --- close ------------------------------------------------------------------------
+
+
+def close_run(store: RecommendationStore, run_id: str, reason: Optional[str] = None) -> dict[str, Any]:
+    """Close an unconfirmed run without recording any verdict.
+
+    For a stale run whose items were decided some other way. Nothing in the
+    review queue, memory or the wiki changes. The run stops showing as
+    unconfirmed, and its still-pending items are released: any that are still
+    queued are offered to the next run again.
+    """
+    run = store.run(run_id)
+    if run is None:
+        raise ValueError(f"Unknown run_id {run_id!r}.")
+    if run["closed_at"]:
+        raise ValueError(f"Run {run_id} is already closed.")
+    if run["confirmed_at"]:
+        raise ValueError(f"Run {run_id} is already confirmed.")
+    reason = (reason or "").strip() or None
+    released = store.mark_closed(run_id, reason)
+    return {"run_id": run_id, "released": released, "reason": reason}
 
 
 # --- go live ----------------------------------------------------------------------
