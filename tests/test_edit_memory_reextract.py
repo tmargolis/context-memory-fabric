@@ -65,7 +65,6 @@ class TestEditMemoryReextract(unittest.IsolatedAsyncioTestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="cmf-edit-"))
         self.ledger = self.tmp / "edit_ledger.jsonl"
         self.journal_db = self.tmp / "journal.db"
-        os.environ["CMF_SPARK_LOCK_IGNORE_EXTERNAL"] = "1"
         # Episode A (the edit target) and B (a bystander). Fact f_only is
         # supported by A alone; f_shared by A and B. Entity X is mentioned
         # only by A; Y by both.
@@ -90,7 +89,6 @@ class TestEditMemoryReextract(unittest.IsolatedAsyncioTestCase):
             "MATCH (n) WHERE n.uuid STARTS WITH 't-' AND (n.uuid ENDS WITH $t OR n.name STARTS WITH 't_' "
             "OR n.name = 'BRAVO') DETACH DELETE n", t=self.tag)
         await self.driver.execute_query("MATCH (n:Entity {name: 'BRAVO'}) DETACH DELETE n")
-        os.environ.pop("CMF_SPARK_LOCK_IGNORE_EXTERNAL", None)
         await close_graphiti()
 
     async def _facts(self):

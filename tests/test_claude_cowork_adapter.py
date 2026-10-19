@@ -27,8 +27,8 @@ HOME = str(Path.home())
 
 
 @pytest.fixture(autouse=True)
-def _no_external_jobs(monkeypatch):
-    monkeypatch.setattr(spark_lock, "external_spark_job_running", lambda: None)
+def _local_slot(monkeypatch):
+    monkeypatch.setenv("CMF_LLM_SLOT", "always")
     monkeypatch.delenv("CMF_COWORK_EXTRACT_SCHEDULED_TASKS", raising=False)
     monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
 
@@ -205,15 +205,6 @@ def test_busy_spark_slot_skips_pass_before_tailing(tmp_path, consolidation_calls
         holder.release()
     with SqliteEventStore(db) as store:
         assert cowork_worker.process_pending(store, _Store(), sessions_root=root).events_journaled == 1
-
-
-def test_external_spark_job_also_skips(tmp_path, monkeypatch, consolidation_calls):
-    root = tmp_path / "sessions"
-    _session(root, "local_a")
-    monkeypatch.setattr(spark_lock, "external_spark_job_running", lambda: "extract_wiki_relationships.py")
-    with SqliteEventStore(tmp_path / "journal.db") as store:
-        stats = cowork_worker.process_pending(store, _Store(), sessions_root=root)
-    assert stats.skipped_reason == "extract_wiki_relationships.py running" and not consolidation_calls
 
 
 def test_journal_only_pass_ignores_the_lock(tmp_path):

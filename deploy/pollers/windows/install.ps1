@@ -18,7 +18,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-  [string[]] $Pollers = @("claude-code", "codex"),
+  [string[]] $Pollers = @("capture"),
   [switch] $All,
   [switch] $McpServer,
   [int] $Port = 8000,
@@ -36,6 +36,7 @@ if ($All) { $Pollers = @("claude-code", "codex", "cowork", "antigravity") }
 $LogDir = Join-Path $env:LOCALAPPDATA "cmf\logs"
 
 $Modules = @{
+  "capture"     = "server.adapters.capture_runner"
   "claude-code" = "server.adapters.claude_code.cli"
   "codex"       = "server.adapters.codex.cli"
   "cowork"      = "server.adapters.claude_cowork.cli"
@@ -73,7 +74,7 @@ if (-not $Uninstall -and -not $WhatIfPreference -and -not (Test-Path $Python)) {
 if (-not $Uninstall) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
 foreach ($name in $Pollers) {
-  if (-not $Modules.ContainsKey($name)) { throw "Unknown poller '$name' (use claude-code, codex, cowork, antigravity)." }
+  if (-not $Modules.ContainsKey($name)) { throw "Unknown poller '$name' (use capture, claude-code, codex, cowork, antigravity)." }
   $task = "cmf-$name-poller"
   if ($Uninstall) { Remove-CmfTask $task; continue }
   $action = New-CmfAction "-m $($Modules[$name]) $Command" "$task.log"

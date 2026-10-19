@@ -2,8 +2,9 @@
 # Install CMF's transcript pollers (and optionally the MCP server) as launchd
 # user agents. See deploy/pollers/README.md.
 #
-#   deploy/pollers/macos/install.sh                      # claude-code + codex pollers
-#   deploy/pollers/macos/install.sh --pollers "claude-code codex cowork" --mcp-server
+#   deploy/pollers/macos/install.sh                      # one capture agent, every source
+#   deploy/pollers/macos/install.sh --migrate            # same, and retire the old per-source agents
+#   deploy/pollers/macos/install.sh --pollers "claude-code codex" --mcp-server   # per-source agents
 #   deploy/pollers/macos/install.sh --dry-run            # print the plists, change nothing
 #   deploy/pollers/macos/install.sh --uninstall
 set -euo pipefail
@@ -11,7 +12,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 PYTHON="$REPO/.venv/bin/python3"
-POLLERS="claude-code codex"
+POLLERS="capture"
+OLD_POLLERS="claude-code codex cowork antigravity"
 INTERVAL=900
 PORT=8000
 PREFIX="com.cmf"
@@ -22,12 +24,16 @@ MCP_SERVER=0
 UNINSTALL=0
 DRY_RUN=0
 REPLACE=0
+MIGRATE=0
 
 usage() {
   cat <<USAGE
 Options:
-  --pollers "a b"   which pollers: claude-code codex cowork antigravity (default: "$POLLERS")
-  --all             all four pollers
+  --pollers "a b"   capture (one job, every source; CMF_CAPTURE_SOURCES picks them),
+                    or per-source: claude-code codex cowork antigravity (default: "$POLLERS")
+  --all             all four per-source pollers
+  --migrate         after installing, unload the per-source agents and move their
+                    plists to $AGENTS_DIR/cmf-retired/ (labels com.cmf.* and local.cmf.*)
   --mcp-server      also install the MCP server (streamable HTTP on 127.0.0.1)
   --port N          MCP server port (default $PORT)
   --interval SECS   seconds between polls (default $INTERVAL)
@@ -44,7 +50,8 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --pollers) POLLERS="$2"; shift 2 ;;
-    --all) POLLERS="claude-code codex cowork antigravity"; shift ;;
+    --all) POLLERS="$OLD_POLLERS"; shift ;;
+    --migrate) MIGRATE=1; shift ;;
     --mcp-server) MCP_SERVER=1; shift ;;
     --port) PORT="$2"; shift 2 ;;
     --interval) INTERVAL="$2"; shift 2 ;;
@@ -62,11 +69,12 @@ done
 
 module_for() {
   case "$1" in
+    capture) echo "server.adapters.capture_runner" ;;
     claude-code) echo "server.adapters.claude_code.cli" ;;
     codex) echo "server.adapters.codex.cli" ;;
     cowork) echo "server.adapters.claude_cowork.cli" ;;
     antigravity) echo "server.adapters.antigravity.cli" ;;
-    *) echo "unknown poller: $1 (use claude-code, codex, cowork, antigravity)" >&2; exit 2 ;;
+    *) echo "unknown poller: $1 (use capture, claude-code, codex, cowork, antigravity)" >&2; exit 2 ;;
   esac
 }
 
@@ -106,6 +114,23 @@ uninstall_one() {  # uninstall_one LABEL
   echo "removed $1"
 }
 
+retire_one() {  # retire_one NAME: unload a per-source agent and move its plist aside
+  local label file
+  for label in "com.cmf.$1-poller" "local.cmf.$1-poller"; do
+    if [ "$DRY_RUN" -eq 1 ]; then
+      is_loaded "$label" && echo "--- would unload $label"
+    else
+      launchctl bootout "$DOMAIN/$label" 2>/dev/null && echo "unloaded $label"
+    fi
+    file="$AGENTS_DIR/$label.plist"
+    if [ -f "$file" ]; then
+      if [ "$DRY_RUN" -eq 1 ]; then echo "--- would move $file to $AGENTS_DIR/cmf-retired/"
+      else mkdir -p "$AGENTS_DIR/cmf-retired" && mv "$file" "$AGENTS_DIR/cmf-retired/" && echo "retired $file"; fi
+    fi
+  done
+  return 0
+}
+
 if [ "$UNINSTALL" -eq 0 ] && [ "$DRY_RUN" -eq 0 ] && [ ! -x "$PYTHON" ]; then
   echo "no interpreter at $PYTHON: create the venv first (uv sync), or pass --python" >&2; exit 1
 fi
@@ -116,6 +141,12 @@ for name in $POLLERS; do
   if [ "$UNINSTALL" -eq 1 ]; then uninstall_one "$label"
   else install_one "$HERE/poller.plist.template" "$label" "$name" "$module"; fi
 done
+
+if [ "$MIGRATE" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
+  for name in $OLD_POLLERS; do
+    case " $POLLERS " in *" $name "*) ;; *) retire_one "$name" ;; esac
+  done
+fi
 
 if [ "$MCP_SERVER" -eq 1 ]; then
   if [ "$UNINSTALL" -eq 1 ]; then uninstall_one "$PREFIX.mcp-server"

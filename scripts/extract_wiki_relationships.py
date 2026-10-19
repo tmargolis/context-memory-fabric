@@ -447,4 +447,12 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Hold the shared local-LLM slot so capture passes wait their turn
+    # (server.adapters.spark_lock; a no-op on hosted providers).
+    from server.adapters.spark_lock import llm_slot
+
+    with llm_slot() as busy:
+        if busy:
+            print(f"Local LLM slot is busy ({busy}); retry when that job finishes.", file=sys.stderr)
+            sys.exit(75)
+        asyncio.run(main())

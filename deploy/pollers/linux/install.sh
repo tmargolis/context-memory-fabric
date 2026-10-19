@@ -2,8 +2,9 @@
 # Install CMF's transcript pollers (and optionally the MCP server) as systemd
 # --user units. See deploy/pollers/README.md.
 #
-#   deploy/pollers/linux/install.sh                      # claude-code + codex pollers
-#   deploy/pollers/linux/install.sh --pollers "claude-code codex" --mcp-server
+#   deploy/pollers/linux/install.sh                      # one capture timer, every source
+#   deploy/pollers/linux/install.sh --migrate            # same, and remove the old per-source units
+#   deploy/pollers/linux/install.sh --pollers "claude-code codex" --mcp-server   # per-source units
 #   deploy/pollers/linux/install.sh --dry-run            # print the units, change nothing
 #   deploy/pollers/linux/install.sh --uninstall
 #
@@ -14,7 +15,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 PYTHON="$REPO/.venv/bin/python3"
-POLLERS="claude-code codex"
+POLLERS="capture"
+OLD_POLLERS="claude-code codex cowork antigravity"
 INTERVAL=900
 PORT=8000
 COMMAND="tail"
@@ -22,12 +24,15 @@ UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 MCP_SERVER=0
 UNINSTALL=0
 DRY_RUN=0
+MIGRATE=0
 
 usage() {
   cat <<USAGE
 Options:
-  --pollers "a b"   which pollers: claude-code codex cowork antigravity (default: "$POLLERS")
-  --all             all four pollers
+  --pollers "a b"   capture (one job, every source; CMF_CAPTURE_SOURCES picks them),
+                    or per-source: claude-code codex cowork antigravity (default: "$POLLERS")
+  --all             all four per-source pollers
+  --migrate         after installing, stop and remove the per-source units
   --mcp-server      also install the MCP server (streamable HTTP on 127.0.0.1)
   --port N          MCP server port (default $PORT)
   --interval SECS   seconds between polls (default $INTERVAL)
@@ -41,7 +46,8 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --pollers) POLLERS="$2"; shift 2 ;;
-    --all) POLLERS="claude-code codex cowork antigravity"; shift ;;
+    --all) POLLERS="$OLD_POLLERS"; shift ;;
+    --migrate) MIGRATE=1; shift ;;
     --mcp-server) MCP_SERVER=1; shift ;;
     --port) PORT="$2"; shift 2 ;;
     --interval) INTERVAL="$2"; shift 2 ;;
@@ -56,11 +62,12 @@ done
 
 module_for() {
   case "$1" in
+    capture) echo "server.adapters.capture_runner" ;;
     claude-code) echo "server.adapters.claude_code.cli" ;;
     codex) echo "server.adapters.codex.cli" ;;
     cowork) echo "server.adapters.claude_cowork.cli" ;;
     antigravity) echo "server.adapters.antigravity.cli" ;;
-    *) echo "unknown poller: $1 (use claude-code, codex, cowork, antigravity)" >&2; exit 2 ;;
+    *) echo "unknown poller: $1 (use capture, claude-code, codex, cowork, antigravity)" >&2; exit 2 ;;
   esac
 }
 
@@ -98,6 +105,12 @@ for name in $POLLERS; do
     enable+=("$base.timer")
   fi
 done
+
+if [ "$MIGRATE" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
+  for name in $OLD_POLLERS; do
+    case " $POLLERS " in *" $name "*) ;; *) remove_unit "cmf-$name-poller.timer"; remove_unit "cmf-$name-poller.service" ;; esac
+  done
+fi
 
 if [ "$MCP_SERVER" -eq 1 ]; then
   if [ "$UNINSTALL" -eq 1 ]; then remove_unit "cmf-mcp-server.service"
