@@ -1809,5 +1809,57 @@
       "type": "object"
     },
     "title": "Merge Staged Episodes"
+  },
+  "close_review_run": {
+    "name": "close_review_run",
+    "title": "Close Review Run",
+    "description": "Close a nightly review run without confirming it. Records no verdict.\n\n    WHEN TO USE:\n    - Only when the user asks to close or dismiss a run, typically a stale one whose items were\n      decided some other way. Never on your own initiative.\n\n    CRITICAL SAFETY CONTRACT:\n    - Changes nothing in the review queue, memory or the wiki. The run stops showing as unconfirmed\n      and can no longer be confirmed. Its items that are still queued are offered to the next run.\n    ",
+    "input_schema": {
+      "properties": {
+        "run_id": {
+          "description": "The unconfirmed run to close.",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why it is being closed, e.g. 'stale, items decided elsewhere'.",
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "close_review_runArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "close_review_runOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
   }
 }

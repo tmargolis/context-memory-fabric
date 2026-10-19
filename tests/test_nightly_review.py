@@ -298,3 +298,46 @@ def test_cli_promote_named_episodes_waits_for_spark(monkeypatch):
     result = asyncio.run(cli._promote_one(args, None, None, None, None, None, "m1", None))
     assert result == {"promoted": ["m1"]}
     assert order == ["slot-busy", "slot", ("promote", "m1", False)]
+
+
+def test_close_run_records_nothing_and_releases_items(env):
+    batch = _batch(env)
+    rec.record(env["store"], batch["run_id"], [{"label": "EP1", "verdict": "approve", "reason": "x"},
+                                               {"label": "EP2", "verdict": "flag", "reason": "y"}],
+               proposals_dir=env["docs"])
+    out = rec.close_run(env["store"], batch["run_id"], "stale")
+    assert out == {"run_id": batch["run_id"], "released": 2, "reason": "stale"}
+    assert env["store"].unconfirmed_runs() == [] and env["store"].latest_unconfirmed_run() is None
+    with ReviewStore(env["db"]) as rs:
+        assert rs._conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0
+    # Still-queued items are offered again.
+    assert batch["items"][0]["item_id"] in {i["item_id"] for i in _batch(env)["items"]}
+    with pytest.raises(ValueError, match="closed"):
+        rec.confirm(env["store"], batch["run_id"], review_db=env["db"], proposals_dir=env["docs"])
+    with pytest.raises(ValueError, match="closed"):
+        rec.record(env["store"], batch["run_id"], [], proposals_dir=env["docs"])
+    with pytest.raises(ValueError, match="already closed"):
+        rec.close_run(env["store"], batch["run_id"])
+
+
+def test_close_refuses_confirmed_and_unknown_runs(env):
+    batch = _batch(env)
+    rec.record(env["store"], batch["run_id"], [{"label": "EP1", "verdict": "approve", "reason": "x"}],
+               proposals_dir=env["docs"])
+    rec.confirm(env["store"], batch["run_id"], review_db=env["db"], proposals_dir=env["docs"])
+    with pytest.raises(ValueError, match="already confirmed"):
+        rec.close_run(env["store"], batch["run_id"])
+    with pytest.raises(ValueError, match="Unknown"):
+        rec.close_run(env["store"], "rr_nope")
+
+
+def test_store_adds_close_columns_to_an_older_journal(tmp_path):
+    import sqlite3
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE review_runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, recorded_at TEXT, "
+                 "confirmed_at TEXT, item_count INTEGER NOT NULL, items_json TEXT NOT NULL)")
+    conn.commit(); conn.close()
+    with rec.RecommendationStore(db) as store:
+        cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(review_runs)")}
+    assert {"closed_at", "close_reason"} <= cols

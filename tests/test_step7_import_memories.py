@@ -427,6 +427,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "record_review_recommendations",
             "list_review_recommendations",
             "confirm_review_recommendations",
+            "close_review_run",  # 2026-10-18
             # Manual review merge (2026-10-09)
             "merge_episodes",
         }
