@@ -7,6 +7,7 @@ authors = []
 requires-python = ">=3.12"
 dependencies = [
     "graphiti-core[anthropic,falkordb,google-genai]>=0.29.3",
+    "httpx==0.28.1",
     "mcp>=2.1.1",
     "pypdf>=6.16.2",
     "python-dotenv>=1.2.3",
@@ -31,7 +32,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# Tests marked `live` call the real Gemini API. They are excluded by default:
+# Tests marked `live` call real external APIs/services. They are excluded by default:
 # they make the suite roughly 35x slower (27s -> 15+ min, almost entirely
 # blocked on network and retry backoff), they spend real free-tier quota, and
 # they cannot run without a key -- so on an exhausted quota day they fail for
@@ -47,5 +48,5 @@ addopts = '-m "not live"'
 # otherwise break collection with "import file mismatch".
 testpaths = ["tests"]
 markers = [
-    "live: hits the real Gemini API -- costs quota, needs GEMINI_API_KEY, slow",
+    "live: hits real external APIs/services -- requires explicit credentials and may cost quota",
 ]

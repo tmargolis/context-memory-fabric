@@ -12,7 +12,7 @@ CMF keeps four architectural layers distinct:
 
 1. **Source Evidence:** Append-only local SQLite journal recording raw tool events and session evidence.
 2. **Derived Episodic Memory:** Temporal knowledge graph in FalkorDB (via Graphiti) capturing past decisions, state evolutions, preferences, and events with `valid_at` / `invalid_at` temporal tracking.
-3. **Durable Knowledge:** Local Markdown corpus (such as an Obsidian vault or the included `starter-wiki/`) containing curated technical notes, project specs, and systems documentation.
+3. **Durable Knowledge:** Configured knowledge sources, including a local Markdown corpus (such as an Obsidian vault or `starter-wiki/`) and live Notion notes, with separate source attribution.
 4. **Assembled Runtime Context:** Unified retrieval via `get_context`, synthesizing episodic memory and durable knowledge with source attribution and conflict guidance.
 
 ---
@@ -300,6 +300,54 @@ From a terminal, `uv run python -m server.review.cli queue --tier 1` lists the q
 
 ---
 
+## Notion knowledge (optional)
+
+In your gitignored `.env`, set `CMF_KNOWLEDGE_PROVIDERS=notion` for Notion alone,
+or `wiki,notion` to query both. Built-in names are `wiki`, `gmail`, and `notion`;
+existing `module:Class` paths still work for external providers. For a local
+source installation without a Markdown vault, leave `LLM_WIKI_PATH` empty.
+
+Create a dedicated Notion internal integration with **Read content only**, share
+the intended knowledge root with it, and set `CMF_NOTION_TOKEN` plus
+`CMF_NOTION_WORKSPACE` (a stable workspace UUID/label used in result provenance).
+Keep real tokens and deployment settings out of Git; `.env.example` contains
+generic examples only. This is the first knowledge provider whose third-party
+credential CMF holds directly. Enabling it exposes retrieved note excerpts to
+**every connected client's `get_context`**; the scope label is not access control.
+
+Notion is queried live with a default 10-second total deadline and five candidate
+pages. `CMF_NOTION_PLAN` selects pacing: `free`/`plus` use 3 requests/s;
+`business`/`enterprise` use 10. Server rate-limit cooldowns always take precedence.
+`CMF_NOTION_CANDIDATE_LIMIT` accepts 1–20; `CMF_NOTION_TIMEOUT_SECONDS` accepts 1–30.
+Bodies are cached only in process memory, keyed by page UUID and its freshly
+retrieved edit timestamp. Restarting loses the cache; no sync job is needed.
+
+Workspace REST search matches titles. To also discover matches in database
+title/rich-text properties, set `CMF_NOTION_DATA_SOURCE_IDS` to up to two
+data-source UUIDs (not database container IDs). Optional
+`CMF_NOTION_DATA_SOURCE_FILTERS` is a JSON map from those UUIDs to native property
+filters, for example a status restriction; these restrict only that discovery
+branch. Property text and fetched page blocks are ranked locally with BM25.
+This does not search arbitrary bodies outside the bounded discovered candidates.
+Hosted Notion MCP offers broader content search but uses a different credential
+and API contract and is outside this provider's REST implementation.
+
+After sharing, verify a known note with `search_knowledge` restricted to
+`providers=["notion"]`. Missing notes may be unshared or not yet indexed; an
+empty response does not certify workspace coverage. Set
+`CMF_NOTION_ROOT_PAGE_ID` to an expected shared page to make loss of root access
+an explicit provider error. Authentication, network, or deadline failures appear
+as Notion source errors while other knowledge sources still answer. Depth,
+request, and text caps are marked as truncation in excerpts. Notion accepts no
+change proposals in v1.
+
+Tests are offline by default. Opt-in live tests require separate
+`CMF_NOTION_TEST_TOKEN`, `_WORKSPACE`, `_QUERY`, and `_PAGE_ID` settings; see
+`tests/test_notion_provider.py` for manual-edit/pagination fixture settings.
+Never run them implicitly with operational credentials. The
+[design](notion-provider-design.md) records bounds, API references, and remaining
+live freshness assumptions.
+
 ## Configuration Reference
 
 Configuration can be supplied via `.env`, environment variables, or CLI flags.
@@ -311,6 +359,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `OPENAI_API_KEY` | Conditional | — | Required when any provider setting is `openai`. |
 | `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
 | `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset or empty, the wiki tools (`search_wiki`, `propose_doc_update`, ...) are not offered and extraction proposes episodes only. |
+| `CMF_KNOWLEDGE_PROVIDERS` | No | `wiki` | Comma-separated `wiki`, `gmail`, `notion`, or external `module:Class` paths. |
 | `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
 | `FALKORDB_USER` | No | — | FalkorDB ACL user every CMF client logs in as (alias `FALKORDB_USERNAME`). Unset: the built-in `default` user. |
 | `FALKORDB_PASSWORD` | No | — | Password for that user. |

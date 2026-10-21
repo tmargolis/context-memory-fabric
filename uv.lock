@@ -313,6 +313,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "graphiti-core", extra = ["anthropic", "falkordb", "google-genai"] },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "pypdf" },
     { name = "python-dotenv" },
@@ -326,6 +327,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "graphiti-core", extras = ["anthropic", "falkordb", "google-genai"], specifier = ">=0.29.3" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "mcp", specifier = ">=2.1.1" },
     { name = "pypdf", specifier = ">=6.16.2" },
     { name = "python-dotenv", specifier = ">=1.2.3" },

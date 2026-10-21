@@ -75,12 +75,14 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ## MS11 — Knowledge-provider follow-ons (from MS5)
 
-**Status:** ⚪ not started. MS5 deliberately left these out, and none of them block anything.
+**Status:** Live Notion read-only retrieval closed 2026-10-21; [implementation, verification, and known limitations](plan-history.md#ms11--live-notion-knowledge-provider-closed-2026-10-21) moved to history. Remaining follow-ons below are unstarted; MS11 as a whole remains open.
 
 **Goal:** Take the second knowledge provider from proof to everyday use, and add the next provider when one is wanted.
 
 ### Tasks
 
+- [x] **Live Notion knowledge provider** — completed 2026-10-21. Actual CMF MCP retrieval, nested text, provenance, unchanged-page cache reuse, and edit-triggered cache invalidation verified. [Completed record and caveats](plan-history.md#ms11--live-notion-knowledge-provider-closed-2026-10-21).
+- [ ] **Notion `propose_change` — after read-only retrieval** (User, 2026-10-21). Read-only retrieval is complete; next design the proposal/review/apply path. Preserve review before canonical writes, stable page identity, conflict/version checks, and least-privilege credentials. Retrieval v1 remains read-only and omits `propose_change`; this follow-on is a backlog item, not authorization to write Notion content or expand token permissions now.
 - [ ] **Decide whether to enable Gmail in `.env`** (`CMF_KNOWLEDGE_PROVIDERS`). Enabling it puts email into `get_context` for every connected client, including ChatGPT and Gemini, so it is a privacy decision for User. Options:
   - leave it off;
   - enable it for everyone;

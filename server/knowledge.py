@@ -9,9 +9,10 @@ own provider, and deciding between them is the caller's job
 (docs/plan-active.md MS5: "never collapse results or assign a fixed authority
 hierarchy").
 
-Sources come from CMF_KNOWLEDGE_PROVIDERS, a comma-separated list of
-`module:Class` paths (default: the LLM_Wiki file provider). A new provider is
-a new module plus a config line; nothing in this file names one.
+Sources come from CMF_KNOWLEDGE_PROVIDERS: built-in aliases (wiki, gmail,
+notion) or `module:Class` paths for extensions. A new external provider is
+still a new module plus a config line; built-in aliases are conveniences,
+not provider-specific retrieval logic.
 """
 
 from __future__ import annotations
@@ -29,10 +30,19 @@ from server.core.protocols import KnowledgeSource
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KNOWLEDGE_PROVIDERS = "server.providers.wiki.provider:FileKnowledgeProvider"
+DEFAULT_KNOWLEDGE_PROVIDERS = "wiki"
+KNOWLEDGE_PROVIDER_ALIASES = {
+    "wiki": "server.providers.wiki.provider:FileKnowledgeProvider",
+    "gmail": "server.providers.gmail.provider:GmailKnowledgeProvider",
+    "notion": "server.providers.notion.provider:NotionKnowledgeProvider",
+}
 
 
 def _load(path: str) -> KnowledgeSource:
+    path = path.strip()
+    if ":" not in path and path not in KNOWLEDGE_PROVIDER_ALIASES:
+        raise ValueError(f"unknown knowledge provider alias {path!r}; use wiki, gmail, notion, or module:Class")
+    path = KNOWLEDGE_PROVIDER_ALIASES.get(path, path)
     module_name, _, class_name = path.strip().partition(":")
     if not module_name or not class_name:
         raise ValueError(f"knowledge provider {path!r} is not a `module:Class` path")

@@ -1194,6 +1194,39 @@ Comparing production (`max_per_episode=2`) vs candidate (`max_per_episode=1`):
 
 ---
 
+## MS11 — Live Notion knowledge provider (closed 2026-10-21)
+
+**Status:** Completed at User's direction on 2026-10-21 after live MCP retrieval and the manual-edit cache check passed. This closes the read-only Notion task, not all of [MS11](plan-active.md#ms11--knowledge-provider-follow-ons-from-ms5). `propose_change` remains an active follow-on.
+
+### What was done
+
+- [x] **Live Notion knowledge provider.** `server/providers/notion/` implements read-only `KnowledgeSource.query()` over the live Notion API, with bounded title/property candidate discovery, recursive block flattening, deterministic local BM25, a hard query deadline, plan-aware pacing/Retry-After handling, and a process-only cache keyed by page UUID/edit timestamp. No snapshot or sync runner.
+- The approved [design](notion-provider-design.md) records credentials, result/provenance mapping, API bounds and limitations. `httpx==0.28.1` is declared directly. The User-authorized loader amendment adds `wiki`, `gmail`, and `notion` aliases while retaining `module:Class` compatibility; `.env.example` and setup instructions document them.
+- User elected to use the existing `.env` for live tests. The assistant discovered the fixture query/IDs and supplied them in process memory, without changing `.env`. User restarted the running MCP server to load the new implementation; no manual tool-schema refresh was needed.
+
+### Verification results
+
+- **Offline provider/conformance:** 58 tests passed. All 100 related Notion, knowledge-core, and Gmail tests passed; three Notion live tests were excluded from the default run.
+- **Broader suite, with operational-state/network isolation:** 1,158 passed, nine skipped, 22 failures and two errors. Remaining failures involve existing graph/service/state requirements and an independently reproduced extraction-prompt assertion; this is not a passing full-suite exit gate. Details are in the [design verification record](notion-provider-design.md#implementation-verification-2026-10-21).
+- **Direct live Notion API tests:** two passed (`test_live_known_page`, `test_live_block_cursor_pagination`). At User's request these used credentials from the existing `.env`; the fixture query/page UUIDs were discovered and supplied in process memory, without adding test-query/ID variables to `.env`. This verifies the provider against Notion, not its availability in the running CMF MCP server.
+- **Pre-restart CMF MCP `search_knowledge`: failed.** Called with `query="CMF charger test"`, `providers=["notion"]`, and `max_results_per_provider=3`. The connected app tool returned `Error executing tool search_knowledge` with `INVALID_ARGUMENT`; the native CMF MCP tool also returned a tool error. No Notion result was returned.
+- **Pre-restart CMF MCP `get_context`: degraded, Notion unavailable.** Called with `topic="CMF charger test"`, `max_wiki_results=1`, and `max_memory_results=1`. Wiki and episodic sections answered, but the context contained: ``Other knowledge providers unavailable: knowledge provider 'notion' is not a `module:Class` path``. No Notion section/result appeared.
+- **Deployment blocker resolved after User's restart.** The old process rejected the alias despite the updated working tree. User restarted the MCP server; the subsequent actual MCP checks below passed without changing `.env` or refreshing this chat's tool definitions. The assistant did not restart/reconfigure any service.
+- **Post-restart CMF MCP `search_knowledge`: passed on both connected-app and native MCP tools.** Repeated the same query/provider/result-limit arguments. Both returned the same `CMF charger test` document, including the 48-amp paragraph and nested electrician note, with stable page identity, Notion URI, edit timestamp/version and private Notion scope. No provider error appeared.
+- **Post-restart CMF MCP `get_context`: passed.** Repeated `topic="CMF charger test"`, `max_wiki_results=1`, `max_memory_results=1`. The result contained a distinct `notion` section with the fixture text/provenance alongside the wiki and episodic sections. The earlier alias-loading error was absent.
+- **Observed process-cache reuse:** server logs showed search + page metadata + two block-child requests on the first post-restart search (1.9 s), then search + page metadata only on the later search (0.7 s), returning the same unchanged page. This demonstrates reuse across actual MCP calls; it does not establish invalidation after an edit. The cold `get_context` call also rebuilt the wiki index (1,351 assets, roughly 71 s before episodic retrieval); that delay preceded Notion retrieval.
+- **Manual edit timestamp propagation/cache invalidation: passed on the shared fixture through actual MCP.** The earlier warm-cache response had version `2026-10-21T16:15:00.000Z`. After User's manual edit, the same query returned version `2026-10-21T16:44:00.000Z` and the newly added sentence about hiring an electrician after agreement approval. In the same running server process, the 11:45:15 CDT call fetched search results, fresh page metadata, and both page/toggle block-child lists (1.4 s). The 11:45:31 repeat returned the same updated version/text with only search + metadata requests (1.1 s). This verifies edit-triggered refetch followed by reuse of the updated body; it is a fixture observation, not a guarantee for every Notion block type or concurrent edit.
+- **Session/log interpretation:** the pre-restart `module:Class` tracebacks are historical. Restart invalidated old transport session IDs, but the tested clients reconnected successfully; no manual tool refresh was needed. OAuth discovery 401s were followed by successful authenticated requests. These observations do not imply that every other client session has already reconnected.
+- **Still unverified:** concurrent revision consistency, full property completeness, and timestamp propagation beyond the tested page/toggle fixture. `propose_change` remains the separate follow-on below read-only retrieval.
+
+### Exit gate — ANSWERED for read-only Notion v1
+
+**Yes:** actual `search_knowledge` and `get_context` return the shared Notion fixture with nested text and distinct provenance, and the live manual edit advanced the page version, triggered body refetch, and then reused the updated cache without a sync job or re-import. User explicitly requested closing the task and moving this record to history.
+
+Closure does not turn the guarded full-suite run into a pass or establish atomic revision reads/full property completeness. Those results and API limitations remain recorded above and in the design; read-only v1 makes no stronger guarantees. Notion writes/proposals, the Gmail enablement decision, GitHub retrieval, and incremental Gmail sync remain in the active MS11 follow-ons.
+
+---
+
 ## Backlog — closed items
 
 Completed backlog items, moved out of [plan-active.md](plan-active.md)'s Backlog section once done. Grouped under the same topic headings used there.
