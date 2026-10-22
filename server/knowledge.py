@@ -166,3 +166,16 @@ def propose_knowledge_change(provider: str, sources: Optional[list[Any]] = None,
     if propose is None:
         return {"status": "unsupported", "error": f"knowledge provider {provider!r} is read-only"}
     return propose(**proposal)
+
+
+def inspect_knowledge_document(provider: str, document_id: str,
+                               sources: Optional[list[Any]] = None) -> dict[str, Any]:
+    """Optional source inspection keeps write addressing out of search excerpts."""
+    sources = load_knowledge_sources() if sources is None else sources
+    source = next((s for s in sources if s.name == provider), None)
+    if source is None:
+        return {"status": "error", "error": f"no configured knowledge provider named {provider!r}"}
+    inspect = getattr(source, "inspect_document", None)
+    if inspect is None:
+        return {"status": "unsupported", "error": f"knowledge provider {provider!r} does not support inspection"}
+    return inspect(document_id)

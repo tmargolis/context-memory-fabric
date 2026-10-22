@@ -338,8 +338,8 @@ empty response does not certify workspace coverage. Set
 `CMF_NOTION_ROOT_PAGE_ID` to an expected shared page to make loss of root access
 an explicit provider error. Authentication, network, or deadline failures appear
 as Notion source errors while other knowledge sources still answer. Depth,
-request, and text caps are marked as truncation in excerpts. Notion accepts no
-change proposals in v1.
+request, and text caps are marked as truncation in excerpts. Paragraph proposal
+staging and apply dry runs use the same read token; real apply has separate write gates.
 
 Tests are offline by default. Opt-in live tests require separate
 `CMF_NOTION_TEST_TOKEN`, `_WORKSPACE`, `_QUERY`, and `_PAGE_ID` settings; see
@@ -422,3 +422,47 @@ CMF provides `import_memories` and `import_chatgpt_exports` for parsing historic
 Have questions, setup difficulties, or retrieval feedback?
 - Please open an issue using the [Setup or Retrieval Problem template](https://github.com/tmargolis/context-memory-fabric/issues).
 - For sensitive security disclosures, see [SECURITY.md](SECURITY.md).
+
+### Notion paragraph proposals
+
+The existing read token also supports `inspect_knowledge_document("notion", page_uuid)`
+and proposal staging. Choose an editable paragraph's returned `target_path`, then
+call `propose_knowledge_change` with its complete replacement text (1–2,000
+characters). Formatted, linked, synced and non-paragraph targets are refused.
+When `CMF_NOTION_ROOT_PAGE_ID` is set, staging must also prove the page lies
+beneath that root within the shared four-ancestor allowance.
+Inspection omissions are explicit; staging always reads fresh block evidence.
+
+`get_doc_proposal` shows the exact block payload and `review_digest`. Supply that
+digest as `expected_review_digest` when approving or rejecting. Wiki callers do
+not need this extra parameter. These records live in the existing local doc
+proposal store; protect it as private workspace content. Staging uses no new
+configuration or credential permissions.
+
+`apply_doc_proposal` defaults to a fresh, read-only dry run. Supply both
+`expected_sha256` and `expected_review_digest` from `get_doc_proposal`; the
+proposal must already be approved. The result shows the exact single PATCH
+payload and refuses changed content, timestamps, scope or ancestry.
+
+Real application is **off by default**. After separate operator authorization,
+configure `CMF_NOTION_ENABLE_WRITES=true` and `CMF_NOTION_WRITE_TOKEN` in your
+secret injection or gitignored `.env`. The write token must differ from
+`CMF_NOTION_TOKEN`, have Read + Update content capability, and be shared only
+with intended pages. Keep the read integration read-only. No Insert capability
+is needed. These instructions do not authorize token changes, a service restart,
+or a live fixture edit; the implementation has only been tested offline.
+
+A real apply verifies access with the write token, saves an attempt before one
+PATCH, then re-reads the paragraph and preserved fields. It uses no wiki path
+or Git commit. Repeated application of an applied proposal does nothing.
+Unknown/interrupted outcomes block another PATCH. Explicitly call
+`apply_doc_proposal(..., reconcile=True)` with the same two digests to perform
+fresh reads and record reconciliation (no PATCH even with `dry_run=False`).
+Desired content marks applied with uncertain attribution; the unchanged exact
+base marks `retry_ready` for a later explicitly requested apply; other changes
+mark conflict and require a fresh proposal. Review digest and base never rebase.
+Check application state in list/get responses. Local locks serialize review and
+apply across CMF processes; there is no server-side conditional-write guarantee,
+so external edits during GET/check/PATCH can still be overwritten. Apply only
+while the target is not being edited. Automatic review/apply and consolidation
+continue excluding Notion proposals. See [the design](notion-proposals-design.md).

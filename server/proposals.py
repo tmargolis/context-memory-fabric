@@ -1,15 +1,11 @@
 """Durable knowledge proposal store and validation for Context Memory Fabric.
 
-Manages pending update/creation proposals for LLM_Wiki without modifying the
-canonical corpus. Proposals persist locally under proposals-docs/ for human
-review. Named generically (`DocProposal`, not `WikiProposal`) because the
-proposal/review lifecycle itself is provider-agnostic -- LLM_Wiki is the
-only knowledge provider that exists today (see MS5 in docs/plan-active.md),
-but nothing in this module's shape assumes it stays that way. The apply
-step's actual corpus writes (`wiki_root`, "LLM_Wiki") remain wiki-specific
-implementation, deliberately -- generalizing *that* is MS5's job, not this
-rename's (docs/plan-active.md, "Wiki→doc rename", 2026-09-19).
+The envelope and review decisions are shared; canonical writes remain provider
+specific. Older records default to wiki without rewriting operational queues.
+Notion stages exact block payloads and uses a separately gated application path.
 """
+
+from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
@@ -22,6 +18,11 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 import uuid
+import tempfile
+import time
+from contextlib import contextmanager
+import fcntl
+from functools import wraps
 
 from server.core.config import default_reviewer
 from server.eval_privacy import eval_leaks
@@ -51,7 +52,7 @@ SUPPORTED_TEXT_EXTENSIONS = {
 
 @dataclass
 class DocProposal:
-    """Record representing a pending proposal to create or update a Wiki file."""
+    """A staged source change, with provider-specific target and exact payload."""
 
     proposal_id: str
     status: str = "pending_review"
@@ -96,6 +97,15 @@ class DocProposal:
     source_date: Optional[str] = None
     conflicts_with: list[str] = field(default_factory=list)
     diff_hunks: list[dict[str, Any]] = field(default_factory=list)
+
+    # Defaulted so legacy wiki records need no migration. Provider data contains
+    # source evidence, never credentials; the digest binds it to the review.
+    provider: str = "wiki"
+    target: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
+    review_digest: Optional[str] = None
+    # Mutable application audit, deliberately excluded from the review digest.
+    application: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -438,6 +448,8 @@ def create_doc_proposal(
 
 def format_proposal_for_mcp(proposal: DocProposal) -> str:
     """Format a DocProposal into clear Markdown for MCP tool responses."""
+    if proposal.provider != "wiki":
+        return format_provider_proposal(proposal)
     lines = [
         "### 📝 Doc Update Proposal Generated\n",
         f"- **Proposal ID:** `{proposal.proposal_id}`",
@@ -532,10 +544,20 @@ def get_proposal(
         return None
 
 
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _save_proposal(proposal: DocProposal, proposals_dir: Optional[Path] = None) -> None:
-    """Write a proposal to the subfolder its current status belongs in
-    (_status_subdir), moving it there if it currently lives somewhere else
-    -- a proposal never exists in two places at once."""
+    """Publish complete JSON, then atomically move that same record by status.
+
+    JSON status is authoritative even if a crash interrupts folder relocation;
+    replacing it in place avoids competing copies on that crash path.
+    """
     store_dir = get_proposals_dir(proposals_dir)
     subdir = _status_subdir(proposal.status)
     target_dir = (store_dir / subdir) if subdir else store_dir
@@ -543,22 +565,98 @@ def _save_proposal(proposal: DocProposal, proposals_dir: Optional[Path] = None) 
     new_path = target_dir / f"{proposal.proposal_id}.json"
 
     existing = _locate_proposal_file(proposal.proposal_id, store_dir)
-    if existing is not None and existing != new_path:
-        existing.unlink()
-
-    # One file per proposal. diff_hunks (one string per line, per change) is the
-    # readable view; unified_diff stays for older readers; proposed_content is
-    # the exact bytes apply writes.
     proposal.diff_hunks = split_diff_hunks(proposal.unified_diff)
-    new_path.write_text(json.dumps(proposal.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    # Replace the current record in place before relocating it. Publishing a
+    # second copy first would leave contradictory statuses after a crash.
+    temporary: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target_dir,
+                                         prefix=".proposal-", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(proposal.to_dict(), stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        published = existing if existing is not None else new_path
+        os.replace(temporary, published)
+        _sync_directory(published.parent)
+        if published != new_path:
+            try:
+                os.replace(published, new_path)
+                _sync_directory(new_path.parent)
+                _sync_directory(published.parent)
+            except OSError:
+                # The decision is already committed; only its organization
+                # failed. Readers scan all folders and use the JSON status.
+                logger.warning("Proposal %s saved; status-folder relocation failed", proposal.proposal_id)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
+def proposal_review_digest(proposal: DocProposal) -> str:
+    """Bind a decision to the exact source identity, base and replacement.
+
+    Review metadata is excluded so recording the verdict cannot change the
+    value the reviewer supplied. Recompute it rather than trusting saved JSON.
+    """
+    value = {key: getattr(proposal, key) for key in (
+        "provider", "operation", "target_path", "target", "payload",
+        "current_sha256", "proposed_sha256", "proposed_content",
+    )}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_provider_review(proposal: DocProposal, expected: Optional[str]) -> None:
+    if proposal.provider != "notion":
+        raise ValueError(f"Unsupported proposal provider {proposal.provider!r}.")
+    digest = proposal_review_digest(proposal)
+    if not expected or expected != digest or proposal.review_digest != digest:
+        raise ValueError("Matching expected_review_digest required; re-fetch the proposal and supply its digest.")
+    from server.providers.notion.proposals import validate_staged
+    validate_staged(proposal)
+
+
+@contextmanager
+def proposal_lock(proposal_id: str, proposals_dir: Optional[Path], end: float):
+    # A hash keeps caller-supplied IDs out of lock paths. Retain lock files: unlink
+    # would let another process lock a new inode while a waiter holds the old one.
+    directory = get_proposals_dir(proposals_dir) / ".locks"
+    directory.mkdir(exist_ok=True)
+    name = hashlib.sha256(proposal_id.encode()).hexdigest()
+    with (directory / name).open("a") as stream:
+        while True:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= end:
+                    raise ValueError("Proposal lock deadline exceeded.")
+                time.sleep(min(0.02, max(0, end - time.monotonic())))
+        try:
+            yield
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def locked_review(function):
+    @wraps(function)
+    def locked(proposal_id, *args, **kwargs):
+        # Positional compatibility with the original review_proposal signature.
+        store = kwargs.get("proposals_dir", args[3] if len(args) > 3 else None)
+        with proposal_lock(proposal_id, store, time.monotonic() + 10):
+            return function(proposal_id, *args, **kwargs)
+    return locked
+
+
+@locked_review
 def review_proposal(
     proposal_id: str,
     verdict: str,
     reviewer: Optional[str] = None,
     notes: Optional[str] = None,
     proposals_dir: Optional[Path] = None,
+    expected_review_digest: Optional[str] = None,
 ) -> DocProposal:
     """Record a human decision on a pending proposal. Does NOT touch LLM_Wiki.
 
@@ -584,6 +682,9 @@ def review_proposal(
             f"Proposal '{proposal_id}' is already '{proposal.status}', not 'pending_review' — "
             "re-review is refused rather than overwriting the prior verdict."
         )
+
+    if proposal.provider != "wiki":
+        validate_provider_review(proposal, expected_review_digest)
 
     reviewer = reviewer or default_reviewer()
     proposal.status = verdict
@@ -626,6 +727,9 @@ def apply_proposal(
     dry_run: bool = True,
     wiki_root: Optional[Path] = None,
     proposals_dir: Optional[Path] = None,
+    expected_review_digest: Optional[str] = None,
+    reconcile: bool = False,
+    notion_provider: Any = None,
 ) -> dict[str, Any]:
     """Write an approved proposal's content into LLM_Wiki. The only function
     in this module that touches the canonical corpus.
@@ -660,6 +764,31 @@ def apply_proposal(
     proposal = get_proposal(proposal_id, proposals_dir)
     if proposal is None:
         raise ValueError(f"No proposal found with id '{proposal_id}'.")
+    # Dispatch before resolving any wiki path. Unknown providers fail closed;
+    # staging support does not authorize an external writer or a pretend dry run.
+    if proposal.provider != "wiki":
+        if proposal.provider == "notion":
+            from server.providers.notion.apply import execute
+            from server.providers.notion.provider import NotionKnowledgeProvider
+            end = time.monotonic() + 10
+            with proposal_lock(proposal_id, proposals_dir, end):
+                proposal = get_proposal(proposal_id, proposals_dir)
+                if proposal is None:
+                    raise ValueError("Proposal disappeared while waiting for lock.")
+                validate_provider_review(proposal, expected_review_digest)
+                if not expected_sha256 or expected_sha256 != proposal.proposed_sha256:
+                    raise ValueError("Matching nonempty expected_sha256 required for Notion application.")
+                if proposal.status == "applied":
+                    return {"provider": "notion", "status": "already_applied", "dry_run": dry_run,
+                            "proposal_id": proposal_id, "application": proposal.application}
+                if proposal.status != "approved":
+                    raise ValueError("Notion proposal must already be approved.")
+                return execute(proposal, notion_provider or NotionKnowledgeProvider(), proposals_dir,
+                               end, dry_run=dry_run, reconcile=reconcile)
+        return {"status": "unsupported", "provider": proposal.provider,
+                "dry_run": dry_run, "error": f"Application for provider {proposal.provider!r} is not implemented; no source write occurred."}
+    if reconcile:
+        raise ValueError("Reconciliation is supported only for Notion proposals.")
     if proposal.status != "approved":
         raise ValueError(
             f"Proposal '{proposal_id}' is '{proposal.status}', not 'approved' — "
@@ -761,6 +890,8 @@ def format_proposal_list(proposals: list[DocProposal]) -> str:
     """Format a list of proposals as a compact Markdown table for MCP tool responses."""
     if not proposals:
         return "No proposals found."
+    if any(p.provider != "wiki" for p in proposals):
+        return "\n".join(["| Proposal ID | Provider | Status | Application | Target |", "|---|---|---|---|---|", *[f"| `{p.proposal_id}` | {p.provider} | {p.status} | {p.application.get('state', '—')} | `{p.target_path}` |" for p in proposals]])
     lines = ["| Proposal ID | Status | Operation | Target Path | Created |", "|---|---|---|---|---|"]
     for p in proposals:
         lines.append(f"| `{p.proposal_id}` | {p.status} | {p.operation} | `{p.target_path}` | {p.created_at} |")
@@ -775,7 +906,10 @@ def format_review_result(proposal: DocProposal) -> str:
     ]
     if proposal.review_notes:
         lines.append(f"- **Notes:** {proposal.review_notes}")
-    if proposal.status == "approved":
+    if proposal.provider != "wiki":
+        lines.append(f"- **Provider:** {proposal.provider}\n- **Review digest:** `{proposal.review_digest}`")
+        lines.append("Review recorded only. Application requires fresh checks and separate write enablement.")
+    elif proposal.status == "approved":
         lines.append(
             f"\n> Ready to apply. Call `apply_doc_proposal(proposal_id=\"{proposal.proposal_id}\", "
             f"expected_sha256=\"{proposal.proposed_sha256}\")` with `dry_run=True` first."
@@ -784,6 +918,10 @@ def format_review_result(proposal: DocProposal) -> str:
 
 
 def format_apply_result(result: dict[str, Any]) -> str:
+    if result.get("provider") == "notion":
+        return "Notion application: " + json.dumps(result, indent=2, ensure_ascii=False)
+    if result.get("status") == "unsupported":
+        return f"Not applied: {result['error']}"
     if result["dry_run"]:
         return (
             f"### 🔍 Dry run — nothing written\n"
@@ -795,3 +933,20 @@ def format_apply_result(result: dict[str, Any]) -> str:
         f"### ✅ Applied\n"
         f"**{result['operation'].upper()}** wrote `{result['wrote']}`{commit_note}."
     )
+
+
+def format_provider_proposal(proposal: DocProposal) -> str:
+    # A longer fence keeps source backticks inside the review payload.
+    details = {"provider": proposal.provider, "target": proposal.target,
+               "operation": proposal.operation, "payload": proposal.payload,
+               "review_digest": proposal.review_digest,
+               "current_sha256": proposal.current_sha256,
+               "proposed_sha256": proposal.proposed_sha256,
+               "rationale": proposal.rationale, "source_context": proposal.source_context,
+               "application": proposal.application}
+    text = json.dumps(details, indent=2, ensure_ascii=False)
+    fence = "`" * max(3, max((len(m[0]) + 1 for m in re.finditer(r"`+", text + proposal.unified_diff)), default=3))
+    return (f"### Proposal `{proposal.proposal_id}` — {proposal.status}\n"
+            f"Target: `{proposal.target_path}`\n\n{fence}json\n{text}\n{fence}\n"
+            f"\n{fence}diff\n{proposal.unified_diff}\n{fence}\n"
+            "Staging/review do not modify source content. Application state is shown above.")

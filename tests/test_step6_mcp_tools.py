@@ -40,6 +40,33 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await close_graphiti()
 
+    async def test_notion_staging_review_and_disabled_apply_adapters(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        from server import mcp
+        from server.proposals import get_proposal
+        from tests.test_notion_proposals import API
+        from tests.test_notion_provider import uid
+
+        with tempfile.TemporaryDirectory(prefix="cmf-notion-mcp-") as directory:
+            with patch.dict(os.environ, {"CMF_STATE_DIR": directory}), patch("server.knowledge.load_knowledge_sources", return_value=[API().source()]):
+                inspected = json.loads(mcp.inspect_knowledge_document("notion", uid(1)))
+                target = inspected["blocks"][1]["target_path"]
+                result = mcp.propose_knowledge_change("notion", target, "MCP fixture replacement", "Offline fixture")
+                proposal_id = result.split("`")[1]
+                proposal = get_proposal(proposal_id)
+                self.assertIn(proposal.review_digest, await mcp.get_doc_proposal(proposal_id))
+                refused = await mcp.review_doc_proposal(proposal_id, "approved")
+                self.assertIn("expected_review_digest", refused)
+                approved = await mcp.review_doc_proposal(proposal_id, "approved", expected_review_digest=proposal.review_digest)
+                self.assertIn("approved", approved)
+                with patch("server.mcp.invalidate_corpus_cache", side_effect=AssertionError("wiki cache reached")):
+                    result = await mcp.apply_doc_proposal(proposal_id, proposal.proposed_sha256, dry_run=False,
+                                                           expected_review_digest=proposal.review_digest)
+                self.assertIn("disabled", result)
+                self.assertEqual(get_proposal(proposal_id).status, "approved")
+
     async def test_mcp_tool_registration_and_server_instructions(self):
         """Verify all 5 tools are registered, have server instructions, titles, and rich metadata."""
         # 1. Server Instructions
@@ -68,6 +95,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "promote_approved_episodes",
             "search_knowledge",
             "propose_knowledge_change",
+            "inspect_knowledge_document",
             # Nightly auto-review (2026-10-08)
             "get_review_batch", "record_review_recommendations",
             "list_review_recommendations", "confirm_review_recommendations",

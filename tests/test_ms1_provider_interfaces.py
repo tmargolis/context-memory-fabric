@@ -124,6 +124,7 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         names = {t.name for t in tools}
         self.assertIn("search_wiki", names)
         self.assertIn("propose_doc_update", names)
+        self.assertIn("inspect_knowledge_document", names)
         # 9 pre-MS4a tools + capture_health (MS4a MCP-boundary capture) +
         # promote_auto_accepted_memories + 5 MS6d proposal-review tools
         # (list/get/review/apply/bulk_reject_doc_proposals) + capture_session
@@ -138,8 +139,9 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # regardless of LLM_WIKI_PATH, since other providers may be configured) +
         # 4 nightly-review tools (2026-10-08: get_review_batch,
         # record/list/confirm_review_recommendations) + merge_episodes
-        # (2026-10-09, manual review merge) + close_review_run (2026-10-18).
-        self.assertEqual(len(names), 31)
+        # (2026-10-09, manual review merge) + close_review_run (2026-10-18) +
+        # inspect_knowledge_document (2026-10-21, optional source inspection).
+        self.assertEqual(len(names), 32)
 
 
 if __name__ == "__main__":

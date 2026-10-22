@@ -67,6 +67,8 @@ _states_lock = threading.Lock()
 # A single bounded LRU, rather than one unbounded cache for each workspace.
 _cache: OrderedDict[tuple[object, ...], tuple[str, tuple[str, ...]]] = OrderedDict()
 _cache_lock = threading.Lock()
+_cache_epoch = 0
+_page_epochs: dict[str, int] = {}
 
 
 def state_for(token: str, namespace: object, rate: int) -> tuple[str, CredentialState]:
@@ -93,10 +95,29 @@ def cache_drop(prefix: tuple[object, ...]) -> None:
                 del _cache[key]
 
 
-def cache_publish(entries: dict[tuple[object, ...], tuple[str, tuple[str, ...]]], budget: Budget) -> None:
+def cache_epoch(page_id: str | None = None) -> int:
     with _cache_lock:
+        return _cache_epoch if page_id is None else _page_epochs.get(page_id, 0)
+
+
+def invalidate_page(page_id: str) -> None:
+    global _cache_epoch
+    with _cache_lock:
+        _cache_epoch += 1
+        _page_epochs[page_id] = _cache_epoch
+        for key in list(_cache):
+            if len(key) >= 2 and key[-2] == page_id:
+                del _cache[key]
+
+
+def cache_publish(entries: dict[tuple[object, ...], tuple[str, tuple[str, ...]]], budget: Budget, epoch: int | dict[str, int] | None = None) -> None:
+    with _cache_lock:
+        if isinstance(epoch, int) and epoch != _cache_epoch:
+            return
         budget.remaining()
         for key, value in entries.items():
+            if isinstance(epoch, dict) and epoch.get(key[-2]) != _page_epochs.get(key[-2], 0):
+                continue
             for old in list(_cache):
                 if old[:-1] == key[:-1]:
                     del _cache[old]
@@ -240,6 +261,31 @@ class NotionClient:
                 return payload
             except httpx.HTTPError:
                 raise error("network failure; check connectivity") from None
+
+    async def patch_once(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """One mutation attempt, with no retry on any outcome."""
+        await self.pace()
+        self.budget.remaining()
+        async with self.http.stream("PATCH", path, json=payload,
+                                    timeout=httpx.Timeout(min(5.0, self.budget.remaining()))) as response:
+            if response.status_code in (429, 529):
+                raw = response.headers.get("Retry-After", "")
+                delay = int(raw) if raw.isascii() and raw.isdecimal() else 1
+                with self.state.lock:
+                    self.state.cooldown = max(self.state.cooldown, self.clock() + delay)
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                self.budget.remaining()
+                data.extend(chunk)
+                if len(data) > MAX_RESPONSE_BYTES:
+                    raise error("mutation response exceeds bounded size; reconcile outcome")
+            if response.status_code >= 300:
+                raise error(f"mutation HTTP {response.status_code}; reconcile outcome before retry")
+        self.budget.remaining()
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise error("invalid mutation reply; reconcile outcome")
+        return value
 
     async def pages(self, path: str, body: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []

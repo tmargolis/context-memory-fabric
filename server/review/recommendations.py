@@ -224,7 +224,7 @@ def build_batch(
         if m.get("memory_id") and m["memory_id"] not in seen
     ]
     episodes.sort(key=lambda m: m.get("written_at") or "")
-    docs = [p for p in list_proposals(status="pending_review", proposals_dir=proposals_dir) if p.proposal_id not in seen]
+    docs = [p for p in list_proposals(status="pending_review", proposals_dir=proposals_dir) if p.provider == "wiki" and p.proposal_id not in seen]
     docs.sort(key=lambda p: p.created_at or "")
 
     # Docs are fewer and slower to judge; give them up to a fifth of the batch.
@@ -468,6 +468,8 @@ def _confirm_doc(item_id, rebuild_id, final, reviewer, reason, proposals_dir, ge
     original = get_proposal(item_id, proposals_dir)
     if original is None:
         raise ValueError(f"proposal {item_id} not found")
+    if original.provider != "wiki":
+        raise ValueError("Provider proposals require manual digest-bound review.")
     if final == "approve" and rebuild_id:
         review_proposal(rebuild_id, "approved", reviewer=reviewer, notes=reason, proposals_dir=proposals_dir)
         if original.status == "pending_review":
@@ -538,6 +540,8 @@ def go_live(
             proposal = get_proposal(item["item_id"], proposals_dir)
             if proposal is None:
                 raise ValueError(f"proposal {item['item_id']} not found")
+            if proposal.provider != "wiki":
+                raise ValueError("Provider proposals are paused in automatic application.")
             apply_proposal(item["item_id"], expected_sha256=proposal.proposed_sha256, dry_run=False,
                            wiki_root=wiki_root, proposals_dir=proposals_dir)
             out["applied"].append(item["label"])

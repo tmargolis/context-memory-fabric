@@ -35,6 +35,7 @@ from server.context import get_context as assemble_context
 from server.knowledge import (
     format_knowledge_search,
     propose_knowledge_change as run_propose_knowledge_change,
+    inspect_knowledge_document as run_inspect_knowledge_document,
     search_knowledge as run_search_knowledge,
 )
 from server.core.config import default_reviewer, load_config
@@ -712,10 +713,33 @@ app.tool(
 )(search_knowledge)
 
 
+def inspect_knowledge_document(
+    provider: Annotated[str, Field(description="Knowledge provider name, such as notion.")],
+    document_id: Annotated[str, Field(description="Stable document ID from search_knowledge; Notion uses the page UUID.")],
+) -> str:
+    """Inspect live source blocks before proposing an exact change.
+
+    WHEN TO USE:
+    - After search_knowledge identifies a page, inspect its bounded block tree to
+      select a supported paragraph target. Omissions are explicit.
+
+    SIDE EFFECTS:
+    - Read-only external requests. Never stages a proposal or modifies source content.
+    """
+    return json.dumps(run_inspect_knowledge_document(provider, document_id), ensure_ascii=False, indent=2)
+
+
+app.tool(
+    title="Inspect Knowledge Document",
+    annotations=types.ToolAnnotations(read_only_hint=True, destructive_hint=False,
+                                     idempotent_hint=True, open_world_hint=False),
+)(inspect_knowledge_document)
+
+
 def propose_knowledge_change(
     provider: Annotated[str, Field(description="The knowledge provider to propose the change to (e.g. 'wiki').")],
     target_path: Annotated[str, Field(description="The document to change, in the provider's own addressing (for the wiki: a path relative to LLM_Wiki).")],
-    proposed_content: Annotated[str, Field(description="The complete proposed new content of the document.")],
+    proposed_content: Annotated[str, Field(description="The complete replacement: wiki document text, or 1–2,000 characters for one inspected Notion plain-text paragraph.")],
     rationale: Annotated[str, Field(description="Why this change should be made.")],
     source_context: Annotated[
         Optional[str], Field(description="Optional supporting context or evidence for the change.")
@@ -727,7 +751,9 @@ def propose_knowledge_change(
     - Same as propose_doc_update, when the target provider is named explicitly or may not be the wiki.
 
     DISTINCTIONS:
-    - Routes to the named provider's own proposal path (the wiki's is propose_doc_update's). A read-only provider (e.g. gmail) reports that it doesn't accept proposals.
+    - Routes to the provider staging path. For Notion, inspect_knowledge_document supplies
+      the paragraph target URI; staging reads fresh source evidence and never applies it.
+      Providers without staging support (e.g. gmail) report that they accept no proposals.
 
     SIDE EFFECTS:
     - Creates a pending proposal for review. Does not modify the knowledge source.
@@ -827,11 +853,15 @@ async def review_doc_proposal(
         Optional[str],
         Field(description="Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name."),
     ] = None,
+    expected_review_digest: Annotated[
+        Optional[str], Field(description="Required for Notion: the exact review_digest returned by get_doc_proposal. Optional for legacy wiki proposals.")
+    ] = None,
 ) -> str:
     """Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.
 
     WHEN TO USE:
     - Use after reading a proposal's diff via get_doc_proposal, to approve or reject it.
+      Notion requires its target-bound review digest; application has separate write gates.
 
     CRITICAL SAFETY CONTRACT:
     - This tool only records a decision. It never writes to the canonical Wiki — only
@@ -844,7 +874,8 @@ async def review_doc_proposal(
     """
     try:
         proposal = review_proposal(
-            proposal_id, verdict, reviewer=reviewer or default_reviewer(), notes=notes
+            proposal_id, verdict, reviewer=reviewer or default_reviewer(), notes=notes,
+            expected_review_digest=expected_review_digest
         )
         return format_review_result(proposal)
     except ValueError as e:
@@ -866,6 +897,12 @@ async def apply_doc_proposal(
         bool,
         Field(description="If true (default), reports what would happen without writing anything. Set false to actually apply."),
     ] = True,
+    expected_review_digest: Annotated[
+        Optional[str], Field(description="Required for Notion: the exact review_digest returned by get_doc_proposal. Optional for legacy wiki proposals.")
+    ] = None,
+    reconcile: Annotated[
+        bool, Field(description="Notion only: explicitly reconcile an unknown/interrupted attempt using fresh reads. Never sends PATCH; unchanged base requires a later explicit apply call to retry.")
+    ] = False,
 ) -> str:
     """Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool
     that modifies the canonical durable-knowledge corpus.
@@ -875,7 +912,10 @@ async def apply_doc_proposal(
       actually apply it. A dry run is optional, for a preview of what would be written.
 
     CRITICAL SAFETY CONTRACT:
-    - Refuses any proposal not already 'approved'.
+    - Notion requires approval, both matching digests, and fresh source checks. Real writes
+      require explicit CMF_NOTION_ENABLE_WRITES and a separate CMF_NOTION_WRITE_TOKEN.
+      Unknown outcomes block another PATCH until explicit read-only reconciliation.
+    - Refuses any wiki proposal not already 'approved'.
     - Refuses if the live target file has changed since the proposal was created (its
       current hash no longer matches what the proposal was diffed against), or — for a
       new-file proposal — if the target now exists. Either drift is reported by name, not
@@ -887,15 +927,18 @@ async def apply_doc_proposal(
       is present, as a free undo path.
 
     SIDE EFFECTS:
-    - dry_run=True (default): none. dry_run=False: writes the target file inside
+    - Notion dry run reads fresh source only; reconcile=True also records reconciliation.
+      Real Notion apply persists an attempt, sends one paragraph PATCH and verifies it.
+    - Wiki dry_run=True (default): none. dry_run=False: writes the target file inside
       LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates
       search_wiki's in-memory corpus cache so the change is visible on the next
       search_wiki call rather than sitting behind a stale index.
     """
     try:
-        result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run)
+        result = apply_proposal(proposal_id, expected_sha256=expected_sha256, dry_run=dry_run,
+                                expected_review_digest=expected_review_digest, reconcile=reconcile)
         message = format_apply_result(result)
-        if not result["dry_run"]:
+        if result.get("provider", "wiki") == "wiki" and result.get("status") != "unsupported" and not result["dry_run"]:
             invalidate_corpus_cache()
             message += "\n\n`search_wiki`'s cache was invalidated — the next call rescans from disk."
         return message

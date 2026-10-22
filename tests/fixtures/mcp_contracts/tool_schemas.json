@@ -2,7 +2,7 @@
   "apply_doc_proposal": {
     "name": "apply_doc_proposal",
     "title": "Apply Doc Proposal",
-    "description": "Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_doc_proposal, to\n      actually apply it. A dry run is optional, for a preview of what would be written.\n\n    CRITICAL SAFETY CONTRACT:\n    - Refuses any proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or \u2014 for a\n      new-file proposal \u2014 if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - Writes exactly the reviewed content. An additive proposal was rendered onto the live\n      page when it was made; if that page has changed since, the stale-base refusal above\n      applies and a fresh proposal is needed. Nothing is rebased at apply time.\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
+    "description": "Write an approved doc proposal's content into LLM_Wiki (MS6d). The only MCP tool\n    that modifies the canonical durable-knowledge corpus.\n\n    WHEN TO USE:\n    - Use once a proposal has been reviewed and approved via review_doc_proposal, to\n      actually apply it. A dry run is optional, for a preview of what would be written.\n\n    CRITICAL SAFETY CONTRACT:\n    - Notion requires approval, both matching digests, and fresh source checks. Real writes\n      require explicit CMF_NOTION_ENABLE_WRITES and a separate CMF_NOTION_WRITE_TOKEN.\n      Unknown outcomes block another PATCH until explicit read-only reconciliation.\n    - Refuses any wiki proposal not already 'approved'.\n    - Refuses if the live target file has changed since the proposal was created (its\n      current hash no longer matches what the proposal was diffed against), or — for a\n      new-file proposal — if the target now exists. Either drift is reported by name, not\n      silently overwritten.\n    - Writes exactly the reviewed content. An additive proposal was rendered onto the live\n      page when it was made; if that page has changed since, the stale-base refusal above\n      applies and a fresh proposal is needed. Nothing is rebased at apply time.\n    - On a real (non-dry-run) apply, commits the change in the LLM_Wiki git repo when one\n      is present, as a free undo path.\n\n    SIDE EFFECTS:\n    - Notion dry run reads fresh source only; reconcile=True also records reconciliation.\n      Real Notion apply persists an attempt, sends one paragraph PATCH and verifies it.\n    - Wiki dry_run=True (default): none. dry_run=False: writes the target file inside\n      LLM_WIKI_PATH, best-effort commits it in the LLM_Wiki git repo, and invalidates\n      search_wiki's in-memory corpus cache so the change is visible on the next\n      search_wiki call rather than sitting behind a stale index.\n    ",
     "input_schema": {
       "properties": {
         "proposal_id": {
@@ -19,6 +19,25 @@
           "default": true,
           "description": "If true (default), reports what would happen without writing anything. Set false to actually apply.",
           "title": "Dry Run",
+          "type": "boolean"
+        },
+        "expected_review_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required for Notion: the exact review_digest returned by get_doc_proposal. Optional for legacy wiki proposals.",
+          "title": "Expected Review Digest"
+        },
+        "reconcile": {
+          "default": false,
+          "description": "Notion only: explicitly reconcile an unknown/interrupted attempt using fresh reads. Never sends PATCH; unchanged base requires a later explicit apply call to retry.",
+          "title": "Reconcile",
           "type": "boolean"
         }
       },
@@ -58,7 +77,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Reject a batch of pending doc proposals with one recorded reason each (MS6d).\n\n    WHEN TO USE:\n    - Use to triage the pending-review backlog in one pass rather than one call per\n      proposal \u2014 each rejection is still individually recorded, just sharing one reason.\n\n    DISTINCTIONS:\n    - Each proposal_id not currently 'pending_review' is skipped and reported, not silently\n      dropped or treated as an error for the whole batch.\n    ",
+    "description": "Reject a batch of pending doc proposals with one recorded reason each (MS6d).\n\n    WHEN TO USE:\n    - Use to triage the pending-review backlog in one pass rather than one call per\n      proposal — each rejection is still individually recorded, just sharing one reason.\n\n    DISTINCTIONS:\n    - Each proposal_id not currently 'pending_review' is skipped and reported, not silently\n      dropped or treated as an error for the whole batch.\n    ",
     "input_schema": {
       "properties": {
         "proposal_ids": {
@@ -106,7 +125,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.\n\n    WHEN TO USE:\n    - Use to clear several episodes at once rather than one review_episode call per episode \u2014 each\n      decision is still individually recorded, with its own optional reason.\n\n    DISTINCTIONS:\n    - Unlike bulk_reject_doc_proposals, this accepts mixed verdicts (approve some, reject others,\n      defer the rest) in a single call, not just a batch reject with one shared reason.\n    ",
+    "description": "Record decisions on a batch of staged episodes in one call, e.g. to triage a review backlog.\n\n    WHEN TO USE:\n    - Use to clear several episodes at once rather than one review_episode call per episode — each\n      decision is still individually recorded, with its own optional reason.\n\n    DISTINCTIONS:\n    - Unlike bulk_reject_doc_proposals, this accepts mixed verdicts (approve some, reject others,\n      defer the rest) in a single call, not just a batch reject with one shared reason.\n    ",
     "input_schema": {
       "properties": {
         "reviewer": {
@@ -162,7 +181,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.\n\n    WHEN TO USE:\n    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture\n      queue currently is.\n    - Also reports FalkorDB's query TIMEOUT, warning when it has drifted below the 30000 ms docker-compose sets.\n\n    SIDE EFFECTS:\n    - Read-only. In-process counters only (reset on server restart) \u2014 durable counts live in the journal\n      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).\n    ",
+    "description": "Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.\n\n    WHEN TO USE:\n    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture\n      queue currently is.\n    - Also reports FalkorDB's query TIMEOUT, warning when it has drifted below the 30000 ms docker-compose sets.\n\n    SIDE EFFECTS:\n    - Read-only. In-process counters only (reset on server restart) — durable counts live in the journal\n      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).\n    ",
     "input_schema": {
       "properties": {},
       "title": "capture_healthArguments",
@@ -192,11 +211,11 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    doc proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints \u2014 a decision reached, a milestone hit, a session wrapping up \u2014 the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation \u2014 a fact about a point in time.\n    - destination=\"doc_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning \u2014 weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one episode directly to Graphiti with no review step at\n      all \u2014 this tool stages episodes into the same reviewable queue offline extraction uses\n      (`tier1_review_queue()`), not a direct graph write. Different from `propose_doc_update` only in\n      that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"doc_proposal\" item creates a pending proposal file\n      under proposals-docs/ \u2014 LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
+    "description": "Capture multiple distinct findings from a live Cowork conversation in one call, each routed to\n    either episodic memory (staged for review, same as offline reasoning-episode extraction) or a durable\n    doc proposal.\n\n    WHEN TO USE:\n    - Call at natural checkpoints — a decision reached, a milestone hit, a session wrapping up — the same\n      moments SERVER_INSTRUCTIONS already flags. Prefer this over calling `remember` N separate times when\n      a conversation produced several distinct things worth keeping at once.\n\n    ROUTING RULE (apply this per item):\n    - destination=\"episode\": something that HAPPENED, was DECIDED, or was CONCLUDED during this\n      conversation — a fact about a point in time.\n    - destination=\"doc_proposal\": durable, reusable, reference-shaped knowledge that would still be true\n      and useful read cold, later, out of this conversation's context.\n\n    WHAT COUNTS AS AN EPISODE (same bar the offline extraction pipeline applies): the user must be\n    reasoning — weighing options, forming or testing an idea, diagnosing a problem, concluding something,\n    or committing to an approach. Do NOT create an episode for a bare task request with no reasoning, a\n    simple factual lookup, pure editing/wording tweaks, or a restatement of what the assistant said.\n    Prefer fewer, well-founded items over many thin ones.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one episode directly to Graphiti with no review step at\n      all — this tool stages episodes into the same reviewable queue offline extraction uses\n      (`tier1_review_queue()`), not a direct graph write. Different from `propose_doc_update` only in\n      that this tool lets you submit several proposals (and episodes) together in one call.\n\n    SIDE EFFECTS:\n    - Each \"episode\" item journals a lightweight evidence event, then stages a reasoning episode with\n      approval_state driven by CMF_REASONING_AUTO_ACCEPT_THRESHOLD (unset = always queued for human\n      review, matching this project's default). Each \"doc_proposal\" item creates a pending proposal file\n      under proposals-docs/ — LLM_Wiki itself is never modified by this tool. One invalid item is reported\n      individually; it does not prevent the other items in the same call from being captured.\n    ",
     "input_schema": {
       "properties": {
         "items": {
-          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that destination:\n  destination='episode' \u2014 statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='doc_proposal' \u2014 target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): new body material only for an existing page, complete content for a new page; target_heading (str, optional), source_date (YYYY-MM-DD from source evidence, optional); doc_rationale (str, required): why this belongs in durable knowledge.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item \u2014 for 'episode' this becomes the item's only trace in the evidence journal; for 'doc_proposal' it is carried as background context.",
+          "description": "One entry per distinct fact worth keeping from this conversation. Each item is an object with a required 'destination' field ('episode' or 'doc_proposal') plus fields for that destination:\n  destination='episode' — statement (str, required): a concise synthesis in your own words (1-3 sentences), not a quote; reasoning_kind (str, required): one of investigation / hypothesis / experiment / finding / rejected_alternative / decision / retrospective / plan; confidence (float 0-1, required): 0.85-1.0 if explicit and unambiguous in the user's own words, 0.6-0.85 if clear but stitched across turns, 0.4-0.6 if inferred from terse turns or context; driving_question (str, optional); rationale (str, optional); thread_key (str, optional): short lowercase hyphenated topic slug, stable across chats about the same undertaking.\n  destination='doc_proposal' — target_path (str, required): relative path within LLM_Wiki; proposed_content (str, required): new body material only for an existing page, complete content for a new page; target_heading (str, optional), source_date (YYYY-MM-DD from source evidence, optional); doc_rationale (str, required): why this belongs in durable knowledge.\n  Both destinations also require evidence_text (str): your own quoted or paraphrased excerpt supporting this item — for 'episode' this becomes the item's only trace in the evidence journal; for 'doc_proposal' it is carried as background context.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -712,7 +731,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture \u2014 both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n    - Call list_review_conversations() first, then pass one of its conversation_ids or projects here, to\n      review a batch conversation-by-conversation or project-by-project instead of as one long flat list \u2014\n      the recommended flow for a large backlog from a single source (e.g. an offline consolidation run\n      over many sessions spanning several projects).\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n    - 'Show me what came out of that one conversation.'\n    - 'Show me the episodes for the project-atlas project.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates. Different\n      from list_review_conversations, which lists the conversations themselves with pending counts, not\n      the episodes inside one.\n    ",
+    "description": "List staged reasoning episodes awaiting or past review. Read-only.\n\n    WHEN TO USE:\n    - Use to see what's waiting for review, from either the offline windowed pipeline or capture_session's\n      live capture — both stage through the same queue and both are listed here.\n    - Use before review_episode, to find the memory_id.\n    - Call list_review_conversations() first, then pass one of its conversation_ids or projects here, to\n      review a batch conversation-by-conversation or project-by-project instead of as one long flat list —\n      the recommended flow for a large backlog from a single source (e.g. an offline consolidation run\n      over many sessions spanning several projects).\n\n    EXAMPLES OF USER INTENT:\n    - 'What episodes are still queued for review?'\n    - 'Show me the tier1 decisions waiting to be reviewed.'\n    - 'Show me what came out of that one conversation.'\n    - 'Show me the episodes for the project-atlas project.'\n\n    DISTINCTIONS:\n    - Read-only listing. Use get_episode_proposal for one episode's full detail. Different from\n      list_doc_proposals, which lists durable doc proposals, not episodic memory candidates. Different\n      from list_review_conversations, which lists the conversations themselves with pending counts, not\n      the episodes inside one.\n    ",
     "input_schema": {
       "properties": {
         "approval_state": {
@@ -795,7 +814,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "List conversations/sessions that have staged episodes or doc proposals awaiting review, with\n    per-conversation pending counts. Read-only.\n\n    WHEN TO USE:\n    - Use as the first step of a conversation-by-conversation review pass over a batch that came from one\n      source (e.g. an offline consolidation run over many Claude Code sessions) \u2014 pick a conversation_id\n      from here, then call list_episode_proposals(conversation_id=...) / list_doc_proposals(conversation_id=...)\n      to review just that conversation's items as one coherent unit, instead of one long undifferentiated list.\n    - Sorted busiest-first (tier-1 episodes + doc proposals), so working top-to-bottom clears the largest\n      chunks of the backlog soonest.\n    - Filter to a specific batch with `harness`/`policy_name` \u2014 e.g. `harness=\"claude_code\", policy_name=\"extract\"`\n      for an ExtractPolicyV1 consolidation run's own output. Unfiltered spans the whole corpus's backlog,\n      which is rarely what you want (see the `harness` field description).\n    - Add `project` when one consolidation run spans several projects (e.g. a launchd poller sweeping\n      multiple `~/Dev` repos) and you'd rather clear one project's items before moving to the next, instead\n      of working through conversations in busiest-first order regardless of which project they belong to.\n\n    EXAMPLES OF USER INTENT:\n    - 'I want to review these by conversation, not as one big list.'\n    - 'Which sessions still have pending episodes or doc proposals?'\n    - 'Show me just the conversations from that Claude Code batch.'\n    - 'Let's go through this project-by-project instead of by conversation.'\n\n    DISTINCTIONS:\n    - Read-only. Lists conversations, not the items inside them \u2014 list_episode_proposals/list_doc_proposals\n      still do that, now with optional conversation_id/project filters. Tier-2 episode counts are shown for\n      context only; they are not in review scope and are not part of the \"review-scope\" total.\n    - An item with no resolvable source conversation (written before this existed, or an unlinkable doc\n      proposal) is not represented in any bucket here \u2014 it still shows up in the unfiltered listings.\n    ",
+    "description": "List conversations/sessions that have staged episodes or doc proposals awaiting review, with\n    per-conversation pending counts. Read-only.\n\n    WHEN TO USE:\n    - Use as the first step of a conversation-by-conversation review pass over a batch that came from one\n      source (e.g. an offline consolidation run over many Claude Code sessions) — pick a conversation_id\n      from here, then call list_episode_proposals(conversation_id=...) / list_doc_proposals(conversation_id=...)\n      to review just that conversation's items as one coherent unit, instead of one long undifferentiated list.\n    - Sorted busiest-first (tier-1 episodes + doc proposals), so working top-to-bottom clears the largest\n      chunks of the backlog soonest.\n    - Filter to a specific batch with `harness`/`policy_name` — e.g. `harness=\"claude_code\", policy_name=\"extract\"`\n      for an ExtractPolicyV1 consolidation run's own output. Unfiltered spans the whole corpus's backlog,\n      which is rarely what you want (see the `harness` field description).\n    - Add `project` when one consolidation run spans several projects (e.g. a launchd poller sweeping\n      multiple `~/Dev` repos) and you'd rather clear one project's items before moving to the next, instead\n      of working through conversations in busiest-first order regardless of which project they belong to.\n\n    EXAMPLES OF USER INTENT:\n    - 'I want to review these by conversation, not as one big list.'\n    - 'Which sessions still have pending episodes or doc proposals?'\n    - 'Show me just the conversations from that Claude Code batch.'\n    - 'Let's go through this project-by-project instead of by conversation.'\n\n    DISTINCTIONS:\n    - Read-only. Lists conversations, not the items inside them — list_episode_proposals/list_doc_proposals\n      still do that, now with optional conversation_id/project filters. Tier-2 episode counts are shown for\n      context only; they are not in review scope and are not part of the \"review-scope\" total.\n    - An item with no resolvable source conversation (written before this existed, or an unlinkable doc\n      proposal) is not represented in any bucket here — it still shows up in the unfiltered listings.\n    ",
     "input_schema": {
       "properties": {
         "harness": {
@@ -808,12 +827,12 @@
             }
           ],
           "default": null,
-          "description": "Filter to one harness (e.g. 'claude_code', 'chatgpt', 'gemini', 'claude'). Strongly recommended over listing unfiltered \u2014 the unfiltered corpus-wide view is hundreds of conversations, mostly old tier-2-only leftovers.",
+          "description": "Filter to one harness (e.g. 'claude_code', 'chatgpt', 'gemini', 'claude'). Strongly recommended over listing unfiltered — the unfiltered corpus-wide view is hundreds of conversations, mostly old tier-2-only leftovers.",
           "title": "Harness"
         },
         "include_tier2_only": {
           "default": false,
-          "description": "If true, also list conversations whose only pending items are tier-2 episodes (out of review scope) \u2014 default false hides these as exhausted-backlog noise.",
+          "description": "If true, also list conversations whose only pending items are tier-2 episodes (out of review scope) — default false hides these as exhausted-backlog noise.",
           "title": "Include Tier2 Only",
           "type": "boolean"
         },
@@ -827,7 +846,7 @@
             }
           ],
           "default": null,
-          "description": "Filter episodes to one extraction policy (e.g. 'extract', 'reasoning-episode', 'cowork_live_v1'). Doc proposals have no policy_name and are unaffected by this filter \u2014 combine with `harness` to scope both together.",
+          "description": "Filter episodes to one extraction policy (e.g. 'extract', 'reasoning-episode', 'cowork_live_v1'). Doc proposals have no policy_name and are unaffected by this filter — combine with `harness` to scope both together.",
           "title": "Policy Name"
         },
         "project": {
@@ -840,7 +859,7 @@
             }
           ],
           "default": null,
-          "description": "Filter to one project (e.g. 'context-memory-fabric', 'project-atlas') on both episodes and doc proposals. A conversation whose items carry no project (written before this field existed) never matches a non-None value \u2014 use this to review a large multi-project batch project-by-project.",
+          "description": "Filter to one project (e.g. 'context-memory-fabric', 'project-atlas') on both episodes and doc proposals. A conversation whose items carry no project (written before this field existed) never matches a non-None value — use this to review a large multi-project batch project-by-project.",
           "title": "Project"
         }
       },
@@ -866,11 +885,11 @@
   "promote_approved_episodes": {
     "name": "promote_approved_episodes",
     "title": "Promote Approved Episodes",
-    "description": "Promote ONE episode with a recorded 'approved' review verdict into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between `review_episode`/`bulk_review_episodes` (which only record a verdict in\n      the `reviews` table, per their own CRITICAL SAFETY CONTRACT) and actual episodic memory, one episode\n      per call. Local-model entity/fact extraction can take 1\u20134 minutes per episode, so a multi-episode call\n      outlives client tool-call timeouts and overloads the model server; for several episodes, call this\n      once per episode, or run `python -m server.review.cli promote` from a terminal for a bulk batch.\n    - Only an episode with `review_state='approved'` and not already promoted is eligible. An episode whose\n      `derived_memories.approval_state` has since moved to rejected/superseded is refused even if an old\n      'approved' verdict is still on record \u2014 this is what stopped a real production bug where a corrected\n      memory's stale approval silently re-created the pre-correction content in the graph.\n\n    DISTINCTIONS:\n    - Different from `promote_auto_accepted_memories`, which only promotes the separate `auto_accepted`\n      consolidation lane (never touches anything that went through human review).\n    - Different from `remember`, which writes one explicit statement directly with no idempotency ledger,\n      episode-naming scheme, or rate-limit handling.\n    - Idempotent: an episode already promoted in a prior call (or via `python -m server.review.cli promote`)\n      is skipped, never promoted twice \u2014 both share the same `PromotionStore` ledger.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` once for the episode and records the outcome in the same ledger\n      the CLI's `promote` command uses.\n    ",
+    "description": "Promote ONE episode with a recorded 'approved' review verdict into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between `review_episode`/`bulk_review_episodes` (which only record a verdict in\n      the `reviews` table, per their own CRITICAL SAFETY CONTRACT) and actual episodic memory, one episode\n      per call. Local-model entity/fact extraction can take 1–4 minutes per episode, so a multi-episode call\n      outlives client tool-call timeouts and overloads the model server; for several episodes, call this\n      once per episode, or run `python -m server.review.cli promote` from a terminal for a bulk batch.\n    - Only an episode with `review_state='approved'` and not already promoted is eligible. An episode whose\n      `derived_memories.approval_state` has since moved to rejected/superseded is refused even if an old\n      'approved' verdict is still on record — this is what stopped a real production bug where a corrected\n      memory's stale approval silently re-created the pre-correction content in the graph.\n\n    DISTINCTIONS:\n    - Different from `promote_auto_accepted_memories`, which only promotes the separate `auto_accepted`\n      consolidation lane (never touches anything that went through human review).\n    - Different from `remember`, which writes one explicit statement directly with no idempotency ledger,\n      episode-naming scheme, or rate-limit handling.\n    - Idempotent: an episode already promoted in a prior call (or via `python -m server.review.cli promote`)\n      is skipped, never promoted twice — both share the same `PromotionStore` ledger.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` once for the episode and records the outcome in the same ledger\n      the CLI's `promote` command uses.\n    ",
     "input_schema": {
       "properties": {
         "memory_id": {
-          "description": "The one review-approved episode to promote (from `list_episode_proposals` / `get_episode_proposal`). One per call by design \u2014 bulk promotion is CLI-only (`python -m server.review.cli promote`).",
+          "description": "The one review-approved episode to promote (from `list_episode_proposals` / `get_episode_proposal`). One per call by design — bulk promotion is CLI-only (`python -m server.review.cli promote`).",
           "title": "Memory Id",
           "type": "string"
         },
@@ -916,7 +935,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Promote consolidation candidates already classified 'auto_accepted' into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between the evidence journal's consolidation pipeline (which only classifies and stages\n      candidates locally) and actual episodic memory. Only `approval_state='auto_accepted'` candidates are eligible \u2014\n      queued-for-review and rejected candidates are untouched; they require Milestone 6 review tooling, not this tool.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one explicit statement directly. This tool operates on already-classified\n      candidates from `server.consolidation.pipeline`'s local `derived_memories` table.\n    - Idempotent: a candidate already promoted in a prior call is skipped, never promoted twice.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter) for each eligible\n      candidate and records the outcome. A rate-limiter exhaustion stops the run early without losing or\n      double-processing any candidate \u2014 safe to re-run later.\n    ",
+    "description": "Promote consolidation candidates already classified 'auto_accepted' into episodic memory (Graphiti/FalkorDB).\n\n    WHEN TO USE:\n    - Use to close the gap between the evidence journal's consolidation pipeline (which only classifies and stages\n      candidates locally) and actual episodic memory. Only `approval_state='auto_accepted'` candidates are eligible —\n      queued-for-review and rejected candidates are untouched; they require Milestone 6 review tooling, not this tool.\n\n    DISTINCTIONS:\n    - Different from `remember`, which writes one explicit statement directly. This tool operates on already-classified\n      candidates from `server.consolidation.pipeline`'s local `derived_memories` table.\n    - Idempotent: a candidate already promoted in a prior call is skipped, never promoted twice.\n\n    SIDE EFFECTS:\n    - When dry_run=False, calls `remember()` (subject to the Gemini free-tier rate limiter) for each eligible\n      candidate and records the outcome. A rate-limiter exhaustion stops the run early without losing or\n      double-processing any candidate — safe to re-run later.\n    ",
     "input_schema": {
       "properties": {
         "dry_run": {
@@ -935,7 +954,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum number of candidates to promote in this call (omit for no cap). A full run is a real, minutes-long operation \u2014 start with a small limit.",
+          "description": "Maximum number of candidates to promote in this call (omit for no cap). A full run is a real, minutes-long operation — start with a small limit.",
           "title": "Limit"
         }
       },
@@ -1195,16 +1214,21 @@
     "title": "Remember Episodic Event or Decision"
   },
   "review_doc_proposal": {
-    "annotations": {
-      "destructive_hint": false,
-      "idempotent_hint": false,
-      "open_world_hint": false,
-      "read_only_hint": false,
-      "title": null
-    },
-    "description": "Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.\n\n    WHEN TO USE:\n    - Use after reading a proposal's diff via get_doc_proposal, to approve or reject it.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision. It never writes to the canonical Wiki \u2014 only\n      apply_doc_proposal does that, and only on a proposal this tool has already approved.\n      No single tool call can get from a fresh proposal to a canonical write.\n\n    DISTINCTIONS:\n    - Refuses a proposal that isn't currently 'pending_review' \u2014 re-review is not a silent\n      overwrite of a prior verdict.\n    ",
+    "name": "review_doc_proposal",
+    "title": "Review Doc Proposal",
+    "description": "Record a human decision on a pending doc proposal (MS6d). Does NOT modify LLM_Wiki.\n\n    WHEN TO USE:\n    - Use after reading a proposal's diff via get_doc_proposal, to approve or reject it.\n      Notion requires its target-bound review digest; application has separate write gates.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision. It never writes to the canonical Wiki — only\n      apply_doc_proposal does that, and only on a proposal this tool has already approved.\n      No single tool call can get from a fresh proposal to a canonical write.\n\n    DISTINCTIONS:\n    - Refuses a proposal that isn't currently 'pending_review' — re-review is not a silent\n      overwrite of a prior verdict.\n    ",
     "input_schema": {
       "properties": {
+        "proposal_id": {
+          "description": "The proposal_id to review.",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "'approved' or 'rejected'.",
+          "title": "Verdict",
+          "type": "string"
+        },
         "notes": {
           "anyOf": [
             {
@@ -1215,13 +1239,8 @@
             }
           ],
           "default": null,
-          "description": "Why this verdict \u2014 a verdict with no recorded reason loses why it was made.",
+          "description": "Why this verdict — a verdict with no recorded reason loses why it was made.",
           "title": "Notes"
-        },
-        "proposal_id": {
-          "description": "The proposal_id to review.",
-          "title": "Proposal Id",
-          "type": "string"
         },
         "reviewer": {
           "anyOf": [
@@ -1236,10 +1255,18 @@
           "description": "Who is reviewing. Defaults to CMF_REVIEWER, else the OS login name.",
           "title": "Reviewer"
         },
-        "verdict": {
-          "description": "'approved' or 'rejected'.",
-          "title": "Verdict",
-          "type": "string"
+        "expected_review_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required for Notion: the exact review_digest returned by get_doc_proposal. Optional for legacy wiki proposals.",
+          "title": "Expected Review Digest"
         }
       },
       "required": [
@@ -1249,7 +1276,6 @@
       "title": "review_doc_proposalArguments",
       "type": "object"
     },
-    "name": "review_doc_proposal",
     "output_schema": {
       "properties": {
         "result": {
@@ -1263,7 +1289,13 @@
       "title": "review_doc_proposalOutput",
       "type": "object"
     },
-    "title": "Review Doc Proposal"
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": false,
+      "open_world_hint": false
+    }
   },
   "review_episode": {
     "annotations": {
@@ -1273,7 +1305,7 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.\n\n    WHEN TO USE:\n    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.\n    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) \u2014\n      use 'rejected' for anything that isn't a keeper, not as a soft rejection.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision \u2014 it never calls remember() or writes to Graphiti. A separately\n      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own\n      promotion step to actually reach episodic memory.\n\n    DISTINCTIONS:\n    - Different from review_doc_proposal, which decides a durable doc proposal, not an episode.\n    ",
+    "description": "Record a human decision on a staged reasoning episode. Does NOT write to Graphiti.\n\n    WHEN TO USE:\n    - Use after reading an episode's detail via get_episode_proposal, to approve, reject, or defer it.\n    - 'deferred' means genuinely undecided (leaves it staged, not moved to a terminal folder) —\n      use 'rejected' for anything that isn't a keeper, not as a soft rejection.\n\n    CRITICAL SAFETY CONTRACT:\n    - This tool only records a decision — it never calls remember() or writes to Graphiti. A separately\n      reviewed and promoted episode still needs promote_auto_accepted_memories or the review CLI's own\n      promotion step to actually reach episodic memory.\n\n    DISTINCTIONS:\n    - Different from review_doc_proposal, which decides a durable doc proposal, not an episode.\n    ",
     "input_schema": {
       "properties": {
         "memory_id": {
@@ -1291,7 +1323,7 @@
             }
           ],
           "default": null,
-          "description": "Why this verdict \u2014 a verdict with no recorded reason loses why it was made.",
+          "description": "Why this verdict — a verdict with no recorded reason loses why it was made.",
           "title": "Reason"
         },
         "reviewer": {
@@ -1451,7 +1483,7 @@
   "propose_knowledge_change": {
     "name": "propose_knowledge_change",
     "title": "Propose Knowledge Change",
-    "description": "Provider-neutral way to propose a change to durable knowledge; the change is staged for human review, never applied.\n\n    WHEN TO USE:\n    - Same as propose_doc_update, when the target provider is named explicitly or may not be the wiki.\n\n    DISTINCTIONS:\n    - Routes to the named provider's own proposal path (the wiki's is propose_doc_update's). A read-only provider (e.g. gmail) reports that it doesn't accept proposals.\n\n    SIDE EFFECTS:\n    - Creates a pending proposal for review. Does not modify the knowledge source.\n    ",
+    "description": "Provider-neutral way to propose a change to durable knowledge; the change is staged for human review, never applied.\n\n    WHEN TO USE:\n    - Same as propose_doc_update, when the target provider is named explicitly or may not be the wiki.\n\n    DISTINCTIONS:\n    - Routes to the provider staging path. For Notion, inspect_knowledge_document supplies\n      the paragraph target URI; staging reads fresh source evidence and never applies it.\n      Providers without staging support (e.g. gmail) report that they accept no proposals.\n\n    SIDE EFFECTS:\n    - Creates a pending proposal for review. Does not modify the knowledge source.\n    ",
     "input_schema": {
       "properties": {
         "provider": {
@@ -1465,7 +1497,7 @@
           "type": "string"
         },
         "proposed_content": {
-          "description": "The complete proposed new content of the document.",
+          "description": "The complete replacement: wiki document text, or 1–2,000 characters for one inspected Notion plain-text paragraph.",
           "title": "Proposed Content",
           "type": "string"
         },
@@ -1521,7 +1553,7 @@
   "get_review_batch": {
     "name": "get_review_batch",
     "title": "Get Review Batch",
-    "description": "Start a nightly review run: the review rules plus the staged items no earlier run has covered.\n\n    WHEN TO USE:\n    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with\n      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1\u2026)\n      and doc proposals (DOC1\u2026), oldest first. A doc carries `mode`: \"append\" adds `addition` to\n      the live page (under `target_heading` when set), \"replace\" is a whole-page rewrite to read\n      against the live page. `conflicts_with` lists other pending proposals for the same page.\n    - Then judge every item and call record_review_recommendations with the same `run_id`.\n\n    DISTINCTIONS:\n    - Changes nothing in the review queue. It only registers the run, so the next run skips\n      these items.\n    - Empty `items` means nothing new to review; say so and stop.\n    ",
+    "description": "Start a nightly review run: the review rules plus the staged items no earlier run has covered.\n\n    WHEN TO USE:\n    - First step of the scheduled nightly review (docs/NIGHTLY-REVIEW.md). Returns JSON with\n      `run_id`, `rules` (read them before judging), and `items`: pending tier-1 episodes (EP1…)\n      and doc proposals (DOC1…), oldest first. A doc carries `mode`: \"append\" adds `addition` to\n      the live page (under `target_heading` when set), \"replace\" is a whole-page rewrite to read\n      against the live page. `conflicts_with` lists other pending proposals for the same page.\n    - Then judge every item and call record_review_recommendations with the same `run_id`.\n\n    DISTINCTIONS:\n    - Changes nothing in the review queue. It only registers the run, so the next run skips\n      these items.\n    - Empty `items` means nothing new to review; say so and stop.\n    ",
     "input_schema": {
       "properties": {
         "max_items": {
@@ -1745,11 +1777,11 @@
       "read_only_hint": false,
       "title": null
     },
-    "description": "Merge 2\u201320 pending/deferred episodes from one conversation using caller-written text.\n\n    Preview by default; dry_run=False supersedes/rejects constituents and stages\n    the replacement for human review. No inference or promotion. Text is limited\n    to 3600 characters and 20 listed points. Approved candidates and any promotion\n    history are refused because promotion may already be in flight. All evidence\n    must share a harness/conversation and project assignments must agree. Identical\n    retries reuse the replacement and repair failed proposal mirrors. Read the\n    resulting proposal before approving it; merging is not approval.\n    ",
+    "description": "Merge 2–20 pending/deferred episodes from one conversation using caller-written text.\n\n    Preview by default; dry_run=False supersedes/rejects constituents and stages\n    the replacement for human review. No inference or promotion. Text is limited\n    to 3600 characters and 20 listed points. Approved candidates and any promotion\n    history are refused because promotion may already be in flight. All evidence\n    must share a harness/conversation and project assignments must agree. Identical\n    retries reuse the replacement and repair failed proposal mirrors. Read the\n    resulting proposal before approving it; merging is not approval.\n    ",
     "input_schema": {
       "properties": {
         "memory_ids": {
-          "description": "2\u201320 memory_ids of pending or deferred staged episodes, all from the same conversation.",
+          "description": "2–20 memory_ids of pending or deferred staged episodes, all from the same conversation.",
           "items": {
             "type": "string"
           },
@@ -1861,5 +1893,50 @@
       "idempotent_hint": false,
       "open_world_hint": false
     }
+  },
+  "inspect_knowledge_document": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Inspect live source blocks before proposing an exact change.\n\n    WHEN TO USE:\n    - After search_knowledge identifies a page, inspect its bounded block tree to\n      select a supported paragraph target. Omissions are explicit.\n\n    SIDE EFFECTS:\n    - Read-only external requests. Never stages a proposal or modifies source content.\n    ",
+    "input_schema": {
+      "properties": {
+        "document_id": {
+          "description": "Stable document ID from search_knowledge; Notion uses the page UUID.",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "provider": {
+          "description": "Knowledge provider name, such as notion.",
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "document_id"
+      ],
+      "title": "inspect_knowledge_documentArguments",
+      "type": "object"
+    },
+    "name": "inspect_knowledge_document",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "inspect_knowledge_documentOutput",
+      "type": "object"
+    },
+    "title": "Inspect Knowledge Document"
   }
 }

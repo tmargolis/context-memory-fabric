@@ -494,7 +494,8 @@ def run_reasoning_consolidation(
 
                 # Pending proposals: this conversation's (any earlier run) and the
                 # project's, so new material extends them instead of competing.
-                pending_now = list_proposals(proposals_dir=proposals_dir, status="pending_review")
+                pending_now = [p for p in list_proposals(proposals_dir=proposals_dir, status="pending_review")
+                               if p.provider == "wiki"]
                 context = PolicyContext(
                     topical_window=list(window.events),
                     open_threads=thread_index.scoped_threads(conversation_id=window.conversation_id or conv_key, project=project, as_of=max(e.observed_at for e in window.events), journal_store=journal_store),

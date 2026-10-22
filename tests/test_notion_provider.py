@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 from server.core.errors import ProviderConfigurationError
-from server.knowledge import load_knowledge_sources, propose_knowledge_change, search_knowledge
+from server.knowledge import load_knowledge_sources, search_knowledge
 from server.providers.notion import blocks
 from server.providers.notion.client import (
     Budget, CredentialState, NotionClient, VERSION, _cache, _cache_lock,
@@ -172,7 +172,6 @@ class TestNotionProvider(unittest.TestCase):
         self.assertEqual(result.retrieval_method, "bm25")
         self.assertEqual(result.metadata["coverage"], "accessible_title_property_candidates")
         self.assertEqual(tokens("Kovács — CAFÉ"), ["kovács", "café"])
-        self.assertEqual(propose_knowledge_change("notion", sources=[self.fx.source()])["status"], "unsupported")
 
     def test_deterministic_order_and_equal_score_ties(self) -> None:
         self.fx.pages = {uid(i): page(i, "charger") for i in (3, 1, 2)}

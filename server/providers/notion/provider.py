@@ -8,7 +8,8 @@ is process memory only: no stale snapshot, sync job, or extra private files.
 CMF now holds a third-party knowledge-source credential (unlike Gmail). Use a
 dedicated internal integration with Read content only, shared with the intended
 knowledge root. Every connected client's get_context can receive its excerpts.
-No propose_change is offered; retrieval never stages or applies source writes.
+Proposal staging uses fresh read-only evidence; retrieval and staging never apply
+source writes. Remote application uses a separate, off-by-default write gate.
 """
 
 from __future__ import annotations
@@ -213,7 +214,7 @@ def combine_filter(restriction: dict[str, Any], match: dict[str, Any]) -> dict[s
 
 
 class NotionKnowledgeProvider:
-    """Read-only KnowledgeSource with lazy bodies and process-scoped reuse."""
+    """Live retrieval and read-only proposal staging with process-scoped reuse."""
 
     name = "notion"
 
@@ -235,6 +236,35 @@ class NotionKnowledgeProvider:
 
     def is_configured(self) -> bool:
         return bool(self._token.strip())
+
+    def _read_document(self, operation: Callable[[NotionClient, Config], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
+        if not self.is_configured():
+            raise error("CMF_NOTION_TOKEN is required for document inspection and staging")
+        config = configuration(self._settings)
+        _, state = state_for(self._token, self._namespace, 3 if config.plan in {"free", "plus"} else 10)
+
+        async def read(budget: Budget) -> dict[str, Any]:
+            client = NotionClient(self._token, state, budget, self._transport, clock=self._clock, sleep=self._sleep)
+            try:
+                return await operation(client, config)
+            finally:
+                await client.http.aclose()
+
+        return run_bounded(read, state, config.timeout)
+
+    def inspect_document(self, document_id: str) -> dict[str, Any]:
+        from server.providers.notion.proposals import inspect
+        page_id = uuid(document_id)
+        return self._read_document(lambda client, config: inspect(client, page_id, config.root))
+
+    def propose_change(self, target_path: str, proposed_content: str, rationale: str,
+                       source_context: str | None = None) -> dict[str, Any]:
+        from server.providers.notion.proposals import parse_target, replacement, snapshot, stage
+        page_id, block_id = parse_target(target_path)
+        replacement(proposed_content)  # Reject unsupported input before any I/O.
+        config = configuration(self._settings)
+        base = self._read_document(lambda client, config: snapshot(client, page_id, block_id, config.root))
+        return stage(base, config.workspace, target_path, proposed_content, rationale, source_context)
 
     def query(self, text: str, max_results: int = 10) -> list[KnowledgeResult]:
         terms = tokens(text)
@@ -314,6 +344,8 @@ class NotionKnowledgeProvider:
         selected = sorted(candidates, key=discovery_key)[:config.candidates]
         documents: list[tuple[dict[str, Any], str, tuple[str, ...]]] = []
         pending: dict[tuple[object, ...], tuple[str, tuple[str, ...]]] = {}
+        from server.providers.notion.client import cache_epoch
+        generation = {page_id: cache_epoch(page_id) for page_id in selected}
         for page_id in selected:
             prefix = (*namespace, page_id)
             try:
@@ -413,5 +445,5 @@ class NotionKnowledgeProvider:
         if not results:
             logger.warning("No Notion matches in bounded discovery; check sharing, configured data sources, and indexing delay.")
         client.budget.remaining()
-        cache_publish(pending, client.budget)
+        cache_publish(pending, client.budget, generation)
         return results[:max_results]
