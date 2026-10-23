@@ -26,7 +26,7 @@ import re
 import time
 from typing import Any, Literal, Optional, Union, overload
 
-from dotenv import load_dotenv
+from server.core.env import imports_dir, load_env
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
 from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
@@ -45,7 +45,7 @@ from server.providers.episode_postprocess import postprocess_episode
 from server.providers.extraction_profile import LEGACY_INSTRUCTIONS, extraction_kwargs
 from server.providers.falkor_driver import CMFFalkorDriver, falkordb_connection_params
 
-load_dotenv()
+load_env()
 logger = logging.getLogger(__name__)
 
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
@@ -1336,12 +1336,11 @@ def format_edit_memory_results_for_mcp(
     return "\n".join(lines).strip()
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_EDIT_LEDGER = _REPO_ROOT / "imports" / "state" / "edit_memory_ledger.jsonl"
+DEFAULT_EDIT_LEDGER = imports_dir() / "state" / "edit_memory_ledger.jsonl"
 
 
 def default_import_registry_path() -> Path:
-    """imports/state/import_registry.json at the repo root, or CMF_IMPORT_REGISTRY.
+    """imports/state/import_registry.json (server.core.env.imports_dir), or CMF_IMPORT_REGISTRY.
 
     Until 2026-10-06 edit_memory and reconcile_memories resolved this one
     directory too shallow (server/imports/...), a path that never existed,
@@ -1349,7 +1348,7 @@ def default_import_registry_path() -> Path:
     at a temp file (tests/conftest.py) so they can't write the real one.
     """
     override = os.getenv("CMF_IMPORT_REGISTRY")
-    return Path(override) if override else _REPO_ROOT / "imports" / "state" / "import_registry.json"
+    return Path(override) if override else imports_dir() / "state" / "import_registry.json"
 
 
 def _append_edit_ledger(ledger_path: Path, record: dict[str, Any]) -> None:

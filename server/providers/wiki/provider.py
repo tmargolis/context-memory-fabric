@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
-from dotenv import load_dotenv
+from server.core.env import load_env
 
 from server.core.models import KnowledgeResult
 from server.providers.wiki.corpus import SearchResult, get_corpus_root
@@ -36,11 +36,11 @@ class FileKnowledgeProvider:
     def is_configured(self) -> bool:
         """Cheap presence check — does not touch the filesystem.
 
-        Calls load_dotenv() itself (as server.providers.wiki.corpus.get_corpus_root() does)
+        Calls load_env() itself (as server.providers.wiki.corpus.get_corpus_root() does)
         rather than relying on some other module having already loaded .env
         as an import-time side effect — that dependency existed only
         incidentally (server.memory's import chain happens to call
-        load_dotenv() first in the current server.mcp import order) and
+        load_env() first in the current server.mcp import order) and
         would silently break if that order ever changed.
 
         Matches server.core.config.CMFConfig.knowledge_enabled's check;
@@ -49,7 +49,7 @@ class FileKnowledgeProvider:
         consistent with providers depending on core.protocols/core.errors
         but not on each other's configuration surface.
         """
-        load_dotenv()
+        load_env()
         raw = os.getenv("LLM_WIKI_PATH")
         return bool(raw and raw.strip())
 

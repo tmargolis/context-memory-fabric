@@ -76,7 +76,7 @@ class TestExtractionKwargs(unittest.TestCase):
     def test_env_default_is_typed_recall(self):
         # load_config() re-reads .env, which may set a profile (production
         # does); the default under test is the code's, not the operator's.
-        with _env(None), mock.patch("server.core.config.load_dotenv"):
+        with _env(None), mock.patch("server.core.config.load_env"):
             self.assertEqual(extraction_kwargs(), extraction_kwargs("typed-recall"))
             self.assertEqual(load_config().extraction_profile, "typed-recall")
 

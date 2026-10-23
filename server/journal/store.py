@@ -21,9 +21,12 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Optional
 
+from server.core.env import imports_dir
 from server.core.models import DatePrecision, SourceEvent, SourceProvenance
 
-DEFAULT_JOURNAL_PATH = Path(__file__).resolve().parent.parent.parent / "imports" / "journal" / "journal.db"
+# Under CMF_STATE_DIR when set (a ~/.cmf install, the Docker stack, tests),
+# else the repo checkout's imports/ (server.core.env.imports_dir).
+DEFAULT_JOURNAL_PATH = imports_dir() / "journal" / "journal.db"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS events (

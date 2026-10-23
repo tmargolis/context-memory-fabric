@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Any, Optional
 
-from dotenv import load_dotenv
+from server.core.env import load_env
 
 from server.core.models import KnowledgeResult
 from server.core.protocols import KnowledgeSource
@@ -55,7 +55,7 @@ def _load(path: str) -> KnowledgeSource:
 def load_knowledge_sources(spec: Optional[str] = None) -> list[KnowledgeSource]:
     """Instantiate the sources named in `spec` (default: CMF_KNOWLEDGE_PROVIDERS)."""
     if spec is None:
-        load_dotenv()
+        load_env()
         spec = os.getenv("CMF_KNOWLEDGE_PROVIDERS") or DEFAULT_KNOWLEDGE_PROVIDERS
     sources = [_load(p) for p in spec.split(",") if p.strip()]
     names = [s.name for s in sources]

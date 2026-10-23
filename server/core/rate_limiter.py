@@ -165,8 +165,9 @@ def _seconds_until_next_pacific_midnight(epoch_seconds: float) -> float:
 
 
 def _default_state_path() -> Path:
-    project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / "imports" / "state" / "gemini_rate_limiter_state.json"
+    from server.core.env import imports_dir
+
+    return imports_dir() / "state" / "gemini_rate_limiter_state.json"
 
 
 class GeminiRateLimiter:

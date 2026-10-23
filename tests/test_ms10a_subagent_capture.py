@@ -182,7 +182,7 @@ def test_no_wiki_prompt_asks_for_no_doc_proposals(tmp_path, monkeypatch):
     from server.policies.extract import _DOC_INSTRUCTIONS, ExtractPolicyV1
     from server.policies.protocols import PolicyContext
 
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("LLM_WIKI_PATH", "")
     events = sorted(_events(tmp_path, subagent=False), key=lambda e: e.observed_at)
     prompt = ExtractPolicyV1(generate_fn=lambda m, p: "{}")._build_prompt(events, PolicyContext())

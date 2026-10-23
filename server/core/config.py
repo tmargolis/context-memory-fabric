@@ -20,8 +20,9 @@ import getpass
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
-from dotenv import load_dotenv
+from server.core.env import load_env
 
 GEMINI_PROVIDER = "gemini"
 LOCAL_PROVIDER = "local"
@@ -325,16 +326,37 @@ def _embedding_dim() -> int:
     return value
 
 
+def in_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def container_reachable_url(url: str) -> str:
+    """A local model URL as this process can reach it.
+
+    One ~/.cmf/.env serves host-side tools and the Docker stack alike
+    (server.core.env). Its local model URLs naturally say 127.0.0.1 or
+    localhost, which inside a container is the container itself; the host
+    is host.docker.internal there. Outside a container the URL is unchanged.
+    """
+    if not url or not in_container():
+        return url
+    parts = urlsplit(url)
+    if parts.hostname not in ("127.0.0.1", "localhost"):
+        return url
+    netloc = "host.docker.internal" + (f":{parts.port}" if parts.port else "")
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
 def load_config() -> CMFConfig:
     """Read the current environment into a CMFConfig snapshot.
 
-    Calls load_dotenv() itself rather than depending on some other module
+    Calls load_env() itself rather than depending on some other module
     having already loaded .env as an import-time side effect (see
     server.providers.wiki.provider.FileKnowledgeProvider.is_configured
     for why that dependency is fragile).
     """
-    load_dotenv()
-    local_base_url = os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL)
+    load_env()
+    local_base_url = container_reachable_url(os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL))
     local_api_key = os.getenv("CMF_LOCAL_API_KEY", DEFAULT_LOCAL_API_KEY)
     return CMFConfig(
         llm_wiki_path=os.getenv("LLM_WIKI_PATH"),
@@ -354,9 +376,9 @@ def load_config() -> CMFConfig:
         local_structured_mode=_env_or("CMF_LOCAL_STRUCTURED_MODE", DEFAULT_LOCAL_STRUCTURED_MODE),
         embedding_dim=_embedding_dim(),
         extraction_profile=extraction_profile_from_env(),
-        local_llm_base_url=_env_or("CMF_LOCAL_LLM_BASE_URL", local_base_url),
+        local_llm_base_url=container_reachable_url(_env_or("CMF_LOCAL_LLM_BASE_URL", local_base_url)),
         local_llm_api_key=_env_or("CMF_LOCAL_LLM_API_KEY", local_api_key),
-        local_embed_base_url=_env_or("CMF_LOCAL_EMBED_BASE_URL", local_base_url),
+        local_embed_base_url=container_reachable_url(_env_or("CMF_LOCAL_EMBED_BASE_URL", local_base_url)),
         local_embed_api_key=_env_or("CMF_LOCAL_EMBED_API_KEY", local_api_key),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,

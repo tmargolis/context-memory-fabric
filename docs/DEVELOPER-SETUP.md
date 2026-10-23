@@ -7,6 +7,16 @@ This is **Developer mode**: CMF's server runs on your computer with Python from 
 
 ---
 
+## Consolidated install (`~/.cmf`, in progress)
+
+The setup plan ([setup-simplification-plan.md](setup-simplification-plan.md) §3.8) moves both modes to one folder, `~/.cmf`: one `.env`, one `state/` folder, one Docker stack (`deploy/docker/compose.yml`). Developer mode adds `deploy/docker/compose.dev.yml` as `~/.cmf/compose.override.yml`, which builds the server and poller from this checkout.
+
+- **Config:** every CMF process reads `$CMF_HOME/.env` (default `~/.cmf/.env`) when it exists, otherwise this repo's `.env` (`server/core/env.py`). With `~/.cmf/.env`, state (journal, proposals, imports) defaults to `~/.cmf/state`.
+- **Moving an existing install:** `scripts/consolidate_install.py plan` prints what would happen and changes nothing. `apply` backs up `.env`, state, a FalkorDB dump and the launchd plists to `~/.cmf/backups/<stamp>/`. It then copies config and state into `~/.cmf`, attaches the existing FalkorDB volume, disables (never removes) `com.cmf.mcp-server` and `com.cmf.capture-poller`, starts the stack and checks the graph's node count. If anything fails, it restores. `restore <stamp>` undoes it.
+- **Until then**, the steps below still apply unchanged.
+
+---
+
 ## Install
 
 ### 1. Prerequisites
