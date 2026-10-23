@@ -92,61 +92,38 @@ If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs
 
 ## 1. Claude Desktop
 
-### Recommended: Local Desktop Configuration (`stdio`)
+### Recommended: `mcp-remote` to the running server
 
-Claude Desktop can launch and manage Context Memory Fabric automatically in the background using standard I/O (`stdio`).
+Point Claude Desktop at the one running server (the [Docker preview](SETUP.md#quickstart-docker-compose-preview-recommended), or a host server started per §0) through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. It needs Node.js 18 or later.
 
-1. Open your Claude Desktop configuration file:
-   - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-2. Add `context-memory-fabric` under the `"mcpServers"` object:
+1. Open `claude_desktop_config.json` (Settings → Developer → Edit Config; macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`).
+2. Add **one** `context-memory-fabric` entry under `"mcpServers"`, and remove any older CMF entry:
 
 ```json
 {
   "mcpServers": {
     "context-memory-fabric": {
-      "command": "/opt/homebrew/bin/uv",
-      "args": [
-        "run",
-        "--directory",
-        "/path/to/context-memory-fabric",
-        "python",
-        "-m",
-        "server.mcp"
-      ],
-      "env": {
-        "LLM_WIKI_PATH": "/path/to/your/LLM_Wiki",
-        "GEMINI_API_KEY": "your-gemini-api-key",
-        "FALKORDB_DATABASE": "mem-fabric-local-ep"
-      }
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
     }
   }
 }
 ```
 
-> [!TIP]
-> You can also pass `--wiki-path /path/to/your/LLM_Wiki` directly inside the `"args"` array instead of using the `"env"` block.
+3. Quit Claude Desktop completely (`Cmd + Q`) and reopen it, then **start a new session**: a resumed or already-open conversation never loads newly added MCP servers. All CMF tools then appear in the tool list; see [Available MCP Tools Summary](#available-mcp-tools-summary) (the count varies with whether `LLM_WIKI_PATH` is configured).
 
-> [!NOTE]
-> `FALKORDB_DATABASE` is optional. If omitted, the server falls back to `default_db`, a non-production sandbox — see §0 for why.
-
-3. Restart Claude Desktop (`Cmd + Q` and reopen). All Context Memory Fabric tools will appear in the connectors/tool list — see [Available MCP Tools Summary](#available-mcp-tools-summary) below for the full, current list (count varies with whether `LLM_WIKI_PATH` is configured).
+The desktop **Code tab** used this same entry on the first tester's machine; that is still being confirmed.
 
 > [!NOTE]
 > **Cowork tab vs. Code tab.** These are two separate connections to the same server, not one shared connection — each needs its own connector entry configured (whether stdio per above, or the network connector below), and each registers as its own OAuth client if OAuth is configured (confirmed 2026-09-14: six separate `Claude`-named DCR client registrations exist for one person's Desktop app, one per tab/session that connected). Verified in the journal (2026-09-16) that the two resolve to **distinct** harness identities — `claude_desktop` and `claude_code` — not a collapsed single identity, so capture and `explain()` provenance correctly attribute a call to the tab it came from.
 
----
+### Developer mode: stdio
 
-### Alternative: Network Connector (streamable-http or SSE)
+With a [from-source install](DEVELOPER-SETUP.md), Claude Desktop can instead start its own copy of the server over stdio. The config is in [DEVELOPER-SETUP.md](DEVELOPER-SETUP.md#connecting-clients-to-a-host-server). Each stdio client resolves its own environment, so prefer one HTTP server (above) when several apps should share a graph.
 
-If you'd rather connect to an already-running server instance (see §0) instead of having Claude Desktop spawn its own subprocess — e.g. so it shares one server/graph with other clients during a harness comparison:
+### Remote: Connectors (public URL only)
 
-1. Start the server per §0, with `--transport streamable-http` (preferred) or `--transport sse` (legacy).
-2. In Claude Desktop, go to **Settings > Connectors > Add custom connector**.
-3. Set the remote MCP server URL to `http://localhost:8000/mcp` (streamable-http) or `http://localhost:8000/sse` (SSE) — or a tunneled/VPN HTTPS URL if the server isn't running on the same machine (see §4).
-
-Since Claude Desktop's connector flow is OAuth-only with no field for a static header, use §0's OAuth setup (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) if you want this connection authenticated — it'll self-register via DCR and walk you through the consent page automatically.
+**Settings → Connectors → Add custom connector** connects from Anthropic's cloud, so it **rejects `localhost`** ("enter a public URL"). It works only with a public HTTPS URL (§4, e.g. Tailscale Funnel) and OAuth (§0's `CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`). In return, one connector reaches every Claude surface, including claude.ai. Enter `https://<your-public-host>/mcp`; it self-registers via DCR and walks you through the consent page.
 
 ---
 
@@ -207,15 +184,9 @@ uv run python -m server.adapters.codex.cli hooks uninstall
 
 ## 3. Cursor / Other MCP-Enabled Clients
 
-Add the MCP server command in your client settings:
+Clients that accept a server URL (Cursor's `mcp.json`: `{"url": "http://127.0.0.1:8000/mcp"}`) connect to the running server directly. Clients that only start a command can use `npx -y mcp-remote http://127.0.0.1:8000/mcp`, as in §1.
 
-- **Type:** `command` (or `stdio`)
-- **Command:** `uv`
-- **Args:** `run --directory /path/to/context-memory-fabric python -m server.mcp`
-- **Environment Variables:**
-  - `LLM_WIKI_PATH`: `/path/to/your/LLM_Wiki`
-  - `GEMINI_API_KEY`: `AIzaSy...`
-  - `FALKORDB_DATABASE`: `mem-fabric-local-ep` (optional — omit to use the `default_db` sandbox; see §0)
+In [Developer mode](DEVELOPER-SETUP.md), a stdio entry also works: command `uv`, args `run --directory /path/to/context-memory-fabric python -m server.mcp`. The server reads the repo's `.env`.
 
 ---
 
@@ -270,7 +241,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 **What this captures:** every tool call routed through this server, with harness provenance, redacted arguments, and a truncated result summary.
 
-**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. For clients that write transcripts to disk, the transcript pollers close that gap: Claude Code (CLI and the desktop Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity are captured in full ([docs/SETUP.md, Background Capture](SETUP.md#background-capture); install with [`deploy/pollers/`](../deploy/pollers/README.md)). For a chat with no transcript on disk (Claude Desktop chat, cloud Cowork sessions, ChatGPT, Gemini), these mitigations remain:
+**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. For clients that write transcripts to disk, the transcript pollers close that gap: Claude Code (CLI and the desktop Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity are captured in full ([DEVELOPER-SETUP.md, Background Capture](DEVELOPER-SETUP.md#background-capture); install with [`deploy/pollers/`](../deploy/pollers/README.md)). For a chat with no transcript on disk (Claude Desktop chat, cloud Cowork sessions, ChatGPT, Gemini), these mitigations remain:
 
 - At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call `capture_session` — it stages real episodic memory or a Wiki proposal per item, reviewable via the same path offline reasoning-episode extraction uses. Still interaction-triggered, not continuous — Cowork has no session-end signal this can hook into (Milestone 4a2, 2026-09-18).
 - `get_context` at session start pulls in durable/recent state proactively.

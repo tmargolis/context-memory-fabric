@@ -65,7 +65,7 @@ docker compose -f docker-compose.preview.yml up -d
 
 Your CMF MCP server is now running at `http://localhost:8000/mcp`.
 
-For client connection instructions (Claude Desktop, Cursor, and local Python installation), see the **[Installation & Setup Guide](docs/SETUP.md)**.
+For client connection instructions (Claude Desktop, Cursor) and how to check that memories are being saved, see the **[Installation & Setup Guide](docs/SETUP.md)**. To run CMF from source instead, see [Developer setup](docs/DEVELOPER-SETUP.md); don't install both.
 
 ---
 
@@ -123,7 +123,7 @@ On a 12-question control suite of non-existent events, superseded decisions, and
 ## Tested Clients & Capabilities
 
 CMF has been verified across several AI development environments:
-- **Claude Desktop (macOS / Windows):** Verified with stdio and Streamable HTTP via `mcp-proxy`.
+- **Claude Desktop (macOS / Windows):** Verified with stdio and with Streamable HTTP via `mcp-remote`.
 - **OpenAI Codex & Antigravity IDE:** Dedicated transcript capture adapters that journal session evidence and extract episodic proposals.
 - **ChatGPT & Gemini:** Connector integration tested via OAuth 2.1 and Streamable HTTP.
 - **Cursor / General MCP Clients:** Standard MCP tool discovery and execution.
