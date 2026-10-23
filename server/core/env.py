@@ -90,6 +90,42 @@ def imports_dir() -> Path:
     return state_dir() / "imports"
 
 
+def in_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+# The Docker stack keeps imports/journal (the SQLite journal and its lock
+# files) in the cmf-journal volume, not on the ~/.cmf/state bind mount:
+# SQLite fails when a host process and a container open the same file
+# through Docker Desktop's file sharing ("disk I/O error"). The containers
+# leave this marker in imports/ so host-side tools refuse instead of quietly
+# starting an empty journal in ~/.cmf/state.
+JOURNAL_VOLUME_MARKER = "journal.in-docker-volume"
+
+
+class JournalInDockerVolume(RuntimeError):
+    pass
+
+
+def journal_dir() -> Path:
+    """imports/journal: the journal database and its lock files."""
+    marker = imports_dir() / JOURNAL_VOLUME_MARKER
+    if in_container():
+        if os.getenv("CMF_JOURNAL_VOLUME"):
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(f"The journal is in the Docker volume {os.environ['CMF_JOURNAL_VOLUME']}.\n")
+            except OSError:
+                pass
+    elif marker.exists():
+        raise JournalInDockerVolume(
+            f"The CMF journal lives in the Docker volume (see {marker}), not in {imports_dir() / 'journal'}. "
+            "Run journal tools inside the stack, e.g. "
+            "`cd ~/.cmf && docker compose exec cmf-server python -m server.journal.cli stats`."
+        )
+    return imports_dir() / "journal"
+
+
 def review_rules_path() -> Path:
     """The operator's own review rules: CMF_REVIEW_RULES_PATH, else <state>/review-rules.md.
 

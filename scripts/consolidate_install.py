@@ -3,6 +3,7 @@
     python scripts/consolidate_install.py plan              # read-only: what would happen (default)
     python scripts/consolidate_install.py apply             # do it; restores itself if verification fails
     python scripts/consolidate_install.py restore <stamp>   # undo an apply
+    python scripts/consolidate_install.py journal-to-volume # move an existing ~/.cmf journal into its volume
 
 The sequence is the plan's section 3.8, for a Developer-mode install on macOS:
 
@@ -22,12 +23,23 @@ The sequence is the plan's section 3.8, for a Developer-mode install on macOS:
    (com.cmf.mcp-server, com.cmf.capture-poller): bootout + disable, plists left
    in place. Other com.cmf.* jobs are listed and left alone. Stop (not remove)
    the old FalkorDB container: one volume can't serve two FalkorDB servers.
-5. Start the stack and verify: /health answers for the same graph, and the
-   graph has the same node count as before. Any failure restores step by step.
+5. Copy the journal (imports/journal: SQLite plus its lock files) into the
+   cmf-journal Docker volume and check it arrived whole: SQLite fails when the
+   host and a container open one file through Docker Desktop's file sharing,
+   so the stack keeps it off the bind mount. The ~/.cmf/state copy is renamed
+   journal.moved-<stamp>. Then start the stack and verify: /health answers for
+   the same graph, and the graph has the same node count as before. Any
+   failure restores step by step.
 
 `restore` reverses 2-5: stops the new stack (`down`, never `-v`), puts the repo
 .env back, sets ~/.cmf/.env aside, re-enables the launchd jobs and restarts the
-old FalkorDB container. Backups and ~/.cmf/state are kept.
+old FalkorDB container. Backups, ~/.cmf/state and the cmf-journal volume are
+kept (never deleted by this script).
+
+`journal-to-volume` does step 5's journal move for an install consolidated
+before the volume existed: stop the server and poller, update compose.yml,
+copy and check, rename the bind-mount copy, start again. It undoes itself on
+failure.
 """
 
 from __future__ import annotations
@@ -36,6 +48,7 @@ import argparse
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -52,6 +65,9 @@ REPLACED_JOBS = ("com.cmf.mcp-server", "com.cmf.capture-poller")
 OLD_FALKORDB_CONTAINER = "context-memory-fabric-falkordb"
 OLD_PROXY_CONTAINER = "context-memory-fabric-spark-llm-proxy"
 OLD_FALKORDB_VOLUME = "context-memory-fabric_falkordb_data"
+JOURNAL_VOLUME = "cmf-journal"
+JOURNAL_MARKER = "journal.in-docker-volume"  # server.core.env.JOURNAL_VOLUME_MARKER
+IN_VOLUME = "/data/cmf/imports/journal"
 STATE_ITEMS = ("proposals-docs", "proposals-episode", "imports")
 # Where each capture source's transcripts live on macOS, for the poller's mounts.
 CAPTURE_DIRS = {
@@ -248,7 +264,9 @@ def describe(paths: Paths, facts: dict) -> list[str]:
         "4. Disable (bootout + disable; plists stay): " + ", ".join(REPLACED_JOBS) + ".",
         "   Left alone: " + (", ".join(p.stem for p in facts["plists"] if p.stem not in REPLACED_JOBS) or "none") + ".",
         f"   Stop (not remove) {OLD_FALKORDB_CONTAINER} and {OLD_PROXY_CONTAINER}.",
-        f"5. `docker compose up -d --build` in {paths.cmf_home}; verify /health on port "
+        f"5. Copy the journal into the Docker volume {JOURNAL_VOLUME} (checked: same event count, quick_check ok;"
+        f" the ~/.cmf/state copy is renamed journal.moved-{paths.stamp}).",
+        f"   `docker compose up -d --build` in {paths.cmf_home}; verify /health on port "
         f"{facts['env'].get('CMF_MCP_PORT', '8000')} reports graph '{facts['graph']}' with "
         f"{facts['nodes'] if facts['nodes'] is not None else '?'} nodes as now. On failure: automatic restore.",
     ]
@@ -257,9 +275,8 @@ def describe(paths: Paths, facts: dict) -> list[str]:
         lines += [f"   - {k}={v}" for k, v in sorted(facts["host_paths"].items())]
     lines += [
         "",
-        "Known risks to check after apply: the journal (SQLite, WAL) is now shared between containers and",
-        "host-side tools through a bind mount, and host jobs that take the local-LLM lock (spark_job.lock)",
-        "may not see a lock held inside a container.",
+        "After apply, host-side journal tools run inside the stack (`docker compose exec cmf-server ...`):",
+        "the journal and the local-LLM lock (spark_job.lock) are in the volume, which the host can't open.",
     ]
     return lines
 
@@ -306,6 +323,53 @@ def _home_env_text(paths: Paths, facts: dict) -> str:
             for line in lines
         ]
     return "\n".join(lines) + "\n" + _managed_env_block(paths, facts)
+
+
+def _compose(paths: Paths) -> list[str]:
+    return ["docker", "compose", "--project-directory", str(paths.cmf_home)]
+
+
+def _journal_stats(db: Path) -> tuple[int, str]:
+    """Fold the WAL into the main file (nothing else may have it open); return (events, quick_check)."""
+    con = sqlite3.connect(db)
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        events = con.execute("SELECT count(*) FROM events").fetchone()[0]
+        return events, con.execute("PRAGMA quick_check").fetchone()[0]
+    finally:
+        con.close()
+
+
+_VOLUME_STATS = (
+    "import sqlite3; c = sqlite3.connect('file:" + IN_VOLUME + "/journal.db?mode=ro', uri=True); "
+    "print(c.execute('SELECT count(*) FROM events').fetchone()[0], c.execute('PRAGMA quick_check').fetchone()[0])"
+)
+
+
+def fill_journal_volume(paths: Paths, ops: Ops, src: Path) -> int:
+    """Copy a stopped journal folder into the cmf-journal volume; return its event count once checked."""
+    events, check = _journal_stats(src / "journal.db")
+    if check != "ok":
+        raise RuntimeError(f"{src / 'journal.db'} fails quick_check ({check}); not copying it")
+    run = _compose(paths) + ["run", "--rm", "--no-deps", "-T"]
+    _check(ops, run + [
+        "-v", f"{src}:/src:ro", "--entrypoint", "sh", "cmf-server", "-c",
+        f"if [ -e {IN_VOLUME}/journal.db ]; then echo '{JOURNAL_VOLUME} already holds a journal.db' >&2; exit 3; fi; "
+        f"cp -a /src/. {IN_VOLUME}/",
+    ])
+    result = ops.run(run + ["--entrypoint", "python", "cmf-server", "-c", _VOLUME_STATS])
+    got = (result.stdout or "").strip().splitlines()[-1:] or [""]
+    if result.returncode != 0 or got[0] != f"{events} ok":
+        raise RuntimeError(f"journal in {JOURNAL_VOLUME} reports {got[0]!r}, expected '{events} ok'")
+    return events
+
+
+def _retire_bind_journal(paths: Paths, src: Path) -> Path:
+    """Rename the bind-mount journal out of the way and leave the marker host-side tools check."""
+    moved = src.with_name(f"journal.moved-{paths.stamp}")
+    src.rename(moved)
+    (src.parent / JOURNAL_MARKER).write_text(f"The journal is in the Docker volume {JOURNAL_VOLUME}.\n")
+    return moved
 
 
 def _managed_env_block(paths: Paths, facts: dict) -> str:
@@ -377,9 +441,13 @@ def apply(paths: Paths, ops: Ops) -> int:
         _check(ops, ["docker", "stop", OLD_FALKORDB_CONTAINER])
         done.append("containers")
 
-        # 5. Start and verify.
-        ops.log("[5/5] Starting the stack and verifying")
-        _check(ops, ["docker", "compose", "--project-directory", str(paths.cmf_home), "up", "-d", "--build"])
+        # 5. Journal into its volume, then start and verify.
+        ops.log("[5/5] Copying the journal into the " + JOURNAL_VOLUME + " volume, starting the stack and verifying")
+        journal = paths.cmf_home / "state" / "imports" / "journal"
+        if (journal / "journal.db").is_file():
+            fill_journal_volume(paths, ops, journal)
+            _retire_bind_journal(paths, journal)
+        _check(ops, _compose(paths) + ["up", "-d", "--build"])
         done.append("stack")
         port = int(env.get("CMF_MCP_PORT") or 8000)
         snap = ops.health(port, 180)
@@ -407,7 +475,7 @@ def _restore(paths: Paths, ops: Ops, done: Optional[list[str]] = None) -> None:
     every = done is None
     done = done or []
     if every or "stack" in done:
-        ops.run(["docker", "compose", "--project-directory", str(paths.cmf_home), "down"])
+        ops.run(_compose(paths) + ["down"])
     if every or "env" in done:
         if paths.migrated_env.exists() and not paths.repo_env.exists():
             paths.migrated_env.rename(paths.repo_env)
@@ -423,7 +491,10 @@ def _restore(paths: Paths, ops: Ops, done: Optional[list[str]] = None) -> None:
     if every or "containers" in done:
         ops.run(["docker", "start", OLD_FALKORDB_CONTAINER])
         ops.run(["docker", "start", OLD_PROXY_CONTAINER])
-    ops.log("Restored: repo .env, launchd jobs and the old FalkorDB container. Backups and ~/.cmf/state are kept.")
+    ops.log(
+        "Restored: repo .env, launchd jobs and the old FalkorDB container. Backups, ~/.cmf/state and the "
+        f"{JOURNAL_VOLUME} volume are kept (events journaled since apply are only in the volume)."
+    )
 
 
 def restore(paths: Paths, ops: Ops) -> int:
@@ -434,9 +505,51 @@ def restore(paths: Paths, ops: Ops) -> int:
     return 0
 
 
+def journal_to_volume(paths: Paths, ops: Ops) -> int:
+    """Move ~/.cmf/state/imports/journal into the cmf-journal volume (installs consolidated before it existed)."""
+    src = paths.cmf_home / "state" / "imports" / "journal"
+    marker = src.parent / JOURNAL_MARKER
+    if marker.exists():
+        ops.log(f"Nothing to do: {marker} says the journal is already in the {JOURNAL_VOLUME} volume.")
+        return 0
+    if not (src / "journal.db").is_file():
+        ops.log(f"No journal at {src / 'journal.db'}.")
+        return 2
+    compose_file = paths.cmf_home / "compose.yml"
+    _copy(compose_file, paths.backup / "compose.yml")
+    env = read_env(paths.cmf_home / ".env") if (paths.cmf_home / ".env").is_file() else {}
+
+    ops.log("[1/4] Stopping cmf-server and cmf-poller")
+    _check(ops, _compose(paths) + ["stop", "cmf-server", "cmf-poller"])
+    moved = None
+    try:
+        ops.log(f"[2/4] Updating {compose_file}")
+        shutil.copy2(paths.repo / "deploy" / "docker" / "compose.yml", compose_file)
+        ops.log(f"[3/4] Copying {src} into the {JOURNAL_VOLUME} volume")
+        events = fill_journal_volume(paths, ops, src)
+        moved = _retire_bind_journal(paths, src)
+        ops.log("[4/4] Starting the stack")
+        _check(ops, _compose(paths) + ["up", "-d"])
+        snap = ops.health(int(env.get("CMF_MCP_PORT") or 8000), 180)
+        if not snap or snap.get("status") != "ok":
+            raise RuntimeError(f"/health after the move: {snap}")
+    except Exception as e:  # noqa: BLE001 - every failure undoes the move
+        ops.log(f"\nFailed: {e}\nPutting the journal back on the bind mount.")
+        ops.run(_compose(paths) + ["stop", "cmf-server", "cmf-poller"])
+        if moved is not None and moved.exists() and not src.exists():
+            moved.rename(src)
+        marker.unlink(missing_ok=True)
+        shutil.copy2(paths.backup / "compose.yml", compose_file)
+        ops.run(_compose(paths) + ["up", "-d"])
+        ops.log(f"The {JOURNAL_VOLUME} volume is kept; remove it (`docker volume rm {JOURNAL_VOLUME}`) before retrying.")
+        return 1
+    ops.log(f"\nDone. The journal ({events} events) is in the {JOURNAL_VOLUME} volume; the old copy is {moved}.")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("action", nargs="?", default="plan", choices=["plan", "apply", "restore"])
+    parser.add_argument("action", nargs="?", default="plan", choices=["plan", "apply", "restore", "journal-to-volume"])
     parser.add_argument("stamp", nargs="?", help="restore: the backup stamp printed by apply")
     args = parser.parse_args(argv)
 
@@ -457,6 +570,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     if args.action == "apply":
         return apply(paths, ops)
+    if args.action == "journal-to-volume":
+        return journal_to_volume(paths, ops)
     return restore(paths, ops)
 
 

@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -159,6 +160,13 @@ def test_user_stack_one_port_setting_and_env_passthrough(stack_home):
     assert mounts[f"{home}/.codex/sessions"].endswith("/empty/codex")  # off until pointed at a folder
     assert poller["environment"]["HOME"] == home
 
+    # The journal is in a named volume for both, never on the ~/.cmf/state bind mount.
+    for svc in (server, poller):
+        journal = [v for v in svc["volumes"] if v["target"] == "/data/cmf/imports/journal"]
+        assert journal and journal[0]["type"] == "volume"
+        assert svc["environment"]["CMF_JOURNAL_VOLUME"] == "cmf-journal"
+    assert cfg["volumes"]["journal"]["name"] == "cmf-journal"
+
 
 def test_poller_is_opt_in(stack_home):
     assert "cmf-poller" not in _compose_config(stack_home)["services"]
@@ -186,16 +194,29 @@ def _load_script():
     return module
 
 
+def _make_journal(folder: Path, events: int = 1) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(folder / "journal.db")
+    con.execute("PRAGMA journal_mode=wal")
+    con.execute("CREATE TABLE events (event_id TEXT)")
+    con.executemany("INSERT INTO events VALUES (?)", [(str(i),) for i in range(events)])
+    con.commit()
+    con.close()
+
+
 class FakeRun:
-    def __init__(self, fail_on=()):
+    def __init__(self, fail_on=(), volume_stats="1 ok"):
         self.calls: list[list[str]] = []
         self.fail_on = fail_on
+        self.volume_stats = volume_stats  # what the in-volume journal check prints
 
     def __call__(self, cmd):
         self.calls.append(cmd)
         joined = " ".join(cmd)
         code = 1 if any(f in joined for f in self.fail_on) else 0
         stdout = "true" if cmd[:2] == ["docker", "inspect"] else ""
+        if "quick_check" in joined:
+            stdout = self.volume_stats + "\n"
         if cmd[:2] == ["docker", "cp"] and code == 0:
             Path(cmd[-1]).write_text("rdb")
         return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="boom" if code else "")
@@ -217,8 +238,7 @@ def machine(tmp_path):
     )
     (repo / "proposals-docs").mkdir()
     (repo / "proposals-docs" / "p.json").write_text("{}")
-    (repo / "imports" / "journal").mkdir(parents=True)
-    (repo / "imports" / "journal" / "journal.db").write_text("db")
+    _make_journal(repo / "imports" / "journal")
     (home / ".claude" / "projects").mkdir(parents=True)
     agents = home / "Library" / "LaunchAgents"
     agents.mkdir(parents=True)
@@ -231,7 +251,7 @@ def machine(tmp_path):
 def _ops(ci, run, nodes=(100, 100), health=None):
     counts = iter(nodes)
     snap = health if health is not None else {
-        "graph": "mem", "falkordb": {"reachable": True, "graph_exists": True},
+        "status": "ok", "graph": "mem", "falkordb": {"reachable": True, "graph_exists": True},
     }
     return ci.Ops(
         run=run,
@@ -272,11 +292,18 @@ def test_apply_moves_config_disables_jobs_and_verifies(machine):
     assert (paths.backup / "review-rules.md").exists()
     assert oct((paths.cmf_home / ".env").stat().st_mode & 0o777) == "0o600"
     assert not paths.repo_env.exists() and paths.migrated_env.exists()
-    assert (paths.cmf_home / "state" / "imports" / "journal" / "journal.db").exists()
+    assert (paths.cmf_home / "state" / "proposals-docs" / "p.json").exists()
     assert (paths.backup / "repo.env").exists() and (paths.backup / "falkordb-dump.rdb").exists()
     assert (paths.backup / "launchd" / "com.cmf.spark-tunnel.plist").exists()
     override = (paths.cmf_home / "compose.override.yml").read_text()
     assert "external: true" in override and ci.OLD_FALKORDB_VOLUME in override
+    # The journal went into its volume; the bind-mount copy is renamed, and host tools are told.
+    imports = paths.cmf_home / "state" / "imports"
+    assert not (imports / "journal").exists()
+    assert (imports / f"journal.moved-{paths.stamp}" / "journal.db").exists()
+    assert (imports / ci.JOURNAL_MARKER).exists()
+    assert any(c[:3] == ["docker", "compose", "--project-directory"] and "run" in c and "cp -a" in c[-1]
+               for c in run.calls)
 
     joined = [" ".join(c) for c in run.calls]
     assert any("launchctl disable" in c and "com.cmf.mcp-server" in c for c in joined)
@@ -323,3 +350,67 @@ def test_restore_after_successful_apply(machine):
     assert paths.repo_env.read_text().startswith("FALKORDB_DATABASE=mem")
     assert not (paths.cmf_home / ".env").exists()
     assert (paths.cmf_home / "state").exists()  # state copy kept
+
+
+def test_apply_restores_when_journal_copy_is_short(machine):
+    ci, paths = machine.ci, machine.paths
+    run = FakeRun(volume_stats="0 ok")
+    assert ci.apply(paths, _ops(ci, run)) == 1
+    assert paths.repo_env.exists()
+    assert (paths.repo / "imports" / "journal" / "journal.db").exists()  # the original is never touched
+    assert not any(" up -d" in " ".join(c) for c in run.calls)
+
+
+@pytest.fixture
+def consolidated(machine):
+    """A ~/.cmf install from before the journal volume: journal on the bind mount."""
+    ci, paths = machine.ci, machine.paths
+    paths.cmf_home.mkdir()
+    (paths.cmf_home / ".env").write_text("CMF_MCP_PORT=8000\n")
+    (paths.cmf_home / "compose.yml").write_text("old compose\n")
+    _make_journal(paths.cmf_home / "state" / "imports" / "journal", events=3)
+    return machine
+
+
+def test_journal_to_volume_moves_and_restarts(consolidated):
+    ci, paths = consolidated.ci, consolidated.paths
+    run = FakeRun(volume_stats="3 ok")
+    assert ci.journal_to_volume(paths, _ops(ci, run)) == 0
+    imports = paths.cmf_home / "state" / "imports"
+    assert not (imports / "journal").exists() and (imports / ci.JOURNAL_MARKER).exists()
+    assert (imports / f"journal.moved-{paths.stamp}" / "journal.db").exists()
+    assert "journal:/data/cmf/imports/journal" in (paths.cmf_home / "compose.yml").read_text()
+    assert (paths.backup / "compose.yml").read_text() == "old compose\n"
+    joined = [" ".join(c) for c in run.calls]
+    assert joined[0].endswith("stop cmf-server cmf-poller") and joined[-1].endswith("up -d")
+    # Second run is a no-op.
+    assert ci.journal_to_volume(paths, _ops(ci, FakeRun())) == 0
+
+
+def test_journal_to_volume_undoes_itself_on_mismatch(consolidated):
+    ci, paths = consolidated.ci, consolidated.paths
+    run = FakeRun(volume_stats="2 ok")
+    assert ci.journal_to_volume(paths, _ops(ci, run)) == 1
+    imports = paths.cmf_home / "state" / "imports"
+    assert (imports / "journal" / "journal.db").exists() and not (imports / ci.JOURNAL_MARKER).exists()
+    assert (paths.cmf_home / "compose.yml").read_text() == "old compose\n"
+    assert " ".join(run.calls[-1]).endswith("up -d")
+    assert not any("volume rm" in " ".join(c) for c in run.calls)
+
+
+def test_host_refuses_journal_held_in_volume(monkeypatch, tmp_path):
+    monkeypatch.setenv("CMF_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(cmf_env, "in_container", lambda: False)
+    assert cmf_env.journal_dir() == tmp_path.resolve() / "imports" / "journal"
+    (tmp_path / "imports").mkdir()
+    (tmp_path / "imports" / cmf_env.JOURNAL_VOLUME_MARKER).write_text("x")
+    with pytest.raises(cmf_env.JournalInDockerVolume, match="docker compose exec"):
+        cmf_env.journal_dir()
+
+
+def test_container_leaves_the_marker(monkeypatch, tmp_path):
+    monkeypatch.setenv("CMF_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("CMF_JOURNAL_VOLUME", "cmf-journal")
+    monkeypatch.setattr(cmf_env, "in_container", lambda: True)
+    assert cmf_env.journal_dir() == tmp_path.resolve() / "imports" / "journal"
+    assert (tmp_path / "imports" / cmf_env.JOURNAL_VOLUME_MARKER).exists()

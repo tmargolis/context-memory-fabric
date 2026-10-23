@@ -59,12 +59,17 @@ services:
       # Local model URLs in .env can say 127.0.0.1: the server rewrites them
       # to host.docker.internal when it runs in a container (server.core.config).
       - CMF_STATE_DIR=/data/cmf
+      - CMF_JOURNAL_VOLUME=cmf-journal
     volumes:
       # Your notes, read-only. Unset LLM_WIKI_PATH = memory only (an empty
       # folder is mounted and the wiki tools stay off).
       - ${LLM_WIKI_PATH:-./empty/wiki}:/wiki:ro
-      # Journal, proposals and imports, shared with host-side tools.
+      # Proposals, imports and your review rules, shared with host-side tools.
       - ./state:/data/cmf
+      # The SQLite journal stays in a Docker volume: SQLite breaks when the
+      # host and a container open one file through Docker Desktop's file
+      # sharing. Host-side journal tools run via `docker compose exec`.
+      - journal:/data/cmf/imports/journal
     restart: unless-stopped
 
   cmf-poller:
@@ -93,6 +98,7 @@ services:
       - FALKORDB_DATABASE=${FALKORDB_DATABASE:-cmf}
       - LLM_WIKI_PATH=${LLM_WIKI_PATH:+/wiki}
       - CMF_STATE_DIR=/data/cmf
+      - CMF_JOURNAL_VOLUME=cmf-journal
       # Your real home path, so transcript folders are found where the
       # adapters look (~/.claude/projects, ...) and project names derived from
       # the paths inside transcripts (/Users/you/Dev/<project>) still match.
@@ -101,6 +107,7 @@ services:
     volumes:
       - ${LLM_WIKI_PATH:-./empty/wiki}:/wiki:ro
       - ./state:/data/cmf
+      - journal:/data/cmf/imports/journal
       # One transcript folder per source, read-only. Each defaults to an empty
       # folder in ~/.cmf, so a source is captured only after you point its
       # variable at the real folder (an absolute path; ~ is not expanded):
@@ -116,3 +123,5 @@ services:
 
 volumes:
   falkordb_data:
+  journal:
+    name: cmf-journal

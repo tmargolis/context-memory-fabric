@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
-from server.core.env import load_env
+from server.core.env import in_container, load_env
 
 GEMINI_PROVIDER = "gemini"
 LOCAL_PROVIDER = "local"
@@ -324,10 +324,6 @@ def _embedding_dim() -> int:
     if value <= 0:
         raise ValueError(f"EMBEDDING_DIM={raw!r} must be positive.")
     return value
-
-
-def in_container() -> bool:
-    return Path("/.dockerenv").exists()
 
 
 def container_reachable_url(url: str) -> str:
