@@ -79,9 +79,26 @@ def loaded_env_file() -> Optional[Path]:
     return _loaded_from
 
 
+def state_dir() -> Path:
+    """CMF_STATE_DIR when set (~/.cmf/state on the host, /data/cmf in a container), else the repo."""
+    state = os.getenv("CMF_STATE_DIR")
+    return Path(state).expanduser().resolve() if state else REPO_ROOT
+
+
 def imports_dir() -> Path:
     """journal, import registry and other imports/ state: under CMF_STATE_DIR when set."""
-    state = os.getenv("CMF_STATE_DIR")
-    if state:
-        return Path(state).expanduser().resolve() / "imports"
-    return REPO_ROOT / "imports"
+    return state_dir() / "imports"
+
+
+def review_rules_path() -> Path:
+    """The operator's own review rules: CMF_REVIEW_RULES_PATH, else <state>/review-rules.md.
+
+    The default sits in the state folder so the host and the containers (which
+    mount it at /data/cmf) read the same file. A relative CMF_REVIEW_RULES_PATH
+    counts from the state folder too.
+    """
+    value = (os.getenv("CMF_REVIEW_RULES_PATH") or "").strip()
+    if not value:
+        return state_dir() / "review-rules.md"
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else state_dir() / path

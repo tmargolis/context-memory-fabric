@@ -26,12 +26,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import sqlite3
 from typing import Any, Optional
 import uuid
 
+from server.core.env import review_rules_path
 from server.journal.store import DEFAULT_JOURNAL_PATH
 
 VERDICTS = ("approve", "reject", "flag")
@@ -73,13 +73,11 @@ def _now() -> str:
 
 
 def review_rules() -> str:
-    """The generic rules, plus the operator's own (CMF_REVIEW_RULES_PATH)."""
+    """The generic rules, plus the operator's own (CMF_REVIEW_RULES_PATH, else <state>/review-rules.md)."""
     text = RULES_PATH.read_text(encoding="utf-8").strip()
-    extra = os.getenv("CMF_REVIEW_RULES_PATH")
-    if extra and extra.strip():
-        path = Path(extra).expanduser()
-        if path.is_file():
-            text += "\n\n## Your own rules\n\n" + path.read_text(encoding="utf-8").strip()
+    path = review_rules_path()
+    if path.is_file():
+        text += "\n\n## Your own rules\n\n" + path.read_text(encoding="utf-8").strip()
     return text
 
 

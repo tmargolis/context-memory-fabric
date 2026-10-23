@@ -77,6 +77,17 @@ def test_imports_dir_follows_state_dir(monkeypatch, tmp_path):
     assert cmf_env.imports_dir() == REPO / "imports"
 
 
+def test_review_rules_default_to_state_dir(monkeypatch, tmp_path):
+    state = (tmp_path / "state").resolve()
+    monkeypatch.setenv("CMF_STATE_DIR", str(state))
+    monkeypatch.delenv("CMF_REVIEW_RULES_PATH", raising=False)
+    assert cmf_env.review_rules_path() == state / "review-rules.md"
+    monkeypatch.setenv("CMF_REVIEW_RULES_PATH", "rules/mine.md")
+    assert cmf_env.review_rules_path() == state / "rules" / "mine.md"
+    monkeypatch.setenv("CMF_REVIEW_RULES_PATH", str(tmp_path / "elsewhere.md"))
+    assert cmf_env.review_rules_path() == tmp_path / "elsewhere.md"
+
+
 def test_test_suite_journal_is_not_the_repo_journal():
     from server.journal.store import DEFAULT_JOURNAL_PATH
 
@@ -197,12 +208,17 @@ def machine(tmp_path):
     (repo / "deploy" / "docker").mkdir(parents=True)
     for name in ("compose.yml", "compose.dev.yml"):
         shutil.copy(REPO / "deploy" / "docker" / name, repo / "deploy" / "docker" / name)
-    (repo / ".env").write_text("FALKORDB_DATABASE=mem\nCOMPOSE_PROFILES=spark\nCMF_REVIEW_RULES_PATH=~/rules.md\n")
+    home = tmp_path / "home"
+    (home / ".config" / "cmf").mkdir(parents=True)
+    rules = home / ".config" / "cmf" / "review-rules.md"
+    rules.write_text("Career notes are episodes.")
+    (repo / ".env").write_text(
+        f"FALKORDB_DATABASE=mem\nCOMPOSE_PROFILES=spark\nCMF_REVIEW_RULES_PATH={rules}\nCMF_SKILLS_DIR=/opt/skills\n"
+    )
     (repo / "proposals-docs").mkdir()
     (repo / "proposals-docs" / "p.json").write_text("{}")
     (repo / "imports" / "journal").mkdir(parents=True)
     (repo / "imports" / "journal" / "journal.db").write_text("db")
-    home = tmp_path / "home"
     (home / ".claude" / "projects").mkdir(parents=True)
     agents = home / "Library" / "LaunchAgents"
     agents.mkdir(parents=True)
@@ -233,7 +249,10 @@ def test_plan_describes_without_changing_anything(machine):
     text = "\n".join(ci.describe(paths, facts))
     assert "com.cmf.mcp-server, com.cmf.capture-poller" in text
     assert "Left alone: com.cmf.spark-tunnel" in text
-    assert "CMF_REVIEW_RULES_PATH=~/rules.md" in text
+    # The rules file moves into the state folder instead of being flagged as host-only.
+    assert f"Copy {paths.home / '.config/cmf/review-rules.md'} to {paths.cmf_home / 'state/review-rules.md'}" in text
+    assert "CMF_REVIEW_RULES_PATH=" not in text
+    assert "CMF_SKILLS_DIR=/opt/skills" in text
     assert f"CMF_CAPTURE_CLAUDE_CODE_DIR={paths.home / '.claude/projects'}" in text
     assert not paths.cmf_home.exists()
     assert all(c[0] == "docker" and c[1] in ("info", "volume", "inspect") for c in run.calls)
@@ -247,6 +266,10 @@ def test_apply_moves_config_disables_jobs_and_verifies(machine):
     home_env = (paths.cmf_home / ".env").read_text()
     assert "FALKORDB_DATABASE=mem" in home_env and f"CMF_REPO={paths.repo}" in home_env
     assert "COMPOSE_PROFILES=spark,capture" in home_env
+    assert "\n# CMF_REVIEW_RULES_PATH=" in home_env and "\nCMF_REVIEW_RULES_PATH=" not in home_env
+    assert (paths.cmf_home / "state" / "review-rules.md").read_text() == "Career notes are episodes."
+    assert (paths.home / ".config" / "cmf" / "review-rules.md").exists()
+    assert (paths.backup / "review-rules.md").exists()
     assert oct((paths.cmf_home / ".env").stat().st_mode & 0o777) == "0o600"
     assert not paths.repo_env.exists() and paths.migrated_env.exists()
     assert (paths.cmf_home / "state" / "imports" / "journal" / "journal.db").exists()

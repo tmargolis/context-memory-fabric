@@ -7,10 +7,14 @@
 The sequence is the plan's section 3.8, for a Developer-mode install on macOS:
 
 1. Back up into ~/.cmf/backups/<stamp>/: the repo .env, the state folders
-   (proposals-docs, proposals-episode, imports), a FalkorDB dump (BGSAVE, then
-   the RDB and ACL file copied out of the container) and every com.cmf.* plist.
+   (proposals-docs, proposals-episode, imports), the review rules file, a
+   FalkorDB dump (BGSAVE, then the RDB and ACL file copied out of the
+   container) and every com.cmf.* plist.
 2. Copy .env and state into ~/.cmf; rename the repo .env to .env.migrated-<stamp>
-   so no process can read two configs. The originals stay in the repo.
+   so no process can read two configs. The originals stay in the repo. A
+   CMF_REVIEW_RULES_PATH file is copied to ~/.cmf/state/review-rules.md (the
+   default, which the containers see at /data/cmf/review-rules.md) and the
+   setting is commented out; the original file stays where it was.
 3. Write ~/.cmf/compose.yml (deploy/docker/compose.yml) and
    ~/.cmf/compose.override.yml (deploy/docker/compose.dev.yml, plus the
    existing FalkorDB volume attached as external: no data copy).
@@ -42,6 +46,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 REPO = Path(__file__).resolve().parents[1]
+RULES_KEY = "CMF_REVIEW_RULES_PATH"
+RULES_FILE = "review-rules.md"  # server.core.env.review_rules_path's default, in the state folder
 REPLACED_JOBS = ("com.cmf.mcp-server", "com.cmf.capture-poller")
 OLD_FALKORDB_CONTAINER = "context-memory-fabric-falkordb"
 OLD_PROXY_CONTAINER = "context-memory-fabric-spark-llm-proxy"
@@ -176,9 +182,12 @@ def survey(paths: Paths, ops: Ops) -> dict:
         ops.run(["docker", "inspect", "-f", "{{.State.Running}}", OLD_FALKORDB_CONTAINER]).stdout.strip() == "true"
     )
     graph = env.get("FALKORDB_DATABASE") or "default_db"
+    rules = Path(env[RULES_KEY]).expanduser() if env.get(RULES_KEY, "").strip() else None
+    rules = rules if rules is not None and rules.is_absolute() and rules.is_file() else None
     host_paths = {
         k: v for k, v in env.items()
-        if k not in MAPPED_PATH_KEYS and (v.startswith("/") or v.startswith("~")) and "://" not in v
+        if k not in MAPPED_PATH_KEYS and not (k == RULES_KEY and rules)
+        and (v.startswith("/") or v.startswith("~")) and "://" not in v
     }
     return {
         "env": env,
@@ -192,6 +201,7 @@ def survey(paths: Paths, ops: Ops) -> dict:
         "nodes": ops.graph_nodes(env, graph) if container_running else None,
         "capture_dirs": {k: paths.home / rel for k, rel in CAPTURE_DIRS.items() if (paths.home / rel).is_dir()},
         "host_paths": host_paths,
+        "review_rules": rules,
     }
 
 
@@ -220,11 +230,19 @@ def describe(paths: Paths, facts: dict) -> list[str]:
         f"1. Back up into {paths.backup}:",
         f"   - {paths.repo_env}",
         *(f"   - {facts['state_root'] / n} ({mb(s)})" for n, s in facts["state_items"].items()),
+        *([f"   - {facts['review_rules']}"] if facts["review_rules"] else []),
         f"   - FalkorDB dump (BGSAVE, then dump.rdb + users.acl from {OLD_FALKORDB_CONTAINER})",
         *(f"   - {p}" for p in facts["plists"]),
         f"2. Copy .env and state into {paths.cmf_home} (.env, state/); rename the repo .env to {paths.migrated_env.name}.",
         f"   Added to ~/.cmf/.env: CMF_REPO={paths.repo}, COMPOSE_PROFILES with capture,",
         *(f"   {k}={v}" for k, v in facts["capture_dirs"].items()),
+        *(
+            [
+                f"   Copy {facts['review_rules']} to {paths.cmf_home / 'state' / RULES_FILE} (containers: "
+                f"/data/cmf/{RULES_FILE}); comment out {RULES_KEY} in ~/.cmf/.env. The original stays.",
+            ]
+            if facts["review_rules"] else []
+        ),
         f"3. Write {paths.cmf_home / 'compose.yml'} and compose.override.yml (dev overlay; "
         f"volume {OLD_FALKORDB_VOLUME} attached as external).",
         "4. Disable (bootout + disable; plists stay): " + ", ".join(REPLACED_JOBS) + ".",
@@ -278,6 +296,18 @@ def write_compose(paths: Paths) -> None:
     (paths.cmf_home / "compose.override.yml").write_text(overlay)
 
 
+def _home_env_text(paths: Paths, facts: dict) -> str:
+    """The repo .env as ~/.cmf/.env: the review rules setting retired, the managed block appended."""
+    lines = paths.repo_env.read_text().splitlines()
+    if facts["review_rules"]:
+        lines = [
+            f"# {line}  # moved to state/{RULES_FILE} by scripts/consolidate_install.py ({paths.stamp})"
+            if line.strip().startswith(f"{RULES_KEY}=") else line
+            for line in lines
+        ]
+    return "\n".join(lines) + "\n" + _managed_env_block(paths, facts)
+
+
 def _managed_env_block(paths: Paths, facts: dict) -> str:
     profiles = [p for p in (facts["env"].get("COMPOSE_PROFILES") or "").split(",") if p.strip()]
     if "capture" not in profiles:
@@ -311,6 +341,8 @@ def apply(paths: Paths, ops: Ops) -> int:
     ops.bgsave(env)
     _check(ops, ["docker", "cp", f"{OLD_FALKORDB_CONTAINER}:/data/dump.rdb", str(paths.backup / "falkordb-dump.rdb")])
     ops.run(["docker", "cp", f"{OLD_FALKORDB_CONTAINER}:/data/users.acl", str(paths.backup / "falkordb-users.acl")])
+    if facts["review_rules"]:
+        _copy(facts["review_rules"], paths.backup / RULES_FILE)
     for plist in facts["plists"]:
         _copy(plist, paths.backup / "launchd" / plist.name)
     (paths.backup / "facts.json").write_text(
@@ -323,10 +355,10 @@ def apply(paths: Paths, ops: Ops) -> int:
         ops.log("[2/5] Copying .env and state into " + str(paths.cmf_home))
         for name in facts["state_items"]:
             _copy(facts["state_root"] / name, paths.cmf_home / "state" / name)
+        if facts["review_rules"]:
+            _copy(facts["review_rules"], paths.cmf_home / "state" / RULES_FILE)
         done.append("env")  # before writing ~/.cmf/.env, so any partial write is undone
-        shutil.copy2(paths.repo_env, paths.cmf_home / ".env")
-        with open(paths.cmf_home / ".env", "a") as fh:
-            fh.write(_managed_env_block(paths, facts))
+        (paths.cmf_home / ".env").write_text(_home_env_text(paths, facts))
         os.chmod(paths.cmf_home / ".env", 0o600)
         paths.repo_env.rename(paths.migrated_env)
 
