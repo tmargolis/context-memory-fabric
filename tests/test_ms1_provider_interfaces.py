@@ -140,8 +140,9 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # 4 nightly-review tools (2026-10-08: get_review_batch,
         # record/list/confirm_review_recommendations) + merge_episodes
         # (2026-10-09, manual review merge) + close_review_run (2026-10-18) +
-        # inspect_knowledge_document (2026-10-21, optional source inspection).
-        self.assertEqual(len(names), 32)
+        # inspect_knowledge_document (2026-10-21, optional source inspection) +
+        # memory_status (2026-10-23, background remember outcomes).
+        self.assertEqual(len(names), 33)
 
 
 if __name__ == "__main__":

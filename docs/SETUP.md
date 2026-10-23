@@ -78,7 +78,9 @@ See [Connecting Your MCP Client](#connecting-your-mcp-client) below to wire Clau
 2. Wait about 30 seconds, open the FalkorDB Browser at `http://localhost:3002`, and pick the graph **`CMF-local`** (the preview's graph; `memory-fabric` belongs to the developer setup). Run `MATCH (n) RETURN n LIMIT 25`; you should see the new memory and its entities.
 3. Ask *"What do you remember about CMF?"* It should call `recall_mem` and find it.
 
-**Before the first successful write, the graph doesn't exist**, so an empty graph list in the Browser just means nothing has been saved yet. If the graph is still missing after a minute, the background write failed, and the reason is only in the server log:
+Faster checks: ask Claude to run **`memory_status`**, which says whether the memory was saved and, if not, why. Or open `http://127.0.0.1:8000/health` in a browser: it shows which graph and FalkorDB this server uses, whether FalkorDB answers, the providers, the latest background writes and which AI apps have called CMF.
+
+**Before the first successful write, the graph doesn't exist**, so an empty graph list in the Browser just means nothing has been saved yet. For the full traceback of a failure, read the server log:
 ```bash
 docker logs cmf-preview-server 2>&1 | grep -iE "error|traceback" | tail -20
 ```

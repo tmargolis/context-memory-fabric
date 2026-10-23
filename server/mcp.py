@@ -17,11 +17,12 @@ from urllib.parse import urlparse
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 import mcp.types as types
 from pydantic import Field
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from server.capture.health import format_health_report, get_default_health
 from server.capture.identity import resolve_harness
@@ -40,7 +41,9 @@ from server.knowledge import (
 )
 from server.core.config import default_reviewer, load_config
 from server.core.http_auth import AUTH_TOKEN_ENV_VAR, BearerTokenAuthMiddleware, get_configured_auth_token
+from server.core import status as server_status
 from server.core.oauth_provider import CMFOAuthProvider
+from server.core.tool_errors import EMPTY_GRAPH, NO_MEMORIES_YET, classify
 from server.episode_proposals import (
     format_episode_mirror_for_mcp,
     format_episode_mirror_list,
@@ -48,6 +51,7 @@ from server.episode_proposals import (
     read_episode_mirror,
 )
 from server.importer import import_memories_content
+from server.memory_writes import format_write_status, get_default_write_log
 from server.journal.store import SqliteEventStore
 from server.memory import (
     edit_memory as edit_episodic_memory,
@@ -156,6 +160,18 @@ app = MCPServer(
     auth_server_provider=oauth_provider,
     auth=_auth_settings,
 )
+
+@app.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """Server status for CMF Setup and for humans (curl http://127.0.0.1:8000/health).
+
+    Network transports only. A request that came through a proxy or tunnel gets
+    only status and version; see server.core.status.
+    """
+    if server_status.is_proxied(request.headers):
+        return JSONResponse(server_status.minimal())
+    return JSONResponse(await asyncio.to_thread(server_status.snapshot))
+
 
 # MS4a MCP-boundary capture: journal a source event for every tool call this
 # server handles, regardless of which MCP client is connected. See
@@ -391,7 +407,16 @@ async def recall_mem(
     SIDE EFFECTS:
     - Read-only. Does not modify episodic memory.
     """
-    return await recall_memory(query=query, max_results=max_results, format_for_mcp=True)
+    try:
+        return await recall_memory(query=query, max_results=max_results, format_for_mcp=True)
+    except Exception as e:
+        classified = classify(e)
+        if classified is None:
+            raise
+        if classified.kind == EMPTY_GRAPH:
+            return NO_MEMORIES_YET
+        logger.warning(f"recall_mem failed ({classified.kind}): {e!r}")
+        raise ToolError(classified.message) from e
 
 
 @app.tool(
@@ -466,17 +491,55 @@ async def remember(
         except Exception:
             pass
 
-    res = await remember_queued(
-        content=content,
-        name=name,
-        source_description=desc,
-        project=project,
-        harness=harness,
-    )
+    try:
+        res = await remember_queued(
+            content=content,
+            name=name,
+            source_description=desc,
+            project=project,
+            harness=harness,
+        )
+    except Exception as e:
+        classified = classify(e)
+        if classified is None:
+            raise
+        logger.warning(f"remember failed before queueing ({classified.kind}): {e!r}")
+        raise ToolError(f"Nothing was saved. {classified.message}") from e
     return (
-        f"Memory queued for background ingestion (not yet confirmed).\n"
+        f"Memory queued for background ingestion (not yet confirmed; check memory_status in about a minute).\n"
         f"- Episode: `{res['name']}`\n- Project: `{res.get('project', 'misc')}`\n- Timestamp: `{res['reference_time']}`\n- Message: {res['message']}"
     )
+
+
+@app.tool(
+    title="Background Memory Write Status",
+    annotations=types.ToolAnnotations(
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    ),
+)
+async def memory_status(
+    episode: Annotated[
+        Optional[str],
+        Field(description="Episode name from remember's reply (e.g. 'claude-code-my-project-004'). Omit to list the latest writes."),
+    ] = None,
+) -> str:
+    """Whether a memory queued by `remember` was actually saved: queued, committed, failed (with the reason), or lost.
+
+    WHEN TO USE:
+    - About a minute after `remember`, to confirm the memory landed before telling the user it was saved.
+    - When the user asks whether memory is working, or why something they asked to remember can't be recalled.
+
+    SIDE EFFECTS:
+    - Read-only.
+    """
+    write_log = get_default_write_log()
+    if episode:
+        row = await asyncio.to_thread(write_log.get, episode.strip())
+        return format_write_status([row] if row else [], episode.strip())
+    return format_write_status(await asyncio.to_thread(write_log.recent, 10))
 
 
 @app.tool(
@@ -582,11 +645,14 @@ async def capture_session(
     ),
 )
 async def capture_health() -> str:
-    """Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.
+    """Report CMF's health: capture counters, FalkorDB, providers, recent background memory writes, and AI apps seen.
 
     WHEN TO USE:
     - Use when asked whether capture is working, whether anything has been dropped, or how full the capture
       queue currently is.
+    - Use when asked whether CMF is working at all, which server or graph this is, or why memories aren't
+      being saved: it shows whether FalkorDB answers, the configured providers, and the outcome of the
+      latest background writes.
     - Also reports FalkorDB's query TIMEOUT, warning when it has drifted below the 30000 ms docker-compose sets.
 
     SIDE EFFECTS:
@@ -594,8 +660,13 @@ async def capture_health() -> str:
       itself, inspectable via the journal CLI (`server/journal/cli.py stats`).
     """
     timeout_ms, timeout_warning = await asyncio.to_thread(check_query_timeout)
+    snap = await asyncio.to_thread(server_status.snapshot)
     return "\n".join(
-        [format_health_report(get_default_health().snapshot()), format_query_timeout_line(timeout_ms, timeout_warning)]
+        [
+            format_health_report(get_default_health().snapshot()),
+            format_query_timeout_line(timeout_ms, timeout_warning),
+            *server_status.format_status_lines(snap),
+        ]
     )
 
 

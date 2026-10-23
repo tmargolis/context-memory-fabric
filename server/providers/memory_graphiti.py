@@ -734,6 +734,12 @@ async def remember_queued(
         target_graph=target_db,
     )
 
+    from server.core.tool_errors import classify
+    from server.memory_writes import get_default_write_log
+
+    write_log = get_default_write_log()
+    write_log.queued(episode_name, target_db)
+
     async def _run() -> None:
         try:
             await remember(
@@ -746,8 +752,17 @@ async def remember_queued(
                 harness=resolved_harness,
             )
             logger.info(f"Background remember committed: '{episode_name}'")
-        except Exception:
+            write_log.committed(episode_name)
+        except Exception as e:
             logger.exception(f"Background remember FAILED to commit: '{episode_name}'")
+            classified = classify(e)
+            if classified is not None:
+                write_log.failed(episode_name, classified.kind, classified.message)
+            else:
+                write_log.failed(
+                    episode_name, "unexpected",
+                    f"Unexpected error ({type(e).__name__}); the server log has the details.",
+                )
 
     task = asyncio.create_task(_run())
     _BACKGROUND_REMEMBER_TASKS.add(task)
@@ -762,8 +777,9 @@ async def remember_queued(
         "source_description": source_description,
         "message": (
             f"Episode '{episode_name}' queued for background ingestion -- not yet confirmed. "
-            "On the local-model path this can take a minute or more; use recall_mem to confirm "
-            "it has landed before assuming it failed or retrying."
+            "It usually takes under a minute (longer on a local model). Call "
+            f"memory_status(episode='{episode_name}') then to see whether it was saved, and why not "
+            "if it failed, before retrying."
         ),
     }
 

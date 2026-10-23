@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from server.core.protocols import KnowledgeProvider, KnowledgeSource, MemoryProvider
+from server.core.tool_errors import EMPTY_GRAPH, classify
 from server.knowledge import format_knowledge_result, load_knowledge_sources, search_knowledge
 from server.providers.wiki.corpus import ExtractionStatus, get_corpus_root
 from server.providers.wiki.note_dates import describe_age, git_index, resolve_note_dates
@@ -134,7 +135,20 @@ async def get_context(
     wiki_results = _select_wiki(wiki_candidates, max_wiki_results)
 
     # 2. Retrieve Episodic Memory from Graphiti / FalkorDB (over-fetch, dedup, cap).
-    memory_candidates: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=fetch_k)
+    #    A foreseeable memory failure (FalkorDB down, a rejected key, a graph
+    #    not created yet) still returns the knowledge sections, with the reason
+    #    in the memory section; anything else raises as before.
+    memory_note: Optional[str] = None
+    try:
+        memory_candidates: list[dict[str, Any]] = await memory.recall(clean_topic, max_results=fetch_k)
+    except Exception as e:
+        classified = classify(e)
+        if classified is None:
+            raise
+        memory_candidates = []
+        memory_note = classified.message if classified.kind == EMPTY_GRAPH else (
+            f"Episodic memory is unavailable: {classified.message}"
+        )
     # recall_mem already RRF-ranks + per-episode-caps; render its direct results
     # up to max_memory_results (deduped).
     memory_facts: list[dict[str, Any]] = _select_memory(memory_candidates, max_memory_results)
@@ -251,6 +265,8 @@ async def get_context(
                 prov = f"  _({se['provenance']})_" if se.get("provenance") else ""
                 sections.append(f"  > {se['content']}{prov}")
             sections.append("")
+    elif memory_note:
+        sections.append(f"_{memory_note}_\n")
     else:
         sections.append(f"_No episodic memories found in FalkorDB for '{clean_topic}'._\n")
 
