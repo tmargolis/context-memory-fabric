@@ -18,6 +18,8 @@ type command struct {
 
 var commands = map[string]command{
 	"mode":    {"show or switch the install mode (standard / developer)", runMode},
+	"status":  {"check this CMF install (one line per check)", runStatus},
+	"doctor":  {"the checks with their fixes; --fix runs them, --json for scripts", runDoctor},
 	"version": {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 
@@ -35,10 +37,10 @@ func usage(out io.Writer) {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, out, errOut io.Writer) int {
+func runCLI(args []string, out, errOut io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		usage(out)
 		return 0
