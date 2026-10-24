@@ -192,18 +192,16 @@ Each source uses **one live method**, so the same conversation isn't captured tw
 
 ## 4. Implementation plan
 
-Rough sizes: S under half a day, M 1–2 days, L 3+ days.
-
 ### Phase 0: Stop the bleeding (docs/config only, no server code)
 
 Nothing in Phase 0 or later waits on Noel. His follow-ups are listed separately below.
 
-| Item | Fixes | Size |
+| Item | What | Status |
 |---|---|---|
-| 0.1 SETUP.md: put a bold "pick ONE path" box at the top. Docker path = do not run `install.sh --mcp-server`, do not `uv sync`. Mark the poller section "host install only" until Phase 2 lands. | P1, P2, P4 | S |
-| 0.2 SETUP.md / CLIENTS.md: replace the Claude Desktop instructions with what works today: developer config with `mcp-remote` to `http://127.0.0.1:8000/mcp` (needs Node; Connectors can't reach localhost); start a **new** session after any MCP change. For the Code tab, say the Desktop entry is what worked on Noel's machine and is still being confirmed (Q3). Remove LaunchControl from all guidance (Q7). Move the from-source steps to a separate `docs/DEVELOPER-SETUP.md` (Q1). | P5 | S |
-| 0.3 `.env.example`: split into a short "Docker preview" block on top (providers, keys, wiki path) and a clearly fenced "host install only" block (`FALKORDB_HOST/PORT`, `CMF_LOCAL_*`, poller settings). Blank the placeholder keys instead of `your_..._here`. | P1, P3 | S |
-| 0.4 Document what "working" looks like: run `remember`, wait ~30 s, refresh the FalkorDB Browser, select `CMF-local`, see nodes. Fix the `memory-fabric` / `CMF-local` naming in the docs. | P7, P8 | S |
+| 0.1 | SETUP.md: put a bold "pick ONE path" box at the top. Docker path = do not run `install.sh --mcp-server`, do not `uv sync`. Mark the poller section "host install only" until Phase 2 lands. | ✅ Done (b7e9a10) |
+| 0.2 | SETUP.md / CLIENTS.md: replace the Claude Desktop instructions with what works today: developer config with `mcp-remote` to `http://127.0.0.1:8000/mcp` (needs Node; Connectors can't reach localhost); start a **new** session after any MCP change. For the Code tab, say the Desktop entry is what worked on Noel's machine and is still being confirmed (Q3). Remove LaunchControl from all guidance (Q7). Move the from-source steps to a separate `docs/DEVELOPER-SETUP.md` (Q1). | ✅ Done (b7e9a10) |
+| 0.3 | `.env.example`: split into a short "Docker preview" block on top (providers, keys, wiki path) and a clearly fenced "host install only" block (`FALKORDB_HOST/PORT`, `CMF_LOCAL_*`, poller settings). Blank the placeholder keys instead of `your_..._here`. | ✅ Done (b7e9a10) |
+| 0.4 | Document what "working" looks like: run `remember`, wait ~30 s, refresh the FalkorDB Browser, select `CMF-local`, see nodes. Fix the `memory-fabric` / `CMF-local` naming in the docs. | ✅ Done (b7e9a10) |
 
 ### Noel follow-ups (non-blocking)
 
@@ -218,50 +216,75 @@ These help confirm P7's exact cause and tidy Noel's machine. They run whenever h
 
 The app's Status screen is only as good as what the server reports, so this comes before the app.
 
-| Item | What | Fixes | Size |
-|---|---|---|---|
-| 1.1 Startup config check | Before serving: validate the provider combination (no `anthropic` embeddings), the needed keys are present and not placeholders, FalkorDB is reachable, and `EMBEDDING_DIM` matches an existing graph's index. Exit with one plain sentence per problem. | P1, P3 | M |
-| 1.2 Anticipated errors become `ToolError` | Wrap the known failure classes in `recall_mem`, `get_context`, `remember` and the background writer: FalkorDB unreachable, provider auth/quota, embedding width mismatch, model not found. The model then gets an actionable sentence instead of "Error executing tool". | P6 | M |
-| 1.3 Empty graph is not an error | `recall_mem` / `get_context` on a graph that doesn't exist yet return "No memories yet." | P8 | S |
-| 1.4 Background-write status | Record each queued `remember`'s outcome (committed / failed + reason) in the journal; add a `memory_status` tool (or extend `capture_health`). The `remember` ack says when to check. | P7 | M |
-| 1.5 Health endpoint | `GET /health` (no tool call needed, for the app) and a `capture_health` field: version, docker / host, graph, FalkorDB host:port, providers, knowledge sources, start time, last background-write results, and **clients seen** (MCP client name + harness + last-seen time, last 24 h; no content). | P2, P5, P10 | S |
-| 1.6 Port guard | If port 8000 is already taken, exit with "another process is already on 8000; open CMF Setup" instead of KeepAlive crash-looping. | P2 | S |
-| 1.7 Self-test entry point | `python -m server.selftest` (run by the app via `docker exec`) and a `cmf_selftest` MCP tool: write a memory to a scratch graph, wait for commit, recall it, delete the scratch graph, report each stage. | P7 | M |
-| 1.8 Ranked LLM providers | `CMF_LLM_PROVIDERS=anthropic,openai,gemini` (ordered). Use the first; on rate-limit, quota or auth errors, retry the call on the next and log which one served it. `CMF_LLM_PROVIDER` stays as a one-item alias. Embeddings stay single (`CMF_EMBED_PROVIDER`). | P3 | M |
+| Item | What | Status |
+|---|---|---|
+| 1.1 Startup config check | Before serving: validate the provider combination (no `anthropic` embeddings), the needed keys are present and not placeholders, FalkorDB is reachable, and `EMBEDDING_DIM` matches an existing graph's index. Exit with one plain sentence per problem. | Not started (step E) |
+| 1.2 Anticipated errors become `ToolError` | Wrap the known failure classes in `recall_mem`, `get_context`, `remember` and the background writer: FalkorDB unreachable, provider auth/quota, embedding width mismatch, model not found. The model then gets an actionable sentence instead of "Error executing tool". | ✅ Done (cf94d98) |
+| 1.3 Empty graph is not an error | `recall_mem` / `get_context` on a graph that doesn't exist yet return "No memories yet." | ✅ Done (cf94d98) |
+| 1.4 Background-write status | Record each queued `remember`'s outcome (committed / failed + reason) in the journal; add a `memory_status` tool (or extend `capture_health`). The `remember` ack says when to check. | ✅ Done (cf94d98): `memory_status` tool |
+| 1.5 Health endpoint | `GET /health` (no tool call needed, for the app) and a `capture_health` field: version, docker / host, graph, FalkorDB host:port, providers, knowledge sources, start time, last background-write results, and **clients seen** (MCP client name + harness + last-seen time, last 24 h; no content). | ✅ Done (cf94d98) |
+| 1.6 Port guard | If port 8000 is already taken, exit with "another process is already on 8000; open CMF Setup" instead of KeepAlive crash-looping. | Not started (step F) |
+| 1.7 Self-test entry point | `python -m server.selftest` (run by the app via `docker exec`) and a `cmf_selftest` MCP tool: write a memory to a scratch graph, wait for commit, recall it, delete the scratch graph, report each stage. | Not started (step G) |
+| 1.8 Ranked LLM providers | `CMF_LLM_PROVIDERS=anthropic,openai,gemini` (ordered). Use the first; on rate-limit, quota or auth errors, retry the call on the next and log which one served it. `CMF_LLM_PROVIDER` stays as a one-item alias. Embeddings stay single (`CMF_EMBED_PROVIDER`). | Not started (step H) |
 
 ### Phase 2: Docker stack that needs no checkout
 
-| Item | What | Fixes | Size |
-|---|---|---|---|
-| 2.1 Publish the server image | CI builds and pushes `ghcr.io/tmargolis/context-memory-fabric:<version>` (multi-arch: arm64 + amd64) on each release tag. | P4 | M |
-| 2.2 One user compose file | A user-facing compose file (CMF server, FalkorDB, Browser, capture poller) using the published image, with profiles per optional feature. Todd's extras (Spark proxy, ACL entrypoint) move to `docker-compose.dev.yml`, an **overlay** on the same stack, not a second stack. One graph name, one set of ports, in both modes. | P1, P8 | M |
-| 2.3 Capture poller as a container | `cmf-poller` service runs `capture_runner tail` on an interval, with `~/.claude`, `~/.codex`, `~/.gemini` and the Cowork folder mounted read-only. Captures only the sources assigned to the poller (§3.9: no source is captured by both hook and poller). Retires host `.venv` and launchd for capture. | P2, P4 | M |
-| 2.4 Config in `~/.cmf/` for both modes | One env loader (`server/core/env.py`) replaces the ~8 scattered `load_dotenv()` calls: it reads `$CMF_HOME/.env` (default `~/.cmf/.env`), falls back to a repo `.env` with a deprecation warning, and warns if both exist. `CMF_STATE_DIR` (already supported) defaults to `~/.cmf/state`. The dev stack builds the server and poller from the checkout (§3.8). | P4 | M |
-| 2.5 Consolidate existing installs | The §3.8 back up → copy → attach graph → disable → verify sequence, as a script the app later runs (3.5). **Run first on Todd's Mac**, with a milestone review before and after; rollback restores the `.env`, re-enables the launchd jobs and reattaches the old stack. | P1, P2, P4 | M |
+| Item | What | Status |
+|---|---|---|
+| 2.1 Publish the server image | CI builds and pushes `ghcr.io/tmargolis/context-memory-fabric:<version>` (multi-arch: arm64 + amd64) on each release tag. | 🔶 Workflow written (`.github/workflows/release-image.yml`, c4b9b49); first run needs the branch pushed and a release tag (step L) |
+| 2.2 One user compose file | A user-facing compose file (CMF server, FalkorDB, Browser, capture poller) using the published image, with profiles per optional feature. Todd's extras (Spark proxy, ACL entrypoint) move to `docker-compose.dev.yml`, an **overlay** on the same stack, not a second stack. One graph name, one set of ports, in both modes. | ✅ Done (c4b9b49): `deploy/docker/compose.yml` + `compose.dev.yml` overlay |
+| 2.3 Capture poller as a container | `cmf-poller` service runs `capture_runner tail` on an interval, with `~/.claude`, `~/.codex`, `~/.gemini` and the Cowork folder mounted read-only. Captures only the sources assigned to the poller (§3.9: no source is captured by both hook and poller). Retires host `.venv` and launchd for capture. | ✅ Done (c4b9b49); journal in the `cmf-journal` Docker volume (7fb0b98). Per-source hook/poller assignment comes with 3.11 |
+| 2.4 Config in `~/.cmf/` for both modes | One env loader (`server/core/env.py`) replaces the ~8 scattered `load_dotenv()` calls: it reads `$CMF_HOME/.env` (default `~/.cmf/.env`), falls back to a repo `.env` with a deprecation warning, and warns if both exist. `CMF_STATE_DIR` (already supported) defaults to `~/.cmf/state`. The dev stack builds the server and poller from the checkout (§3.8). | ✅ Done (c4b9b49); review rules default to the state folder (c42d958) |
+| 2.5 Consolidate existing installs | The §3.8 back up → copy → attach graph → disable → verify sequence, as a script the app later runs (3.5). **Run first on Todd's Mac**, with a milestone review before and after; rollback restores the `.env`, re-enables the launchd jobs and reattaches the old stack. | ✅ Done and run on Todd's Mac 2026-10-23 (backup `20261023-164606`, graph `mem-fabric-local` 6769 nodes); journal moved into the volume with `journal-to-volume` (7fb0b98) |
 
 ### Phase 3: The CMF Setup app
 
-| Item | What | Fixes | Size |
-|---|---|---|---|
-| 3.1 Engine + CLI | Go module with the operations both front-ends use: read current state, run checks, plan changes, apply with backups, restore. CLI: `cmf status`, `cmf doctor [--json]`, `cmf apply <feature-file>`, `cmf restore`, `cmf logs`, `cmf diagnostics`. | P10 | L |
-| 3.2 Feature manifest | The feature list from 3.4 as data: inputs, rules (e.g. Anthropic LLM requires a non-Anthropic embedder), what each writes, its checks. Unit-tested rule validation. | P3, P9 | M |
-| 3.3 Status checks + Fixes | Everything in 3.3's Status list, each with its Fix action, using `/health` (1.5) and the self-test (1.7). | P1, P2, P6, P7, P8 | L |
-| 3.4 Client config writers | Claude Desktop, Claude Code / Code tab, Codex, Cursor, Antigravity / VS Code: merge one CMF entry, remove duplicates, back up, and verify by reading the file back. Hook + agent-instructions installers. | P5, P9 | L |
-| 3.5 Migration | Runs the 2.5 consolidation from the app: detects repo-based stacks, launchd/systemd/Task Scheduler CMF jobs and stray host servers; backs up, imports keys and paths, **disables** (never uninstalls) the replaced services. | P1, P2 | M |
-| 3.6 GUI | Embedded web UI over the engine: Status, Features, Review changes, progress, logs, diagnostics. Local-only server with token auth (§3.6). | all | L |
-| 3.7 Packaging | Cross-compiled release binaries (unsigned for the preview, with right-click → Open instructions); checksums; "Update" pulls the new image and app version. | — | M |
-| 3.8 `cmf bridge` | A subcommand that relays Claude Desktop's stdio MCP to the server's HTTP endpoint, so the Desktop entry runs the app binary instead of `npx mcp-remote`. Removes the Node requirement. | P5 | M |
-| 3.9 Install modes | `mode.json`, mode detection, image-vs-checkout switching (§3.8). Small, since both modes share everything else. | P1, P2 | S |
-| 3.10 Remote access helper | Detect Tailscale / cloudflared / ngrok; enable OAuth first; run only the CMF-specific expose command; set `CMF_MCP_ISSUER_URL`; undo. | — | M |
-| 3.11 Capture wiring + estimates | Per-source capture method assignment (hook / poller / server instructions, §3.9), hook installers, marker-fenced agent blocks with duplicate detection, the prompt-context budget, and cost estimates for live capture and backfill (with actual-vs-estimate in Status). | P9, cost | M |
+| Item | What | Status |
+|---|---|---|
+| 3.1 Engine + CLI | Go module with the operations both front-ends use: read current state, run checks, plan changes, apply with backups, restore. CLI: `cmf status`, `cmf doctor [--json]`, `cmf apply <feature-file>`, `cmf restore`, `cmf logs`, `cmf diagnostics`. | 🔶 In progress: skeleton, `cmf status`, `cmf doctor [--json] [--fix]` done (a49d4c8, d90ea98); `apply` / `restore` next (step C), then `logs` / `diagnostics` (step D) |
+| 3.2 Feature manifest | The feature list from 3.4 as data: inputs, rules (e.g. Anthropic LLM requires a non-Anthropic embedder), what each writes, its checks. Unit-tested rule validation. | Not started (step C) |
+| 3.3 Status checks + Fixes | Everything in 3.3's Status list, each with its Fix action, using `/health` (1.5) and the self-test (1.7). | 🔶 Rows the server supports today are done (d90ea98), green on Todd's Mac. Provider test and embedding width come with 1.1 (step E), self-test with 1.7 (step G), client entries with 3.4 (step I) |
+| 3.4 Client config writers | Claude Desktop, Claude Code / Code tab, Codex, Cursor, Antigravity / VS Code: merge one CMF entry, remove duplicates, back up, and verify by reading the file back. Hook + agent-instructions installers. | Not started (step I) |
+| 3.5 Migration | Runs the 2.5 consolidation from the app: detects repo-based stacks, launchd/systemd/Task Scheduler CMF jobs and stray host servers; backs up, imports keys and paths, **disables** (never uninstalls) the replaced services. | Not started (step J) |
+| 3.6 GUI | Embedded web UI over the engine: Status, Features, Review changes, progress, logs, diagnostics. Local-only server with token auth (§3.6). | Not started (step K) |
+| 3.7 Packaging | Cross-compiled release binaries (unsigned for the preview, with right-click → Open instructions); checksums; "Update" pulls the new image and app version. | Not started (step L) |
+| 3.8 `cmf bridge` | A subcommand that relays Claude Desktop's stdio MCP to the server's HTTP endpoint, so the Desktop entry runs the app binary instead of `npx mcp-remote`. Removes the Node requirement. | Not started (step M) |
+| 3.9 Install modes | `mode.json`, mode detection, image-vs-checkout switching (§3.8). Small, since both modes share everything else. | ✅ Done (a49d4c8): `mode.json`, detection, `cmf mode set`; recreating the stack after a switch is still a manual `docker compose up -d --build` |
+| 3.10 Remote access helper | Detect Tailscale / cloudflared / ngrok; enable OAuth first; run only the CMF-specific expose command; set `CMF_MCP_ISSUER_URL`; undo. | Not started (step N) |
+| 3.11 Capture wiring + estimates | Per-source capture method assignment (hook / poller / server instructions, §3.9), hook installers, marker-fenced agent blocks with duplicate detection, the prompt-context budget, and cost estimates for live capture and backfill (with actual-vs-estimate in Status). | Not started (step O) |
 
 ### Phase 4: First-run value and docs
 
-| Item | What | Fixes | Size |
-|---|---|---|---|
-| 4.1 Backfill | Optional, offered once after setup: one-time import of the last N days of transcripts from before CMF was installed, through the poller container, with a cost estimate first and a progress bar. The first question in Claude gets a real answer. | P9, value | M |
-| 4.2 Quickstart | `docs/QUICKSTART.md`: install Docker Desktop → download CMF Setup → pick features → Apply → in Claude: "Run the CMF self-test", then "What did I work on last week?". SETUP.md becomes the reference; README links Quickstart first. | all | S |
-| 4.3 Retire old instructions | SETUP.md / CLIENTS.md client sections point to the app; manual steps move under "Advanced / no app". | P5 | S |
+| Item | What | Status |
+|---|---|---|
+| 4.1 Backfill | Optional, offered once after setup: one-time import of the last N days of transcripts from before CMF was installed, through the poller container, with a cost estimate first and a progress bar. The first question in Claude gets a real answer. | Not started (step P) |
+| 4.2 Quickstart | `docs/QUICKSTART.md`: install Docker Desktop → download CMF Setup → pick features → Apply → in Claude: "Run the CMF self-test", then "What did I work on last week?". SETUP.md becomes the reference; README links Quickstart first. | Not started (step Q) |
+| 4.3 Retire old instructions | SETUP.md / CLIENTS.md client sections point to the app; manual steps move under "Advanced / no app". | Not started (step R) |
+
+### Build steps
+
+The order of §6, one letter per step. Commits go on `setup-simplification`; each step ends with Todd's review before the next starts. Steps E onward are planned, not yet detailed.
+
+The engine and CLI are a Go module at the repo root (`cmd/cmf`, `internal/…`), with the compose files embedded from `deploy/docker`; every external command goes through a fake-able runner with a timeout.
+
+- [x] **A. Skeleton, `~/.cmf` home, install modes (3.9):** `.env` edits line by line (owner-only), dated backups, `mode.json`, `cmf mode [set]`, which keeps the install's own volume block in `compose.override.yml`. (a49d4c8)
+- [x] **B. Probe, `cmf status`, `cmf doctor [--json] [--fix[=<check>]]` (3.1, 3.3):** Docker (including a hung daemon), stack containers, port owner, leftover launchd jobs and containers, host `server.mcp`, `/health`, graph node count. Fixes start or restart Docker Desktop, `compose up` / force-recreate, disable replaced launchd jobs (plists stay), stop old containers (not removed), restart `cmf-server`. (d90ea98)
+- [ ] **C. Feature manifest (3.2), `cmf apply <feature-file>`, `cmf restore <stamp>` (3.1):** embedded manifest with rule types (requires, conflicts, forbidden values, exactly one, ranked list, locked once the graph has data); apply plans, backs up, writes `.env` / profiles, recreates; client-config steps skipped until step I.
+- [ ] **D. `cmf logs`, `cmf diagnostics` (3.1):** recent container logs; a redacted report (versions, checks, last 50 ERROR lines; no keys, tokens or memory content), shown before copying.
+- [ ] **E. Startup config check (1.1):** plus the provider-test and embedding-width Status rows (3.3).
+- [ ] **F. Port guard (1.6).**
+- [ ] **G. Self-test (1.7):** plus the self-test Status row (3.3).
+- [ ] **H. Ranked LLM providers (1.8).**
+- [ ] **I. Client config writers (3.4):** plus the client-entries Status row (3.3) and the client steps of `cmf apply`.
+- [ ] **J. Migration from the app (3.5).**
+- [ ] **K. GUI (3.6).**
+- [ ] **L. Packaging (3.7):** with the first release tag, which also runs the image workflow for the first time (2.1).
+- [ ] **M. `cmf bridge` (3.8).**
+- [ ] **N. Remote access helper (3.10).**
+- [ ] **O. Capture wiring + estimates (3.11).**
+- [ ] **P. Backfill (4.1).**
+- [ ] **Q. Quickstart (4.2).**
+- [ ] **R. Retire old instructions (4.3).**
 
 ### Not in scope
 
