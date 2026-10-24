@@ -416,7 +416,13 @@ func (p Prober) nodes(ctx context.Context, f Facts) (int, string) {
 			return n, ""
 		}
 	}
-	return -1, firstLine(r.Output())
+	if msg := firstLine(r.Output()); msg != "" {
+		return -1, msg
+	}
+	if r.Err != nil {
+		return -1, r.Err.Error()
+	}
+	return -1, "unexpected answer from redis-cli"
 }
 
 func first(values ...string) string {

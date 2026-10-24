@@ -147,3 +147,14 @@ func TestParseRowsArray(t *testing.T) {
 		t.Fatalf("%+v", rows)
 	}
 }
+
+func TestNodeCountTimeoutSaysSo(t *testing.T) {
+	h := newHome(t)
+	fake := healthyFake(h)
+	fake.Answers["docker exec*"] = run.Result{Err: run.ErrTimeout}
+	delete(fake.Answers, "docker exec -e REDISCLI_AUTH cmf-falkordb redis-cli --no-auth-warning --user todd GRAPH.QUERY mem-fabric-local MATCH (n) RETURN count(n)")
+	f := prober(h, fake, healthJSON, nil).Collect(context.Background())
+	if f.Nodes != -1 || f.NodesErr != run.ErrTimeout.Error() {
+		t.Fatalf("%d %q", f.Nodes, f.NodesErr)
+	}
+}

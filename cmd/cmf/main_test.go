@@ -116,3 +116,53 @@ func TestDoctorRejectsJSONWithFix(t *testing.T) {
 		t.Fatal(code)
 	}
 }
+
+func TestApplyDryRunCancelAndYes(t *testing.T) {
+	fake := fakeMachine(t, true)
+	fake.Answers["docker compose*"] = run.Result{}
+	home := os.Getenv("CMF_HOME")
+	os.WriteFile(filepath.Join(home, ".env"), []byte("COMPOSE_PROFILES=capture\nGEMINI_API_KEY=g-123456789\n"), 0o600)
+	file := filepath.Join(t.TempDir(), "off.json")
+	os.WriteFile(file, []byte(`{"features": {"capture": {"enabled": false}}}`), 0o600)
+	sleep, healthTimeout = func(time.Duration) {}, time.Second
+	t.Cleanup(func() { sleep, healthTimeout, stdin = time.Sleep, 3*time.Minute, os.Stdin })
+
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"apply", file, "--dry-run"}, &out, &errOut); code != 0 ||
+		!strings.Contains(out.String(), "set COMPOSE_PROFILES=empty (was capture)") && !strings.Contains(out.String(), "set COMPOSE_PROFILES= (was capture)") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if !strings.Contains(out.String(), "Stop the cmf-poller container") || !strings.Contains(out.String(), "Dry run") {
+		t.Fatal(out.String())
+	}
+
+	stdin = strings.NewReader("n\n")
+	out.Reset()
+	if code := runCLI([]string{"apply", file}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "cancelled") {
+		t.Fatalf("code %d %s", code, errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, ".env")); !strings.Contains(string(data), "COMPOSE_PROFILES=capture") {
+		t.Fatal("cancel writes nothing")
+	}
+
+	out.Reset()
+	if code := runCLI([]string{"apply", file, "--yes"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "Undo with: cmf restore 20261024-130000") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	runCLI([]string{"restore"}, &out, &errOut)
+	if !strings.Contains(out.String(), "20261024-130000  cmf apply: turn off capture") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestApplyReportsEveryProblem(t *testing.T) {
+	fakeMachine(t, true)
+	file := filepath.Join(t.TempDir(), "bad.json")
+	os.WriteFile(file, []byte(`{"features": {"embeddings": {"provider": "anthropic"}, "teleport": {}}}`), 0o600)
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"apply", file}, &out, &errOut); code != 1 ||
+		!strings.Contains(out.String(), "Anthropic has no embeddings API") || !strings.Contains(out.String(), `unknown feature "teleport"`) {
+		t.Fatalf("code %d\n%s", code, out.String())
+	}
+}

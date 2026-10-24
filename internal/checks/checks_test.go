@@ -79,7 +79,7 @@ func TestDockerHungOffersRestartAndSkipsDockerRows(t *testing.T) {
 	if r["docker"].Level != Fail || r["docker"].Fix == nil || !strings.Contains(r["docker"].Fix.Steps[0].Show, "com.docker.backend") {
 		t.Fatalf("%+v", r["docker"])
 	}
-	if r["stack"].Level != NA || r["containers"].Level != NA {
+	if r["stack"].Level != NA || r["containers"].Level != NA || r["port"].Level != NA {
 		t.Fatal("docker-dependent rows wait for Docker")
 	}
 	if r["graph"].Fix != nil {

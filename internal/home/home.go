@@ -219,16 +219,44 @@ func (e *Env) Keys() []string {
 	return keys
 }
 
-// Set replaces the key's line in place, or appends it.
+// Set replaces the key's line in place, or appends it. When the key is
+// repeated it replaces the last line, the one that takes effect (dotenv and
+// compose both let the last value win).
 func (e *Env) Set(key, value string) {
 	line := key + "=" + quote(value)
-	for i, existing := range e.lines {
-		if k, _, ok := parseLine(existing); ok && k == key {
+	for i := len(e.lines) - 1; i >= 0; i-- {
+		if k, _, ok := parseLine(e.lines[i]); ok && k == key {
 			e.lines[i] = line
 			return
 		}
 	}
 	e.lines = append(e.lines, line)
+}
+
+// Unset removes every line that sets key.
+func (e *Env) Unset(key string) {
+	kept := e.lines[:0:0]
+	for _, line := range e.lines {
+		if k, _, ok := parseLine(line); ok && k == key {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	e.lines = kept
+}
+
+// Has reports whether key is set at all (even to "").
+func (e *Env) Has(key string) bool {
+	for _, line := range e.lines {
+		if k, _, ok := parseLine(line); ok && k == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Env) Clone() *Env {
+	return &Env{lines: append([]string(nil), e.lines...)}
 }
 
 func quote(value string) string {

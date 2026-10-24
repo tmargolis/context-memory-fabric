@@ -25,7 +25,7 @@ func TestEnvSetKeepsOtherLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	want := "# keys\nOPENAI_API_KEY=sk-1\n\nCMF_REPO=\"/new path\"\nCMF_REPO=/older\nNEW_KEY=x\n"
+	want := "# keys\nOPENAI_API_KEY=sk-1\n\nexport CMF_REPO=/old # checkout\nCMF_REPO=\"/new path\"\nNEW_KEY=x\n"
 	if string(data) != want {
 		t.Fatalf("got\n%s\nwant\n%s", data, want)
 	}
@@ -35,6 +35,13 @@ func TestEnvSetKeepsOtherLines(t *testing.T) {
 	}
 	if keys := strings.Join(env.Keys(), ","); keys != "OPENAI_API_KEY,CMF_REPO,NEW_KEY" {
 		t.Fatalf("keys %s", keys)
+	}
+	if env.Get("CMF_REPO") != "/new path" {
+		t.Fatal("Set must change the value that takes effect (the last one)")
+	}
+	env.Unset("CMF_REPO")
+	if env.Has("CMF_REPO") || !env.Has("NEW_KEY") {
+		t.Fatal("Unset removes every copy, nothing else")
 	}
 }
 

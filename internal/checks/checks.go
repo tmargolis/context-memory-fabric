@@ -192,6 +192,8 @@ func checkPort(f probe.Facts) Result {
 	case !f.Listener.IsDocker():
 		r.Level = Fail
 		r.Detail = fmt.Sprintf("%s (PID %d) has the port, not the CMF container. Stop it, then start the stack", f.Listener.Command, f.Listener.PID)
+	case !f.Docker.Responding:
+		r.Level, r.Detail = NA, fmt.Sprintf("Docker holds the port; which container can't be checked while Docker isn't answering")
 	case f.Service("cmf-server") == nil || f.Service("cmf-server").State != "running":
 		r.Level, r.Detail = Warn, "Docker holds the port, but not for this stack's cmf-server (an older CMF stack?)"
 	default:
