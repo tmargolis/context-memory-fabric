@@ -8,6 +8,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/tmargolis/context-memory-fabric/internal/checks"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
@@ -139,6 +140,10 @@ func runDoctor(args []string, out io.Writer) error {
 			if r.ID == "docker" {
 				break
 			}
+			continue
+		}
+		if r.ID == "docker" {
+			waitForDocker(ctx, out, facts)
 		}
 	}
 	fmt.Fprintln(out, "\nChecking again:")
@@ -152,4 +157,36 @@ func runDoctor(args []string, out io.Writer) error {
 		return errChecksFailed
 	}
 	return nil
+}
+
+// waitForDocker gives a started or restarted Docker time to answer before the
+// re-check, and, when the server was up before the fix, time for the stack's
+// containers to come back, so a restart in progress isn't reported as broken.
+func waitForDocker(ctx context.Context, out io.Writer, before probe.Facts) {
+	fmt.Fprintln(out, "  - waiting for Docker to answer")
+	up := false
+	for i := 0; i < 60 && !up; i++ {
+		if i > 0 {
+			sleep(2 * time.Second)
+		}
+		up = runner.Run(ctx, run.Cmd{Name: "docker", Args: []string{"version", "--format", "{{.Server.Version}}"}, Timeout: 5 * time.Second}).OK()
+	}
+	if !up {
+		fmt.Fprintln(out, "  Docker still isn't answering after 2 minutes")
+		return
+	}
+	if before.Health == nil {
+		return
+	}
+	fmt.Fprintln(out, "  - waiting for the CMF server to come back")
+	url := fmt.Sprintf("http://127.0.0.1:%d/health", before.Port)
+	for i := 0; i < 20; i++ {
+		if i > 0 {
+			sleep(3 * time.Second)
+		}
+		if _, err := getHealth(ctx, url); err == nil {
+			return
+		}
+	}
+	fmt.Fprintln(out, "  the CMF server didn't answer within a minute")
 }

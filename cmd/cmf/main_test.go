@@ -91,6 +91,48 @@ func TestDoctorFixStartsThePoller(t *testing.T) {
 	}
 }
 
+// slowDocker answers `docker version` only after Docker has been opened and
+// asked a few times, like Docker Desktop starting up.
+type slowDocker struct {
+	*run.Fake
+	opened bool
+	asks   int
+}
+
+func (d *slowDocker) Run(ctx context.Context, c run.Cmd) run.Result {
+	switch c.String() {
+	case "open -a Docker":
+		d.opened = true
+	case "docker version --format {{.Server.Version}}":
+		if d.opened {
+			if d.asks++; d.asks >= 3 {
+				d.Fake.Calls = append(d.Fake.Calls, c)
+				return run.Result{Stdout: "29.7.2"}
+			}
+		}
+	}
+	return d.Fake.Run(ctx, c)
+}
+
+func TestDoctorFixDockerWaitsBeforeChecking(t *testing.T) {
+	d := &slowDocker{Fake: fakeMachine(t, false)}
+	runner = d
+	var slept []time.Duration
+	sleep = func(s time.Duration) { slept = append(slept, s) }
+	t.Cleanup(func() { sleep = time.Sleep })
+
+	var out, errOut bytes.Buffer
+	runCLI([]string{"doctor", "--fix=docker"}, &out, &errOut)
+	again := out.String()[strings.Index(out.String(), "Checking again:"):]
+	if !d.Ran("open -a Docker") || !strings.Contains(out.String(), "waiting for Docker to answer") ||
+		!strings.Contains(out.String(), "waiting for the CMF server to come back") {
+		t.Fatalf("%s", out.String())
+	}
+	if len(slept) != 2 || !strings.Contains(again, "[ok  ] Docker installed and running: Docker 29.7.2") {
+		t.Fatalf("slept %v\n%s", slept, out.String())
+	}
+}
+
 func TestDoctorJSON(t *testing.T) {
 	fakeMachine(t, false)
 	var out, errOut bytes.Buffer
