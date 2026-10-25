@@ -82,6 +82,15 @@ type Health struct {
 	ConfigCheck   *ConfigCheck   `json:"config_check"`
 	Embedding     *Embedding     `json:"embedding"`
 	ProviderTests []ProviderTest `json:"provider_tests"` // only with ?check=providers
+	Selftest      *Selftest      `json:"selftest"`       // the latest self-test (item 1.7); nil if never run
+}
+
+type Selftest struct {
+	OK           bool      `json:"ok"`
+	At           time.Time `json:"at"`
+	Seconds      float64   `json:"seconds"`
+	FailedStage  string    `json:"failed_stage"`
+	FailedDetail string    `json:"failed_detail"`
 }
 
 // BackgroundWrite is one recent remember's outcome. The episode name and

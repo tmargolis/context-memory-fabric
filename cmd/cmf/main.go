@@ -25,6 +25,7 @@ var commands = map[string]command{
 	"restore":     {"list backups, or put one back (cmf restore <stamp>)", runRestore},
 	"logs":        {"recent logs of the stack (service names, --tail N, -f, --errors)", runLogs},
 	"diagnostics": {"a redacted report to send for help; shown first, then --copy or --out", runDiagnostics},
+	"selftest":    {"write, recall and delete a test memory in a scratch graph (calls your providers)", runSelftest},
 	"version":     {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 

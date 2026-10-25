@@ -544,6 +544,31 @@ async def memory_status(
 
 
 @app.tool(
+    title="CMF Self-Test",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=True,
+    ),
+)
+async def cmf_selftest() -> str:
+    """Check that memory works end to end: write a test memory to a scratch graph, recall it, then delete the scratch graph. Reports each stage.
+
+    WHEN TO USE:
+    - When the user asks whether CMF / memory is working, after setup or a configuration change.
+    - When recall or remember keeps failing and the cause isn't clear.
+
+    SIDE EFFECTS:
+    - Calls the configured LLM and embedding providers once each (extraction can take a minute or two on a local model).
+    - Never touches the user's memories: everything goes to a temporary `cmf_selftest_*` graph that is deleted at the end.
+    """
+    from server.selftest import format_result, run_selftest
+
+    return format_result(await run_selftest())
+
+
+@app.tool(
     title="Capture Session Findings as Episodes or Doc Proposals",
     annotations=types.ToolAnnotations(
         read_only_hint=False,

@@ -84,6 +84,9 @@ func Build(in Input) string {
 				line("  config warning: %s", w)
 			}
 		}
+		if t := h.Selftest; t != nil {
+			line("  self-test %s ok=%t (%.0f s) %s %s", t.At.UTC().Format(time.RFC3339), t.OK, t.Seconds, t.FailedStage, t.FailedDetail)
+		}
 		for _, t := range h.ProviderTests {
 			line("  provider test %s %s ok=%t: %s", t.Role, t.Provider, t.OK, t.Detail)
 		}

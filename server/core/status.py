@@ -144,6 +144,19 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         "config_check": startup_check.LAST_RESULT.as_dict() if startup_check.LAST_RESULT else None,
         "embedding": embedding_status(config.embedding_dim, graph, fdb.get("graph_exists")),
     }
+    from server.selftest import last_result
+
+    selftest = last_result()
+    if selftest:
+        # Stage details stay out: the summary is what Setup shows.
+        failed = next((st for st in selftest.get("stages", []) if not st.get("ok")), None)
+        snap["selftest"] = {
+            "ok": selftest.get("ok"),
+            "at": selftest.get("started_at"),
+            "seconds": selftest.get("seconds"),
+            "failed_stage": failed.get("stage") if failed else None,
+            "failed_detail": failed.get("detail") if failed else None,
+        }
     if provider_tests:
         snap["provider_tests"] = startup_check.provider_tests()
     return snap

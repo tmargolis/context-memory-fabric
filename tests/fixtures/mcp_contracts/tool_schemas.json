@@ -1982,5 +1982,35 @@
       "type": "object"
     },
     "title": "Inspect Knowledge Document"
+  },
+  "cmf_selftest": {
+    "name": "cmf_selftest",
+    "title": "CMF Self-Test",
+    "description": "Check that memory works end to end: write a test memory to a scratch graph, recall it, then delete the scratch graph. Reports each stage.\n\n    WHEN TO USE:\n    - When the user asks whether CMF / memory is working, after setup or a configuration change.\n    - When recall or remember keeps failing and the cause isn't clear.\n\n    SIDE EFFECTS:\n    - Calls the configured LLM and embedding providers once each (extraction can take a minute or two on a local model).\n    - Never touches the user's memories: everything goes to a temporary `cmf_selftest_*` graph that is deleted at the end.\n    ",
+    "input_schema": {
+      "properties": {},
+      "title": "cmf_selftestArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "cmf_selftestOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": true
+    }
   }
 }

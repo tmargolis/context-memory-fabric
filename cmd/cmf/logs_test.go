@@ -95,3 +95,20 @@ func TestDiagnosticsOut(t *testing.T) {
 		t.Fatal("--yes without --copy")
 	}
 }
+
+func TestSelftestCommand(t *testing.T) {
+	fake, dir := logsMachine(t)
+	key := "docker compose --project-directory " + dir + " exec -T cmf-server python -m server.selftest"
+	fake.Answers[key] = run.Result{}
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"selftest"}, &out, &errOut); code != 0 || !fake.Ran(key) {
+		t.Fatalf("code %d %s", code, errOut.String())
+	}
+	var streamed bool
+	for _, c := range fake.Calls {
+		streamed = streamed || (c.String() == key && c.Stream != nil)
+	}
+	if !streamed {
+		t.Fatal("selftest output should stream")
+	}
+}

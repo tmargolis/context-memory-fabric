@@ -257,3 +257,20 @@ func TestRestartingServerPointsAtLogs(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestSelftestRow(t *testing.T) {
+	f := healthy()
+	if r := byID(Evaluate(f))["selftest"]; r.Level != NA || !strings.Contains(r.Detail, "cmf selftest") {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.Selftest = &probe.Selftest{OK: true, At: at.Add(-3 * time.Hour), Seconds: 74}
+	if r := byID(Evaluate(f))["selftest"]; r.Level != OK || r.Detail != "passed 3 h ago (74 s)" {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.Selftest = &probe.Selftest{At: at.Add(-72 * time.Hour), FailedStage: "recall", FailedDetail: "search didn't return it"}
+	r := byID(Evaluate(f))["selftest"]
+	if r.Level != Fail || r.Detail != "recall failed 3 days ago: search didn't return it" || r.Fix == nil ||
+		!strings.HasSuffix(r.Fix.Steps[0].Show, "exec -T cmf-server python -m server.selftest") {
+		t.Fatalf("%+v", r)
+	}
+}

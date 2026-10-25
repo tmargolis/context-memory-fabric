@@ -453,7 +453,7 @@ func checkAppsSeen(f probe.Facts) Result {
 	sort.Slice(clients, func(i, j int) bool { return clients[i].LastSeen.After(clients[j].LastSeen) })
 	for _, c := range clients {
 		if f.At.Sub(c.LastSeen) <= 24*time.Hour {
-			seen = append(seen, fmt.Sprintf("%s (%s ago)", c.Harness, ago(f.At.Sub(c.LastSeen))))
+			seen = append(seen, fmt.Sprintf("%s (%s)", c.Harness, ago(f.At.Sub(c.LastSeen))))
 		}
 	}
 	if len(seen) == 0 {
@@ -470,13 +470,37 @@ func ago(d time.Duration) string {
 	case d < time.Minute:
 		return "just now"
 	case d < time.Hour:
-		return fmt.Sprintf("%d min", int(d.Minutes()))
+		return fmt.Sprintf("%d min ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d h ago", int(d.Hours()))
 	}
-	return fmt.Sprintf("%d h", int(d.Hours()))
+	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 }
 
-func checkSelfTest(probe.Facts) Result {
-	return Result{ID: "selftest", Title: "Self-test (write, recall, clean up)", Level: NA, Detail: "comes with item 1.7"}
+// SelftestCmd runs the server's self-test (item 1.7) inside the stack.
+// It calls the real providers; extraction on a local model takes minutes.
+func SelftestCmd(home string) run.Cmd {
+	return run.Cmd{Name: "docker", Args: []string{"compose", "--project-directory", home, "exec", "-T", "cmf-server", "python", "-m", "server.selftest"},
+		Timeout: 7 * time.Minute}
+}
+
+func checkSelfTest(f probe.Facts) Result {
+	r := Result{ID: "selftest", Title: "Self-test (write, recall, clean up)"}
+	if r, missing := healthMissing(r, f); missing {
+		r.Fix = nil
+		return r
+	}
+	t := f.Health.Selftest
+	rerun := &Fix{Label: "Run the self-test", Steps: []Step{step("write, recall and delete a test memory in a scratch graph (a few minutes)", SelftestCmd(f.Home))}}
+	switch {
+	case t == nil:
+		r.Level, r.Detail = NA, "not run yet; `cmf selftest` runs it (a few minutes, calls your providers once)"
+	case t.OK:
+		r.Level, r.Detail = OK, fmt.Sprintf("passed %s (%.0f s)", ago(f.At.Sub(t.At)), t.Seconds)
+	default:
+		r.Level, r.Detail, r.Fix = Fail, fmt.Sprintf("%s failed %s: %s", t.FailedStage, ago(f.At.Sub(t.At)), t.FailedDetail), rerun
+	}
+	return r
 }
 
 // Worst is the most severe level among results (n/a counts as ok).
