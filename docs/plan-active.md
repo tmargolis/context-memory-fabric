@@ -125,6 +125,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B16 | Project-aware retrieval | **Closed 2026-10-15** → [plan-history.md](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15) |
 | B17 | Project taxonomy consolidation | **Closed 2026-10-14** → [plan-history.md](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14) |
 | [B18](#b18--poller-consolidation-overflows-the-local-models-context) | Poller consolidation overflows the local model's context | Open; small code fix, short Spark check |
+| [B19](#b19--project-less-claude_desktop_code-promotions) | Project-less `claude_desktop_code` promotions | Open; read-only diagnosis first, retag needs approval |
 
 ### Recurring review operations
 
@@ -264,6 +265,19 @@ Found 2026-10-25 in the stack's logs while building v0.1.1 (CMF management's err
 - [ ] **Check the other adapters** (Claude Code, Cowork, Antigravity) for the same unbounded window.
 - [ ] **Optional, operational:** reload the Spark model with a larger context (the 2026-09-21 merge overflow ran it at 32,768). It helps this machine only, so it doesn't replace the cap.
 - [ ] **Verify:** the 8 conversations consolidate on the next cycle, and `cmf logs cmf-poller --errors` shows no `n_ctx` lines.
+
+
+### B19 — Project-less `claude_desktop_code` promotions
+
+Found 2026-10-17, re-checked 2026-10-25 (read-only query of the live graph). Episodes from the Claude Desktop Code tab are promoted with `project = 'misc'`, the fallback slug used when a promotion resolves no project (`server/consolidation/promotion.py`, `server/consolidation/graph_tagging.py`). It's still happening: 10 episodes on 2026-10-17, 17 by 2026-10-21 (`claude-desktop-code-misc-001`…`-017`), plus `chatgpt-misc-010` / `-011`. `misc` episodes are diluted in project-aware retrieval. Same shape as the 2026-09-23 `claude_code` fix ([plan-history.md](plan-history.md), "Episodes promoted with NULL project"). Since B17 (2026-10-14), `misc` is also the intended home for genuinely unplaceable captures, reviewed nightly, so the diagnosis must separate episodes that had a project to find from ones that really had none.
+
+- [ ] **Root cause.** Trace the affected episodes from their review/proposal rows through `record_reasoning_episode()` and the promotion pipeline; find where the `claude_desktop_code` harness loses its project (the Code tab shares Claude Code's JSONL, split by `entrypoint`).
+- [ ] **Fix with a test** so new Code-tab promotions resolve a project like `claude_code` ones do.
+- [ ] **ChatGPT ones:** decide whether `chatgpt-misc-*` is expected (no project in the source) or the same bug.
+- [ ] **Retag (needs Todd's go-ahead):** a proposed project per affected episode, applied with `scripts/retag_promoted_projects.py` after a backup.
+- [ ] **Verify:** no new `*-misc-*` Code-tab episodes after the next promotions; the retagged ones show their project.
+
+Proposed as a session card (`task_bade6f5d`, read-only until approved).
 
 ---
 
