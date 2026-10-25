@@ -23,7 +23,7 @@ Move it somewhere it can stay (for example `/Applications` on a Mac, or your Pro
 
 The preview isn't signed, so the first time your computer asks before opening it:
 
-- **Mac:** right-click (or Control-click) the file → **Open** → **Open**. If there's no Open button, try once, then System Settings → Privacy & Security → **Open Anyway**.
+- **Mac:** macOS says it "could not verify" the file and offers only **Move to Trash** or **Done**: click **Done**. Then open System Settings → **Privacy & Security**, scroll down to the line saying `cmf-macos-universal` was blocked, click **Open Anyway** and confirm with your password. You do this once. (On macOS 14 and older, right-click the file → **Open** → **Open** also works.) Or in Terminal: `chmod +x cmf-macos-universal && xattr -d com.apple.quarantine cmf-macos-universal`.
 - **Windows:** "Windows protected your PC" → **More info** → **Run anyway**.
 
 Context Memory Fabric management opens in your browser. It runs only on your computer and closes when you close the tab.
