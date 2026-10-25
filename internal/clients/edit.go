@@ -116,6 +116,15 @@ func entry(s Style, t Target) json.RawMessage {
 	var v map[string]any
 	switch s {
 	case Bridge:
+		if t.Bridge != "" {
+			// No secret here: the bridge reads the token from ~/.cmf/.env.
+			v = map[string]any{"command": t.Bridge, "args": []any{"bridge"}}
+			if t.Home != "" {
+				v["env"] = map[string]string{"CMF_HOME": t.Home}
+			}
+			raw, _ := json.Marshal(v)
+			return raw
+		}
 		args := []any{"-y", "mcp-remote", u}
 		v = map[string]any{"command": "npx", "args": args}
 		if t.Token != "" {
@@ -166,7 +175,7 @@ func Plan(s State, t Target, want bool) (*Change, error) {
 			c.Perm = info.Mode().Perm()
 		}
 	}
-	if t.Token != "" {
+	if t.Token != "" && !(s.App.Style == Bridge && t.Bridge != "") {
 		c.Perm &^= 0o077 // the file will hold a token
 	}
 	keep := ""
@@ -189,7 +198,14 @@ func Plan(s State, t Target, want bool) (*Change, error) {
 	case keep != "":
 		c.Summary = append(c.Summary, fmt.Sprintf("keep %q (%s)", keep, s.entry(keep).URL))
 	case want:
-		c.Summary = append(c.Summary, fmt.Sprintf("add %q → %s", nameFor(s.App), t.LocalURL()))
+		via := ""
+		if s.App.Style == Bridge {
+			via = " via npx mcp-remote"
+			if t.Bridge != "" {
+				via = " via " + t.Bridge + " bridge"
+			}
+		}
+		c.Summary = append(c.Summary, fmt.Sprintf("add %q → %s%s", nameFor(s.App), t.LocalURL(), via))
 	}
 	var err error
 	if s.App.Format == TOMLCodex {
@@ -219,6 +235,8 @@ func describe(e Entry) string {
 	switch {
 	case e.Kind == "stdio":
 		return "starts its own CMF server"
+	case e.Kind == "cmf-bridge" && !e.Correct:
+		return "runs a cmf bridge that isn't there any more"
 	case e.URL != "" && !e.Correct:
 		return "points at " + e.URL + ", not this install"
 	case e.URL != "":

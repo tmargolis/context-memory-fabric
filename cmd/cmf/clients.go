@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -24,9 +25,29 @@ func defaultClientEnv() clients.Env {
 	return clients.Env{Home: dir, OS: goos, AppData: os.Getenv("APPDATA"), Getenv: os.Getenv}
 }
 
+// bridgePath is this binary, when it lives somewhere an app's config can
+// keep pointing at (not `go run`'s build cache or a temp folder). Replaced in tests.
+var bridgePath = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	tmp, _ := filepath.EvalSymlinks(os.TempDir())
+	for _, temporary := range []string{tmp, os.TempDir(), "/tmp/", "/private/tmp/", string(filepath.Separator) + "go-build"} {
+		if temporary != "" && strings.Contains(exe, temporary) {
+			return ""
+		}
+	}
+	return exe
+}
+
 // clientTarget is what the entries should reach, from .env.
 func clientTarget(env *home.Env) clients.Target {
-	t := clients.Target{Port: 8000, PublicURL: env.Get("CMF_MCP_ISSUER_URL"), Token: env.Get("CMF_MCP_AUTH_TOKEN")}
+	t := clients.Target{Port: 8000, PublicURL: env.Get("CMF_MCP_ISSUER_URL"), Token: env.Get("CMF_MCP_AUTH_TOKEN"),
+		Bridge: bridgePath(), Home: os.Getenv("CMF_HOME")}
 	if p, err := strconv.Atoi(env.Get("CMF_MCP_PORT")); err == nil && p > 0 {
 		t.Port = p
 	}
@@ -176,7 +197,7 @@ func printClientWrites(out io.Writer, writes []apply.ClientWrite) {
 		for _, line := range w.Change.Summary {
 			fmt.Fprintln(out, "    -", line)
 		}
-		if w.Want && w.Change.App.Style == clients.Bridge && !lookPath("npx") {
+		if w.Want && w.Change.App.Style == clients.Bridge && w.Target.Bridge == "" && !lookPath("npx") {
 			fmt.Fprintf(out, "    - note: %s starts CMF through mcp-remote, which needs Node.js 18 or later (npx wasn't found)\n", w.Change.App.Label)
 		}
 	}

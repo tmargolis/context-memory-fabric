@@ -139,6 +139,11 @@ type Target struct {
 	Port      int
 	PublicURL string // CMF_MCP_ISSUER_URL, when OAuth over a public URL is set up
 	Token     string // CMF_MCP_AUTH_TOKEN, sent as a bearer header; never shown
+	// Bridge is this cmf binary's path, for entries that start `cmf bridge`
+	// (item 3.8) instead of `npx mcp-remote`; "" when cmf runs from a place
+	// that won't last (go run, a temp folder).
+	Bridge string
+	Home   string // CMF_HOME, when it isn't the default, for the bridge to find .env
 }
 
 func (t Target) LocalURL() string { return fmt.Sprintf("http://127.0.0.1:%d/mcp", t.Port) }
@@ -214,6 +219,22 @@ func classify(name string, fields map[string]string, args []string, t Target) En
 		}
 	}
 	joined := strings.Join(args, " ")
+	if base := strings.TrimSuffix(filepath.Base(fields["command"]), ".exe"); base == "cmf" && len(args) > 0 && args[0] == "bridge" {
+		// cmf bridge reads the port from ~/.cmf/.env, so it reaches this
+		// install for as long as the binary is where the entry says.
+		e.Kind, e.URL = "cmf-bridge", t.LocalURL()
+		for i, a := range args {
+			if a == "--url" && i+1 < len(args) {
+				e.URL = args[i+1]
+			} else if strings.HasPrefix(a, "--url=") {
+				e.URL = strings.TrimPrefix(a, "--url=")
+			}
+		}
+		_, err := os.Stat(fields["command"])
+		e.Correct = err == nil && t.accepts(e.URL)
+		e.CMF = true
+		return e
+	}
 	if e.URL == "" && strings.Contains(joined, "mcp-remote") {
 		e.Kind = "bridge"
 		for _, a := range args {

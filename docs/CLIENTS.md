@@ -92,7 +92,24 @@ If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs
 
 ## 1. Claude Desktop
 
-### Recommended: `mcp-remote` to the running server
+### Recommended: `cmf clients set claude-desktop`
+
+CMF Setup writes the entry for you (Features → AI apps, or `cmf clients set claude-desktop`). The entry runs `cmf bridge`, which relays Claude Desktop's stdio to the running server, reads the port and token from `~/.cmf/.env`, and needs no Node.js:
+
+```json
+{
+  "mcpServers": {
+    "context-memory-fabric": {
+      "command": "/Applications/cmf",
+      "args": ["bridge"]
+    }
+  }
+}
+```
+
+If `cmf` was started from somewhere temporary (a download that hasn't been moved, `go run`), it writes the `mcp-remote` entry below instead.
+
+### Alternative: `mcp-remote` to the running server
 
 Point Claude Desktop at the one running server (the [Docker preview](SETUP.md#quickstart-docker-compose-preview-recommended), or a host server started per §0) through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. It needs Node.js 18 or later.
 

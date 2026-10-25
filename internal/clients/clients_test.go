@@ -53,7 +53,7 @@ func TestDesktopDuplicatesReplacedByOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(c.Summary, "; ") != `remove "cmf-old" (starts its own CMF server); add "context-memory-fabric" → http://127.0.0.1:8000/mcp` {
+	if strings.Join(c.Summary, "; ") != `remove "cmf-old" (starts its own CMF server); add "context-memory-fabric" → http://127.0.0.1:8000/mcp via npx mcp-remote` {
 		t.Fatal(c.Summary)
 	}
 	if err := c.Write(b, target, env, true); err != nil {
@@ -245,5 +245,42 @@ func TestPaths(t *testing.T) {
 	}
 	if p := app("codex").Path(lin); p != "/opt/codex/config.toml" {
 		t.Fatal(p)
+	}
+}
+
+func TestBridgeEntry(t *testing.T) {
+	env, b := setup(t)
+	a := app("claude-desktop")
+	exe := filepath.Join(env.Home, "Applications", "cmf")
+	write(t, exe, "binary")
+	bt := Target{Port: 8000, Token: "secret-token", Bridge: exe}
+	write(t, a.Path(env), `{"mcpServers": {"context-memory-fabric": {"command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]}}}`)
+	// An existing correct mcp-remote entry is kept as is.
+	if c, _ := Plan(Inspect(a, env, bt), bt, true); !c.Empty() {
+		t.Fatal(c.Summary)
+	}
+	os.WriteFile(a.Path(env), []byte(`{"mcpServers": {}}`), 0o644)
+	c, _ := Plan(Inspect(a, env, bt), bt, true)
+	if err := c.Write(b, bt, env, true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(a.Path(env))
+	if !strings.Contains(string(got), `"command": "`+exe+`"`) || !strings.Contains(string(got), `"bridge"`) || strings.Contains(string(got), "secret-token") {
+		t.Fatal(string(got)) // the bridge reads the token itself
+	}
+	if info, _ := os.Stat(a.Path(env)); info.Mode().Perm() != 0o644 {
+		t.Fatal("no token in the file, so its mode is kept", info.Mode())
+	}
+	if s := Inspect(a, env, bt); !s.Healthy() || s.CMF()[0].Kind != "cmf-bridge" {
+		t.Fatalf("%+v", s.Entries)
+	}
+	os.Remove(exe) // the binary moved
+	s := Inspect(a, env, bt)
+	if s.Healthy() {
+		t.Fatal("a bridge whose binary is gone isn't healthy")
+	}
+	c, _ = Plan(s, Target{Port: 8000, Bridge: filepath.Join(env.Home, "new", "cmf")}, true)
+	if !strings.Contains(strings.Join(c.Summary, "; "), "runs a cmf bridge that isn't there any more") {
+		t.Fatal(c.Summary)
 	}
 }
