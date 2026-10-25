@@ -124,6 +124,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
 | B16 | Project-aware retrieval | **Closed 2026-10-15** → [plan-history.md](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15) |
 | B17 | Project taxonomy consolidation | **Closed 2026-10-14** → [plan-history.md](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14) |
+| [B18](#b18--poller-consolidation-overflows-the-local-models-context) | Poller consolidation overflows the local model's context | Open; small code fix, short Spark check |
 
 ### Recurring review operations
 
@@ -252,6 +253,17 @@ Deliberately deferred by the user. Retain the completed hardening context and th
 Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pull/6) and consciously merged without fixing (User, 2026-09-16) — the OAuth layer works and these are hardening, not blockers, on a single-user personal server. The design itself reviewed clean: PKCE correct, codes single-use, refresh tokens rotate on exchange, expiry enforced on both token types, consent password compared with `secrets.compare_digest`. Four of the five items were closed 2026-09-28 ([plan-history.md](plan-history.md#auth-hardening-deferred-out-of-ms6c-2026-09-16-closed-2026-09-28)); the one left is deliberately deferred.
 
 - [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
+
+
+### B18 — Poller consolidation overflows the local model's context
+
+Found 2026-10-25 in the stack's logs while building v0.1.1 (CMF management's errors-only filter now shows these lines). Every poller cycle, `cmf-poller` logs `Consolidation window failed for …` with `Error code: 400 … n_keep: ~12–16k >= n_ctx: 8192` for the same 8 Codex conversations. The consolidation prompt built in `server/adapters/codex/worker.py` (around line 222) is larger than the 8,192-token context the Spark model is loaded with, so those conversations never consolidate, and the same calls fail again each cycle.
+
+- [ ] **Cap the window by tokens.** Measure the consolidation prompt before sending it and split or trim the window to fit the model's context, with room left for the reply. Read the limit from settings (or from the server's model info where it reports it), not a constant, since another user's local model may be smaller still.
+- [ ] **Stop retrying the same failure every cycle.** A window that overflows after splitting should be recorded once and skipped, not resent each poll.
+- [ ] **Check the other adapters** (Claude Code, Cowork, Antigravity) for the same unbounded window.
+- [ ] **Optional, operational:** reload the Spark model with a larger context (the 2026-09-21 merge overflow ran it at 32,768). It helps this machine only, so it doesn't replace the cap.
+- [ ] **Verify:** the 8 conversations consolidate on the next cycle, and `cmf logs cmf-poller --errors` shows no `n_ctx` lines.
 
 ---
 
