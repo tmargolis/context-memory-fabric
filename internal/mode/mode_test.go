@@ -1,6 +1,7 @@
 package mode
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,7 @@ func TestModeJSONMismatchIsReported(t *testing.T) {
 func TestSwitchToDeveloperAndBack(t *testing.T) {
 	h := newHome(t)
 	os.WriteFile(h.OverrideFile(), []byte("# standard\n\n"+consolidatedVolumes), 0o644)
+	os.WriteFile(h.ComposeFile(), docker.Compose, 0o644) // current: no compose change
 	repo := fakeRepo(t)
 
 	changes, err := Plan(h, Mode{Mode: Developer, Repo: repo})
@@ -174,5 +176,22 @@ func TestPinImage(t *testing.T) {
 	os.WriteFile(h.EnvFile(), []byte("CMF_VERSION=0.2.0\n"), 0o600)
 	if c, _ := PinImage(h, nil, "0.2.0"); len(c) != 0 {
 		t.Fatal("already pinned")
+	}
+}
+
+func TestPlanWritesOrUpdatesComposeFile(t *testing.T) {
+	h := newHome(t)
+	c, _ := Plan(h, Mode{Mode: Standard})
+	if len(c) == 0 || c[0].Path != h.ComposeFile() && !strings.Contains(fmt.Sprint(c), "compose.yml") {
+		t.Fatalf("%+v", c)
+	}
+	os.WriteFile(h.ComposeFile(), []byte("old"), 0o644)
+	c, _ = Plan(h, Mode{Mode: Standard})
+	found := false
+	for _, ch := range c {
+		found = found || (ch.Path == h.ComposeFile() && strings.Contains(ch.Note, "update"))
+	}
+	if !found {
+		t.Fatalf("%+v", c)
 	}
 }

@@ -21,7 +21,8 @@ func healthy() probe.Facts {
 	h.KnowledgeSources = []string{"notion"}
 	h.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-13 * time.Hour)}}
 	return probe.Facts{
-		At: at, OS: "darwin", Home: "/Users/t/.cmf", Port: 8000, Nodes: 6769,
+		Installed: true,
+		At:        at, OS: "darwin", Home: "/Users/t/.cmf", Port: 8000, Nodes: 6769,
 		Mode:   mode.State{Mode: dev, Detected: dev, Source: "detected"},
 		Env:    map[string]string{"COMPOSE_PROFILES": "spark,capture"},
 		Docker: probe.Docker{Installed: true, Responding: true, Version: "29.7.2"},
@@ -271,6 +272,15 @@ func TestSelftestRow(t *testing.T) {
 	r := byID(Evaluate(f))["selftest"]
 	if r.Level != Fail || r.Detail != "recall failed 3 days ago: search didn't return it" || r.Fix == nil ||
 		!strings.HasSuffix(r.Fix.Steps[0].Show, "exec -T cmf-server python -m server.selftest") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestNotInstalledOffersInstall(t *testing.T) {
+	f := healthy()
+	f.Installed, f.Self = false, "/Applications/cmf"
+	r := byID(Evaluate(f))["mode"]
+	if r.Level != Fail || !strings.Contains(r.Detail, "isn't installed") || r.Fix == nil || r.Fix.Steps[0].Show != "/Applications/cmf install --yes" {
 		t.Fatalf("%+v", r)
 	}
 }

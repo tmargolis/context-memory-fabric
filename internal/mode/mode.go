@@ -137,6 +137,15 @@ func Plan(h home.Home, m Mode) ([]Change, error) {
 		changes = append(changes, Change{Path: h.ModeFile(), Note: "record the mode", Data: modeJSON, Perm: 0o644})
 	}
 
+	// The stack itself: this cmf's own compose file (a newer cmf updates it).
+	if current, _ := os.ReadFile(h.ComposeFile()); string(current) != string(docker.Compose) {
+		note := "write the stack's compose file"
+		if len(current) > 0 {
+			note = "update the stack's compose file to this cmf's (backup kept)"
+		}
+		changes = append(changes, Change{Path: h.ComposeFile(), Note: note, Data: docker.Compose, Perm: 0o644})
+	}
+
 	existing, _ := os.ReadFile(h.OverrideFile())
 	local := LocalVolumes(string(existing))
 	override := ""

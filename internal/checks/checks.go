@@ -68,6 +68,15 @@ func Evaluate(f probe.Facts) []Result {
 
 func checkMode(f probe.Facts) Result {
 	r := Result{ID: "mode", Title: "Install mode", Level: OK}
+	if !f.Installed {
+		self := f.Self
+		if self == "" {
+			self = "cmf"
+		}
+		r.Level, r.Detail = Fail, "CMF isn't installed in "+f.Home+" yet"
+		r.Fix = &Fix{Label: "Install CMF here", Steps: []Step{step("write the stack's files into "+f.Home+" (nothing starts until you Apply features)", run.Cmd{Name: self, Args: []string{"install", "--yes"}})}}
+		return r
+	}
 	if f.ModeErr != "" {
 		r.Level, r.Detail = Fail, f.ModeErr
 		return r

@@ -181,3 +181,32 @@ func TestBackfill(t *testing.T) {
 		t.Fatal("unknown source")
 	}
 }
+
+func TestInstallFresh(t *testing.T) {
+	fake := fakeMachine(t, true)
+	fake.Answers["docker info"] = run.Result{}
+	home := filepath.Join(t.TempDir(), ".cmf")
+	t.Setenv("CMF_HOME", home)
+	userHome = func() (string, error) { return clientEnv().Home, nil }
+	t.Cleanup(func() { userHome = os.UserHomeDir; version = "dev" })
+	version = "0.3.0"
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"install", "--yes"}, &out, &errOut); code != 0 {
+		t.Fatalf("%s%s", out.String(), errOut.String())
+	}
+	env, _ := os.ReadFile(filepath.Join(home, ".env"))
+	for _, want := range []string{"CMF_VERSION=0.3.0", "FALKORDB_DATABASE=cmf", "COMPOSE_PROFILES=capture"} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("%s missing:\n%s", want, env)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, "compose.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Features") {
+		t.Fatal(out.String())
+	}
+	if code := runCLI([]string{"install", "--yes"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "already installed") {
+		t.Fatal(errOut.String())
+	}
+}

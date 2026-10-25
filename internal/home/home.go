@@ -6,6 +6,7 @@ package home
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -166,8 +167,15 @@ func ReadEnv(path string) (*Env, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return parseEnv(f)
+}
+
+// ParseEnv reads .env text already in memory.
+func ParseEnv(data []byte) (*Env, error) { return parseEnv(bytes.NewReader(data)) }
+
+func parseEnv(r io.Reader) (*Env, error) {
 	env := &Env{}
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		env.lines = append(env.lines, scanner.Text())

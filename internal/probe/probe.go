@@ -152,6 +152,7 @@ type Facts struct {
 	NodesErr  string
 	Clients   []clients.State // each AI app's CMF entries; nil when not checked
 	Self      string          // this cmf binary, for fixes that run cmf itself
+	Installed bool            // ~/.cmf has a .env and a compose file
 }
 
 // Service returns the stack's container for a compose service, if any.
@@ -225,6 +226,7 @@ var envKeys = []string{"COMPOSE_PROFILES", "CMF_MCP_PORT", "FALKORDB_USER", "FAL
 
 func (p Prober) Collect(ctx context.Context) Facts {
 	f := Facts{At: p.Now(), OS: p.OS, Home: p.Home.Dir, Env: map[string]string{}, Port: 8000, Nodes: -1}
+	f.Installed = home.Exists(p.Home.EnvFile()) && home.Exists(p.Home.ComposeFile())
 	if env, err := home.ReadEnv(p.Home.EnvFile()); err == nil {
 		for _, k := range envKeys {
 			if v := env.Get(k); v != "" {

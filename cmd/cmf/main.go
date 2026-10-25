@@ -27,6 +27,7 @@ var commands = map[string]command{
 	"diagnostics": {"a redacted report to send for help; shown first, then --copy or --out", runDiagnostics},
 	"selftest":    {"write, recall and delete a test memory in a scratch graph (calls your providers)", runSelftest},
 	"clients":     {"each AI app's CMF entry: list, set / remove <app>, fix duplicates", runClients},
+	"install":     {"set up a fresh install in ~/.cmf (Standard mode); Features → Apply starts it", runInstall},
 	"migrate":     {"move a repo-based install (host or preview stack) into ~/.cmf: plan, apply, restore <stamp>", runMigrate},
 	"ui":          {"open CMF Setup in the browser (local only; --no-open prints the address)", runUI},
 	"bridge":      {"relay an AI app's stdio MCP to the CMF server (what Claude Desktop's entry runs)", runBridge},
