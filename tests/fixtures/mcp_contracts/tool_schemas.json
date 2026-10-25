@@ -181,7 +181,7 @@
       "read_only_hint": true,
       "title": null
     },
-    "description": "Report MS4a MCP-boundary capture status: events captured, dropped, redacted, and current queue depth.\n\n    WHEN TO USE:\n    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture\n      queue currently is.\n    - Also reports FalkorDB's query TIMEOUT, warning when it has drifted below the 30000 ms docker-compose sets.\n\n    SIDE EFFECTS:\n    - Read-only. In-process counters only (reset on server restart) — durable counts live in the journal\n      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).\n    ",
+    "description": "Report CMF's health: capture counters, FalkorDB, providers, recent background memory writes, and AI apps seen.\n\n    WHEN TO USE:\n    - Use when asked whether capture is working, whether anything has been dropped, or how full the capture\n      queue currently is.\n    - Use when asked whether CMF is working at all, which server or graph this is, or why memories aren't\n      being saved: it shows whether FalkorDB answers, the configured providers, and the outcome of the\n      latest background writes.\n    - Also reports FalkorDB's query TIMEOUT, warning when it has drifted below the 30000 ms docker-compose sets.\n\n    SIDE EFFECTS:\n    - Read-only. In-process counters only (reset on server restart) — durable counts live in the journal\n      itself, inspectable via the journal CLI (`server/journal/cli.py stats`).\n    ",
     "input_schema": {
       "properties": {},
       "title": "capture_healthArguments",
@@ -202,6 +202,50 @@
       "type": "object"
     },
     "title": "Capture Health Status"
+  },
+  "memory_status": {
+    "annotations": {
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": false,
+      "read_only_hint": true,
+      "title": null
+    },
+    "description": "Whether a memory queued by `remember` was actually saved: queued, committed, failed (with the reason), or lost.\n\n    WHEN TO USE:\n    - About a minute after `remember`, to confirm the memory landed before telling the user it was saved.\n    - When the user asks whether memory is working, or why something they asked to remember can't be recalled.\n\n    SIDE EFFECTS:\n    - Read-only.\n    ",
+    "input_schema": {
+      "properties": {
+        "episode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Episode name from remember's reply (e.g. 'claude-code-my-project-004'). Omit to list the latest writes.",
+          "title": "Episode"
+        }
+      },
+      "title": "memory_statusArguments",
+      "type": "object"
+    },
+    "name": "memory_status",
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "memory_statusOutput",
+      "type": "object"
+    },
+    "title": "Background Memory Write Status"
   },
   "capture_session": {
     "annotations": {
@@ -1938,5 +1982,35 @@
       "type": "object"
     },
     "title": "Inspect Knowledge Document"
+  },
+  "cmf_selftest": {
+    "name": "cmf_selftest",
+    "title": "CMF Self-Test",
+    "description": "Check that memory works end to end: write a test memory to a scratch graph, recall it, then delete the scratch graph. Reports each stage.\n\n    WHEN TO USE:\n    - When the user asks whether CMF / memory is working, after setup or a configuration change.\n    - When recall or remember keeps failing and the cause isn't clear.\n\n    SIDE EFFECTS:\n    - Calls the configured LLM and embedding providers once each (extraction can take a minute or two on a local model).\n    - Never touches the user's memories: everything goes to a temporary `cmf_selftest_*` graph that is deleted at the end.\n    ",
+    "input_schema": {
+      "properties": {},
+      "title": "cmf_selftestArguments",
+      "type": "object"
+    },
+    "output_schema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "cmf_selftestOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "title": null,
+      "read_only_hint": false,
+      "destructive_hint": false,
+      "idempotent_hint": true,
+      "open_world_hint": true
+    }
   }
 }

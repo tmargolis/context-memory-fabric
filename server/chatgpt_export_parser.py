@@ -1499,10 +1499,12 @@ async def import_chatgpt_exports(
             )
 
     target_graph = graph_name.strip() if graph_name and graph_name.strip() else "cmf_chatgpt_000"
-    actual_results_dir = Path(results_dir) if results_dir else Path(__file__).resolve().parent.parent / "imports" / "results"
+    from server.core.env import imports_dir
+
+    actual_results_dir = Path(results_dir) if results_dir else imports_dir() / "results"
     actual_results_dir.mkdir(parents=True, exist_ok=True)
 
-    actual_state_dir = Path(state_dir) if state_dir else (Path(__file__).resolve().parent.parent / "imports" / "state")
+    actual_state_dir = Path(state_dir) if state_dir else imports_dir() / "state"
     actual_state_dir.mkdir(parents=True, exist_ok=True)
     registry_file = actual_state_dir / f"import_registry_{target_graph}.json"
 

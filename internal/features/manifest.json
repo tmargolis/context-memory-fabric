@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "groups": ["core", "models", "knowledge", "sources"],
+  "features": [
+    {
+      "id": "core",
+      "group": "core",
+      "label": "CMF server + FalkorDB",
+      "description": "The memory server and its graph database. Always on.",
+      "always_on": true,
+      "checks": ["docker", "stack", "port", "graph"]
+    },
+    {
+      "id": "llm",
+      "group": "models",
+      "label": "LLM for extraction",
+      "description": "Providers in order of preference. The first is used; the rest are fallbacks on rate-limit or auth errors.",
+      "always_on": true,
+      "inputs": [
+        {"id": "providers", "label": "Providers, in order", "type": "ranked", "choices": ["anthropic", "openai", "gemini", "local"],
+         "env": "CMF_LLM_PROVIDERS", "first_env": "CMF_LLM_PROVIDER", "default": "gemini", "required": true}
+      ],
+      "checks": ["providers"],
+      "cost_note": "Each memory written is a few LLM calls on the first provider."
+    },
+    {
+      "id": "embeddings",
+      "group": "models",
+      "label": "Embeddings",
+      "description": "Exactly one provider; vectors from different models can't be mixed in one graph.",
+      "always_on": true,
+      "inputs": [
+        {"id": "provider", "label": "Provider", "type": "choice", "choices": ["openai", "gemini", "local"],
+         "env": "CMF_EMBED_PROVIDER", "default": "gemini", "required": true}
+      ],
+      "checks": ["embedding"]
+    },
+    {
+      "id": "capture-llm",
+      "group": "models",
+      "label": "Background capture LLM",
+      "description": "Used by the capture poller and promotion. Unattended, so it defaults to a local model.",
+      "always_on": true,
+      "inputs": [
+        {"id": "provider", "label": "Provider", "type": "choice", "choices": ["anthropic", "openai", "gemini", "local"],
+         "env": "CMF_CAPTURE_LLM_PROVIDER", "default": "local", "required": true}
+      ],
+      "cost_note": "One long session is dozens of extraction calls on this provider."
+    },
+    {
+      "id": "provider-keys",
+      "group": "models",
+      "label": "Provider keys and local model URLs",
+      "description": "Keys for the cloud providers you use, and the URL of an OpenAI-compatible local server (Ollama, LM Studio, a Spark box).",
+      "always_on": true,
+      "inputs": [
+        {"id": "anthropic_api_key", "label": "Anthropic API key", "type": "secret", "env": "ANTHROPIC_API_KEY"},
+        {"id": "openai_api_key", "label": "OpenAI API key", "type": "secret", "env": "OPENAI_API_KEY"},
+        {"id": "gemini_api_key", "label": "Gemini API key", "type": "secret", "env": "GEMINI_API_KEY"},
+        {"id": "local_base_url", "label": "Local model URL (LLM and embeddings)", "type": "url", "env": "CMF_LOCAL_BASE_URL"},
+        {"id": "local_llm_base_url", "label": "Local LLM URL, if different", "type": "url", "env": "CMF_LOCAL_LLM_BASE_URL"},
+        {"id": "local_embed_base_url", "label": "Local embeddings URL, if different", "type": "url", "env": "CMF_LOCAL_EMBED_BASE_URL"}
+      ]
+    },
+    {
+      "id": "memory-only",
+      "group": "knowledge",
+      "label": "No knowledge base (memory only)",
+      "description": "On when no knowledge source is. Turn the sources off to choose it.",
+      "derived": true,
+      "enabled_when": {"not": {"any": [{"feature": "wiki"}, {"feature": "demo-wiki"}, {"feature": "notion"}]}}
+    },
+    {
+      "id": "demo-wiki",
+      "group": "knowledge",
+      "label": "Demo wiki (fictional demo data)",
+      "description": "A small fictional wiki that ships with CMF, to try search on. Replace it with your own notes when you're ready.",
+      "enabled_when": {"all": [{"list_has": {"key": "CMF_KNOWLEDGE_PROVIDERS", "item": "wiki", "default": "wiki"}},
+                               {"env_suffix": {"key": "LLM_WIKI_PATH", "suffix": "starter-wiki"}}]},
+      "on_enable": {"set": {"LLM_WIKI_PATH": "{{starter_wiki}}"}, "list_add": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}},
+      "on_disable": {"unset": ["LLM_WIKI_PATH"], "list_remove": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}}
+    },
+    {
+      "id": "own-knowledge",
+      "group": "knowledge",
+      "label": "Bring your own knowledge",
+      "description": "On when your notes folder or Notion is on.",
+      "derived": true,
+      "enabled_when": {"any": [{"feature": "wiki"}, {"feature": "notion"}]}
+    },
+    {
+      "id": "wiki",
+      "group": "knowledge",
+      "label": "Notes folder (LLM Wiki, Obsidian, any Markdown)",
+      "description": "Mounted read-only. Proposals still go to review.",
+      "enabled_when": {"all": [{"list_has": {"key": "CMF_KNOWLEDGE_PROVIDERS", "item": "wiki", "default": "wiki"}},
+                               {"env_set": "LLM_WIKI_PATH"},
+                               {"not": {"env_suffix": {"key": "LLM_WIKI_PATH", "suffix": "starter-wiki"}}}]},
+      "inputs": [
+        {"id": "path", "label": "Folder", "type": "path", "env": "LLM_WIKI_PATH", "required": true}
+      ],
+      "on_enable": {"list_add": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}},
+      "on_disable": {"unset": ["LLM_WIKI_PATH"], "list_remove": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}},
+      "checks": ["knowledge"]
+    },
+    {
+      "id": "notion",
+      "group": "knowledge",
+      "label": "Notion",
+      "description": "Searches the pages shared with your Notion integration. Excerpts reach every connected AI app.",
+      "enabled_when": {"list_has": {"key": "CMF_KNOWLEDGE_PROVIDERS", "item": "notion", "default": "wiki"}},
+      "inputs": [
+        {"id": "token", "label": "Integration token", "type": "secret", "env": "CMF_NOTION_TOKEN", "required": true},
+        {"id": "workspace", "label": "Workspace label", "type": "text", "env": "CMF_NOTION_WORKSPACE"},
+        {"id": "root_page_id", "label": "Root page (optional)", "type": "text", "env": "CMF_NOTION_ROOT_PAGE_ID"}
+      ],
+      "on_enable": {"list_add": {"CMF_KNOWLEDGE_PROVIDERS": "notion"}},
+      "on_disable": {"unset": ["CMF_NOTION_TOKEN"], "list_remove": {"CMF_KNOWLEDGE_PROVIDERS": "notion"}},
+      "checks": ["knowledge"]
+    },
+    {
+      "id": "capture",
+      "group": "sources",
+      "label": "Background capture (transcript poller)",
+      "description": "Captures Claude Code, Codex, Antigravity and local Cowork transcripts every 15 minutes, with the background capture LLM.",
+      "enabled_when": {"list_has": {"key": "COMPOSE_PROFILES", "item": "capture"}},
+      "on_enable": {"list_add": {"COMPOSE_PROFILES": "capture"}},
+      "on_disable": {"list_remove": {"COMPOSE_PROFILES": "capture"}, "stop": ["cmf-poller"]},
+      "checks": ["capture"],
+      "cost_note": "Spends the background capture LLM on every captured session."
+    }
+  ],
+  "rules": [
+    {"type": "forbid_value", "feature": "embeddings", "input": "provider", "values": ["anthropic"],
+     "message": "Anthropic has no embeddings API; pick OpenAI, Gemini or a local model for embeddings."},
+    {"type": "exactly_one", "features": ["memory-only", "demo-wiki", "own-knowledge"],
+     "message": "Pick one knowledge option: memory only, the demo wiki, or your own sources."},
+    {"type": "conflicts", "feature": "demo-wiki", "with": "wiki",
+     "message": "The demo wiki and your notes folder both use LLM_WIKI_PATH; turn one off."},
+    {"type": "requires_any", "feature": "own-knowledge", "any_of": ["wiki", "notion"]},
+    {"type": "needs_key", "feature": "llm", "input": "providers",
+     "keys": {"anthropic": ["ANTHROPIC_API_KEY"], "openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_LLM_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
+    {"type": "needs_key", "feature": "embeddings", "input": "provider",
+     "keys": {"openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_EMBED_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
+    {"type": "needs_key", "feature": "capture-llm", "input": "provider",
+     "keys": {"anthropic": ["ANTHROPIC_API_KEY"], "openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_LLM_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
+    {"type": "locked_when_graph_has_data", "feature": "embeddings", "input": "provider",
+     "message": "The graph already holds memories embedded with the current provider; changing it would mix vectors. Starting a new graph comes with a later step."}
+  ]
+}

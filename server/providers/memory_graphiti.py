@@ -26,7 +26,7 @@ import re
 import time
 from typing import Any, Literal, Optional, Union, overload
 
-from dotenv import load_dotenv
+from server.core.env import imports_dir, load_env
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
 from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
@@ -34,8 +34,9 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
-from server.core.config import ANTHROPIC_PROVIDER, GEMINI_PROVIDER, OPENAI_PROVIDER, CMFConfig, load_config
+from server.core.config import ANTHROPIC_PROVIDER, GEMINI_PROVIDER, LOCAL_PROVIDER, OPENAI_PROVIDER, CMFConfig, load_config
 from server.core.rate_limiter import (
+    DEFAULT_MODEL_CHAIN,
     GeminiQuotaExhaustedError,
     classify_transient_error as _classify_transient_error,
     get_default_rate_limiter,
@@ -45,7 +46,7 @@ from server.providers.episode_postprocess import postprocess_episode
 from server.providers.extraction_profile import LEGACY_INSTRUCTIONS, extraction_kwargs
 from server.providers.falkor_driver import CMFFalkorDriver, falkordb_connection_params
 
-load_dotenv()
+load_env()
 logger = logging.getLogger(__name__)
 
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
@@ -196,8 +197,55 @@ def _require_key(value: Optional[str], env_var: str, provider: str) -> str:
     return value
 
 
-def _build_llm_client(config: CMFConfig, resolved_model: str):
-    """LLM client for entity/fact extraction, per CMF_LLM_PROVIDER."""
+def provider_default_model(config: CMFConfig, provider: str) -> str:
+    """The extraction model a provider uses when it isn't the rate limiter's pick:
+    each provider's own setting, or the first of the Gemini chain."""
+    if provider == LOCAL_PROVIDER:
+        return config.local_llm_model
+    if provider == ANTHROPIC_PROVIDER:
+        return config.anthropic_model
+    if provider == OPENAI_PROVIDER:
+        return config.openai_model
+    chain = [m.strip() for m in os.getenv("CMF_GEMINI_MODEL_CHAIN", "").split(",") if m.strip()]
+    return chain[0] if chain else DEFAULT_MODEL_CHAIN[0]
+
+
+def _build_llm_client(config: CMFConfig, resolved_model: str, skip_primary: bool = False):
+    """LLM client for entity/fact extraction, per CMF_LLM_PROVIDERS (item 1.8).
+
+    One provider: that provider's client, exactly as before. Several: a
+    FailoverLLMClient over them in order. The first uses `resolved_model`
+    (the rate limiter's pick); the rest use their own default model. A
+    fallback with no key is skipped with a warning; a primary with none
+    raises, as before. skip_primary drops the first provider (a Gemini
+    primary whose free-tier ledger has no headroom).
+    """
+    import dataclasses
+
+    providers = list(config.llm_providers)
+    if len(providers) == 1 and not skip_primary:
+        return _build_single_llm_client(config, resolved_model)
+    from server.providers.failover_llm import FailoverLLMClient
+
+    clients = []
+    for i, provider in enumerate(providers):
+        if skip_primary and i == 0:
+            continue
+        pconfig = dataclasses.replace(config, llm_provider=provider)
+        model = resolved_model if i == 0 else provider_default_model(pconfig, provider)
+        try:
+            clients.append((provider, _build_single_llm_client(pconfig, model)))
+        except RuntimeError as e:
+            if i == 0:
+                raise
+            logger.warning(f"LLM fallback {provider} skipped: {e}")
+    if not clients:
+        raise RuntimeError(f"No usable LLM provider in CMF_LLM_PROVIDERS ({', '.join(providers)}); add their keys to .env.")
+    return clients[0][1] if len(clients) == 1 else FailoverLLMClient(clients)
+
+
+def _build_single_llm_client(config: CMFConfig, resolved_model: str):
+    """LLM client for entity/fact extraction, per config.llm_provider."""
     if config.llm_provider == ANTHROPIC_PROVIDER:
         from server.providers.anthropic_client import StructuredAnthropicClient
 
@@ -334,7 +382,7 @@ def resolve_llm_model(config: Optional[CMFConfig] = None, model: Optional[str] =
     return get_default_rate_limiter().chain[0]
 
 
-def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None, skip_primary: bool = False) -> Graphiti:
     """Instantiate a Graphiti client configured with FalkorDB and the configured providers.
 
     `model` selects the LLM used for entity/fact extraction and reranking.
@@ -361,11 +409,20 @@ def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = Non
     # server/providers/falkor_driver.py); it is otherwise a plain FalkorDriver.
     driver = CMFFalkorDriver(**falkordb_connection_params(), database=target_database)
 
+    # The reranker follows the provider that leads the LLM chain for this
+    # instance (the second one when the first is skipped).
+    rerank_config, rerank_model = config, resolved_model
+    if skip_primary and len(config.llm_providers) > 1:
+        import dataclasses
+
+        rerank_config = dataclasses.replace(config, llm_provider=config.llm_providers[1])
+        rerank_model = provider_default_model(rerank_config, config.llm_providers[1])
+
     return Graphiti(
         graph_driver=driver,
-        llm_client=_build_llm_client(config, resolved_model),
+        llm_client=_build_llm_client(config, resolved_model, skip_primary=skip_primary),
         embedder=_build_embedder(config),
-        cross_encoder=_build_cross_encoder(config, resolved_model),
+        cross_encoder=_build_cross_encoder(rerank_config, rerank_model),
     )
 
 
@@ -392,7 +449,7 @@ async def assert_embedding_width(graphiti: Graphiti, expected: Optional[int] = N
     return actual
 
 
-def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None, skip_primary: bool = False) -> Graphiti:
     """Retrieve or initialize the Graphiti instance for the active event loop, target graph database, and model.
 
     `model` defaults to the rate limiter's first chain preference when
@@ -411,10 +468,12 @@ def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) 
 
     target_database = resolve_target_database(graph_name)
     resolved_model = model or get_default_rate_limiter().chain[0]
-    cache_key = (current_loop_id, target_database, resolved_model)
+    cache_key = (current_loop_id, target_database, resolved_model, skip_primary)
 
     if cache_key not in _GRAPHITI_INSTANCES:
-        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(graph_name=target_database, model=resolved_model)
+        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(
+            graph_name=target_database, model=resolved_model, skip_primary=skip_primary
+        )
 
     return _GRAPHITI_INSTANCES[cache_key]
 
@@ -430,7 +489,19 @@ def get_graphiti_for_operation(graph_name: Optional[str] = None) -> tuple[Graphi
     operation rather than having partially spent quota on a call that then
     also failed.
     """
-    chosen_model = get_default_rate_limiter().reserve()
+    limiter = get_default_rate_limiter()
+    try:
+        chosen_model = limiter.reserve()
+    except GeminiQuotaExhaustedError:
+        # Ranked providers (item 1.8): with a fallback listed, a Gemini primary
+        # that has no free-tier headroom is skipped instead of failing the call.
+        config = load_config()
+        if len(config.llm_providers) < 2:
+            raise
+        fallback = config.llm_providers[1]
+        logger.warning(f"Gemini's free-tier limit is used up; this call goes to {fallback}.")
+        graphiti = get_graphiti(graph_name=graph_name, model=limiter.chain[0], skip_primary=True)
+        return graphiti, provider_default_model(config, fallback)
     return get_graphiti(graph_name=graph_name, model=chosen_model), chosen_model
 
 
@@ -734,6 +805,12 @@ async def remember_queued(
         target_graph=target_db,
     )
 
+    from server.core.tool_errors import classify
+    from server.memory_writes import get_default_write_log
+
+    write_log = get_default_write_log()
+    write_log.queued(episode_name, target_db)
+
     async def _run() -> None:
         try:
             await remember(
@@ -746,8 +823,17 @@ async def remember_queued(
                 harness=resolved_harness,
             )
             logger.info(f"Background remember committed: '{episode_name}'")
-        except Exception:
+            write_log.committed(episode_name)
+        except Exception as e:
             logger.exception(f"Background remember FAILED to commit: '{episode_name}'")
+            classified = classify(e)
+            if classified is not None:
+                write_log.failed(episode_name, classified.kind, classified.message)
+            else:
+                write_log.failed(
+                    episode_name, "unexpected",
+                    f"Unexpected error ({type(e).__name__}); the server log has the details.",
+                )
 
     task = asyncio.create_task(_run())
     _BACKGROUND_REMEMBER_TASKS.add(task)
@@ -762,8 +848,9 @@ async def remember_queued(
         "source_description": source_description,
         "message": (
             f"Episode '{episode_name}' queued for background ingestion -- not yet confirmed. "
-            "On the local-model path this can take a minute or more; use recall_mem to confirm "
-            "it has landed before assuming it failed or retrying."
+            "It usually takes under a minute (longer on a local model). Call "
+            f"memory_status(episode='{episode_name}') then to see whether it was saved, and why not "
+            "if it failed, before retrying."
         ),
     }
 
@@ -1320,12 +1407,11 @@ def format_edit_memory_results_for_mcp(
     return "\n".join(lines).strip()
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_EDIT_LEDGER = _REPO_ROOT / "imports" / "state" / "edit_memory_ledger.jsonl"
+DEFAULT_EDIT_LEDGER = imports_dir() / "state" / "edit_memory_ledger.jsonl"
 
 
 def default_import_registry_path() -> Path:
-    """imports/state/import_registry.json at the repo root, or CMF_IMPORT_REGISTRY.
+    """imports/state/import_registry.json (server.core.env.imports_dir), or CMF_IMPORT_REGISTRY.
 
     Until 2026-10-06 edit_memory and reconcile_memories resolved this one
     directory too shallow (server/imports/...), a path that never existed,
@@ -1333,7 +1419,7 @@ def default_import_registry_path() -> Path:
     at a temp file (tests/conftest.py) so they can't write the real one.
     """
     override = os.getenv("CMF_IMPORT_REGISTRY")
-    return Path(override) if override else _REPO_ROOT / "imports" / "state" / "import_registry.json"
+    return Path(override) if override else imports_dir() / "state" / "import_registry.json"
 
 
 def _append_edit_ledger(ledger_path: Path, record: dict[str, Any]) -> None:

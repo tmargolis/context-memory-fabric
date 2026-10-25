@@ -1,0 +1,55 @@
+# Developer mode overlay for deploy/docker/compose.yml (plan section 3.8).
+#
+# Installed as ~/.cmf/compose.override.yml, which docker compose merges into
+# ~/.cmf/compose.yml automatically. Same stack, same ~/.cmf/.env, same
+# FalkorDB volume and state as Standard mode; the differences:
+#
+# - cmf-server and cmf-poller are built from the checkout at CMF_REPO (set in
+#   ~/.cmf/.env), with its server/ code bind-mounted, so an edit needs only
+#   `docker compose restart cmf-server`, not a rebuild.
+# - FalkorDB keeps ACL users in /data/users.acl (users survive a recreate).
+# - spark-llm-proxy (profile "spark") for the FalkorDB Browser's chat.
+#
+# Switching back to Standard mode = removing this file and recreating.
+
+services:
+  falkordb:
+    environment:
+      # ACL users (ACL SETUSER) persist only with an ACL file, and `ACL SAVE`
+      # fails without one. With an ACL file, `requirepass` can't also be set;
+      # CMF connects as FALKORDB_USER / FALKORDB_PASSWORD. An unauthenticated
+      # healthcheck PING gets NOAUTH, which still exits 0.
+      - REDIS_ARGS=--aclfile /data/users.acl
+    # The image's own entrypoint, after making sure the ACL file exists.
+    entrypoint: ["sh", "-c", "touch /data/users.acl && exec /var/lib/falkordb/bin/run.sh"]
+
+  cmf-server:
+    image: context-memory-fabric:dev
+    build:
+      context: ${CMF_REPO:?set CMF_REPO in ~/.cmf/.env to your checkout}
+    volumes:
+      - ${CMF_REPO}/server:/app/server:ro
+
+  cmf-poller:
+    image: context-memory-fabric:dev
+    build:
+      context: ${CMF_REPO:?set CMF_REPO in ~/.cmf/.env to your checkout}
+    volumes:
+      - ${CMF_REPO}/server:/app/server:ro
+
+  spark-llm-proxy:
+    # OPTIONAL (profile "spark"): only for FalkorDB Browser's chat, and only
+    # with a local LLM tunnel on this computer's port 12345. CMF itself never
+    # uses it. The Browser fetches its LLM server-side and accepts only a
+    # localhost URL, so this listens inside falkordb's network namespace and
+    # forwards to the host tunnel. Browser setting: Local LLM -> LM Studio,
+    # URL http://localhost:12345/v1. After recreating falkordb, recreate this
+    # too (`docker compose up -d --force-recreate spark-llm-proxy`).
+    image: alpine/socat@sha256:5ffbd6ae916cbad86a58fabe0d6d5a6fd5c2b47ddf031e82996baac9300e732f
+    container_name: cmf-spark-llm-proxy
+    profiles: ["spark"]
+    network_mode: "service:falkordb"
+    command: TCP-LISTEN:12345,fork,reuseaddr,bind=127.0.0.1 TCP:host.docker.internal:12345
+    depends_on:
+      - falkordb
+    restart: unless-stopped

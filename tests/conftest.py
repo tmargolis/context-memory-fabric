@@ -81,7 +81,13 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     from server.providers.memory_graphiti import default_import_registry_path
 
     assert default_import_registry_path().resolve() != _REAL_IMPORT_REGISTRY.resolve(), "test registry is the real one"
+    # remember_queued records outcomes in the journal db; never the real one.
+    import server.memory_writes as memory_writes
+
+    write_log = memory_writes.BackgroundWriteLog(tmp_path / "journal.db")
+    monkeypatch.setattr(memory_writes, "_DEFAULT_LOG", write_log)
     yield
+    write_log.close()
 
 
 @pytest.fixture(scope="session", autouse=True)

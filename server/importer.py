@@ -561,9 +561,10 @@ class ImportStateStore:
         if imports_dir:
             self.root = Path(imports_dir)
         else:
-            # Default to project root imports/
-            project_root = Path(__file__).resolve().parent.parent
-            self.root = project_root / "imports"
+            # Default to imports/ under CMF_STATE_DIR, else the project root
+            from server.core.env import imports_dir
+
+            self.root = imports_dir()
 
         self.state_dir = self.root / "state"
         self.results_dir = self.root / "results"

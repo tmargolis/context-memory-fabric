@@ -35,6 +35,7 @@ from pathlib import Path
 import os
 
 from server.consolidation.project_aliases import resolve_project
+from server.core.env import review_rules_path
 from server.core.models import DatePrecision, SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
@@ -554,9 +555,9 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
     def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
         lines = [self._system, ""]
         # Personal routing stays in the existing configured rules file, never in generic prompts.
-        rules = os.getenv("CMF_REVIEW_RULES_PATH")
-        if rules and Path(rules).expanduser().is_file():
-            lines += ["--- DEPLOYMENT ROUTING / REVIEW RULES ---", Path(rules).expanduser().read_text(), ""]
+        rules = review_rules_path()
+        if rules.is_file():
+            lines += ["--- DEPLOYMENT ROUTING / REVIEW RULES ---", rules.read_text(), ""]
         if is_subagent_window(ordered):
             lines += [SUBAGENT_NOTE, ""]
         lines.append("--- CONVERSATION WINDOW ---")

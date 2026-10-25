@@ -127,7 +127,7 @@ def test_metered_limiter_still_rejects_unknown_models(ledger):
 
 
 def test_default_limiter_follows_the_provider_switch(monkeypatch):
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("FALKORDB_DATABASE", "test-graph")
     monkeypatch.setenv("GEMINI_API_KEY", "k")
 
@@ -244,7 +244,7 @@ def test_inter_call_delay_follows_the_provider(monkeypatch):
         default_inter_call_delay,
     )
 
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("FALKORDB_DATABASE", "g")
     monkeypatch.setenv("GEMINI_API_KEY", "k")
 
@@ -259,7 +259,7 @@ def test_inter_call_delay_follows_the_provider(monkeypatch):
 
 
 def _promotion_store(tmp_path, monkeypatch, graph="graph-a"):
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("FALKORDB_DATABASE", graph)
     from server.consolidation.promotion import PromotionStore
 
@@ -339,7 +339,7 @@ def test_migration_backfills_and_is_idempotent(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("FALKORDB_DATABASE", "backfilled")
 
     store = PromotionStore(db)

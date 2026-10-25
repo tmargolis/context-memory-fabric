@@ -32,13 +32,13 @@ SPARK_VARS = (
 def clean_env(monkeypatch):
     """A predictable environment, fully isolated from the developer's .env.
 
-    Stubbing load_dotenv is required, not tidiness. load_config() calls it,
+    Stubbing load_env is required, not tidiness. load_config() calls it,
     and python-dotenv only declines to override variables that are *present*
     — a variable this fixture deletes gets repopulated straight back out of
     the real .env. Without the stub, every "this credential is missing" case
     silently tests the opposite of what it says.
     """
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     for var in (*SPARK_VARS, "GEMINI_API_KEY", "FALKORDB_DATABASE"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("FALKORDB_DATABASE", "test-graph")
@@ -49,7 +49,7 @@ def clean_env(monkeypatch):
 def test_fixture_actually_isolates_from_dotenv(clean_env):
     """Guard for the fixture itself.
 
-    If load_dotenv stops being stubbed, the deletions below become no-ops and
+    If load_env stops being stubbed, the deletions below become no-ops and
     the credential tests quietly invert. Assert the isolation directly.
     """
     clean_env.delenv("GEMINI_API_KEY", raising=False)

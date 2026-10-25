@@ -4,6 +4,15 @@ This guide covers setting up, configuring, running, and testing the **Context Me
 
 Context Memory Fabric is released as an experimental, single-user, self-hosted developer preview under the **PolyForm Perimeter License 1.0.1**.
 
+> [!IMPORTANT]
+> **Pick ONE way to run CMF, and install only that one.**
+>
+> - **CMF Setup (recommended):** [QUICKSTART.md](QUICKSTART.md). One program installs CMF into `~/.cmf`, writes your AI apps' entries, checks everything and fixes what it can. Nothing to clone or edit.
+> - **Docker preview (this page, no app):** everything runs in Docker from a checkout. Do **not** also run `uv sync`, `deploy/pollers/macos/install.sh` (with or without `--mcp-server`) or `python -m server.mcp` on your computer.
+> - **Developer mode (from source):** [DEVELOPER-SETUP.md](DEVELOPER-SETUP.md). For working on CMF itself.
+>
+> They read different config, use different FalkorDB ports (6380 vs 6379) and graph names, and all claim port 8000. Mixing them gives "connection refused" errors and two servers fighting over one port. An install made from this page moves into CMF Setup's `~/.cmf` with `cmf migrate`, memories included.
+
 ---
 
 ## Architecture Overview
@@ -42,7 +51,12 @@ CMF_EMBED_PROVIDER=openai
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
-*(By default, this points `LLM_WIKI_PATH` to the included fictional `starter-wiki/` and uses graph `CMF-local` on non-conflicting host ports. The preview always mounts a wiki, so it can't run without one; for a wiki-less setup use the local source installation below.)*
+Leave a key empty if you don't use that provider; don't put placeholder text in it. Everything else in `.env.example` is optional, and the **Host install only** block doesn't apply to the preview.
+
+**Your notes.** `LLM_WIKI_PATH` defaults to `./starter-wiki`, a bundled **fictional** demo wiki (that's where "Project Aether" comes from). To use your own notes, such as an Obsidian or Quartz vault, set it to that folder's absolute path. The preview mounts it read-only and always mounts some folder; to run without notes, point it at an empty folder. After changing it, recreate the server so it picks the new folder up:
+```bash
+docker compose -f docker-compose.preview.yml up -d
+```
 
 ### 2. Launch the Stack
 
@@ -53,11 +67,25 @@ docker compose -f docker-compose.preview.yml up -d
 This starts:
 - **FalkorDB:** on `localhost:6380` (Browser UI at `http://localhost:3002`)
 - **CMF MCP Server:** Streamable HTTP endpoint at `http://localhost:8000/mcp`
-- **Mounted Knowledge:** `./starter-wiki` mounted at `/wiki` inside the container
+- **Mounted Knowledge:** your `LLM_WIKI_PATH` folder (default `./starter-wiki`) mounted read-only at `/wiki` inside the container
 
 ### 3. Connect Your AI Client
 
 See [Connecting Your MCP Client](#connecting-your-mcp-client) below to wire Claude Desktop, Cursor, or other tools to `http://localhost:8000/mcp`.
+
+### 4. Check That It Works
+
+1. In a **new** Claude session, ask it to remember something: *"Remember that I set up CMF today."* It calls `remember`, which replies that the memory was *queued for background ingestion (not yet confirmed)*. That means accepted, **not yet saved**: the write to the graph runs in the background and takes up to a minute.
+2. Wait about 30 seconds, open the FalkorDB Browser at `http://localhost:3002`, and pick the graph **`CMF-local`** (the preview's graph; `memory-fabric` belongs to the developer setup). Run `MATCH (n) RETURN n LIMIT 25`; you should see the new memory and its entities.
+3. Ask *"What do you remember about CMF?"* It should call `recall_mem` and find it.
+
+Faster checks: ask Claude to run **`memory_status`**, which says whether the memory was saved and, if not, why. Or open `http://127.0.0.1:8000/health` in a browser: it shows which graph and FalkorDB this server uses, whether FalkorDB answers, the providers, the latest background writes and which AI apps have called CMF.
+
+**Before the first successful write, the graph doesn't exist**, so an empty graph list in the Browser just means nothing has been saved yet. For the full traceback of a failure, read the server log:
+```bash
+docker logs cmf-preview-server 2>&1 | grep -iE "error|traceback" | tail -20
+```
+The same log explains a bare "Error executing tool" in Claude.
 
 ---
 
@@ -88,74 +116,7 @@ API keys are separate from a ChatGPT or Claude subscription: create them at [pla
 
 **Pick the embedder before your graph has data.** A graph's vectors are built at one width (`EMBEDDING_DIM`: 1024 for Gemini or OpenAI, 768 for nomic). Changing embedders later means a new `FALKORDB_DATABASE`.
 
----
-
-## Setting Up on Your Own Machine (checklist)
-
-The path from a fresh clone to captured, reviewed and recalled memory, with your own keys and no code changes:
-
-1. **Install and start FalkorDB** (local source installation, steps 1–3 below).
-2. **Configure `.env`** (step 4): providers and keys from [Model Providers](#model-providers); `FALKORDB_DATABASE`; `LLM_WIKI_PATH` pointing at your notes, or empty to run without a wiki; on Linux or Windows, `CMF_PROJECT_ROOTS` naming the folders your projects live in.
-3. **Run the server and connect your clients** (step 5 and [Connecting Your MCP Client](#connecting-your-mcp-client)).
-4. **Turn on capture** of your coding sessions ([Background Capture](#background-capture)): capture checkpoints (the agent saves what was decided; nothing reads your transcripts), transcript pollers, or both.
-5. **Tell your AI assistants how to use CMF:** paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into each app's custom instructions.
-6. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
-
----
-
-## Alternative: Local Source Installation
-
-If you prefer running directly on your host with Python:
-
-### 1. Prerequisites
-- **Python:** `>= 3.12`
-- **Package Manager:** [`uv`](https://github.com/astral-sh/uv) (recommended)
-- **Docker:** Required for running FalkorDB
-
-### 2. Install Dependencies
-
-```bash
-uv sync
-```
-
-### 3. Start FalkorDB Container
-
-Run the standard operational FalkorDB instance:
-
-```bash
-docker compose up -d falkordb
-```
-
-- FalkorDB: `localhost:6379`
-- FalkorDB Browser UI: `http://localhost:3001`
-
-FalkorDB starts with no password; both ports bind to `127.0.0.1` only. Users you add with `ACL SETUSER` (e.g. a login for the Browser UI) persist across restarts and container recreates: the server keeps them in `/data/users.acl` on the data volume, so run `ACL SAVE` after changing one. To require a login, create your own user (`ACL SETUSER <name> on ><password> ~* &* +@all`), put it in `.env` as `FALKORDB_USER` / `FALKORDB_PASSWORD`, then turn the built-in user off (`ACL SETUSER default off`) and `ACL SAVE`. Every CMF client (server, pollers, scripts, replay, tests) reads those two variables; with `FALKORDB_USER` unset they connect as `default`. To reach the Browser from your other devices, share it over your VPN only (Tailscale: `tailscale serve --bg --https=8443 http://127.0.0.1:3001`), never through a public Funnel: while `default` is on, anyone who reaches the Browser can log in as it.
-
-### 4. Configure Environment
-
-Create `.env` in the repository root:
-
-```bash
-cp .env.example .env
-```
-
-Set the required variables:
-```bash
-# Model providers and their keys (see Model Providers above)
-CMF_LLM_PROVIDER=anthropic
-CMF_EMBED_PROVIDER=openai
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-
-# Target FalkorDB graph (always name this explicitly!)
-FALKORDB_DATABASE=memory-fabric
-
-# Optional: durable knowledge corpus. Leave it empty to run without a wiki:
-# the wiki tools are then not offered and extraction proposes episodes only.
-LLM_WIKI_PATH=/absolute/path/to/your/notes
-```
-
-#### Optional: Run a Small Local Embedder (Ollama)
+### Optional: Run a Small Local Embedder (Ollama)
 
 Embeddings can run on your own machine instead of a paid or rate-limited API. `nomic-embed-text` is small (~270 MB) and runs fine on a laptop CPU, with no GPU needed. Setup takes about 15 minutes on macOS, Linux or Windows.
 
@@ -168,10 +129,10 @@ Embeddings can run on your own machine instead of a paid or rate-limited API. `n
    ```bash
    curl http://127.0.0.1:11434/v1/embeddings -H "Content-Type: application/json" -d '{"model": "nomic-embed-text", "input": "hello"}'
    ```
-4. **Point CMF at it** in `.env`:
+4. **Point CMF at it** in `.env`. In the Docker preview the server runs in a container, so it reaches Ollama on your computer as `host.docker.internal`; in [Developer mode](DEVELOPER-SETUP.md) use `http://127.0.0.1:11434/v1` instead.
    ```bash
    CMF_EMBED_PROVIDER=local
-   CMF_LOCAL_EMBED_BASE_URL=http://127.0.0.1:11434/v1
+   CMF_LOCAL_EMBED_BASE_URL=http://host.docker.internal:11434/v1
    CMF_LOCAL_EMBED_API_KEY=ollama      # Ollama ignores it; the client just needs a non-empty value
    CMF_LOCAL_EMBED_MODEL=nomic-embed-text
    EMBEDDING_DIM=768                   # nomic's fixed output width
@@ -181,109 +142,75 @@ Things to know:
 - **Pick the embedder before your graph has data.** A graph's vectors and index are built at one width. Switching embedders later (e.g. to 1024-wide Gemini or OpenAI vectors) means a new `FALKORDB_DATABASE` and re-importing your history into it, not an in-place change.
 - **Ollama must be running** whenever CMF writes or searches memory. If it's down, those calls fail rather than falling back.
 - **Any LLM can pair with it:** `anthropic`, `openai`, `gemini`, or a local LLM on a different server. The embedder reads `CMF_LOCAL_EMBED_BASE_URL` and a local LLM reads `CMF_LOCAL_LLM_BASE_URL`; each falls back to `CMF_LOCAL_BASE_URL` when unset.
-- **Background transcript capture** (the Claude Code / Codex pollers) extracts with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`. It defaults to `local`, so with an embedder-only Ollama setup, set it to your LLM provider (for example `anthropic`) before turning the pollers on.
+- **Background transcript capture** (the Claude Code / Codex pollers, Developer mode only for now) extracts with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`. It defaults to `local`, so with an embedder-only Ollama setup, set it to your LLM provider (for example `anthropic`) before turning the pollers on.
 
-### 5. Run the Server
+---
 
-**Standard I/O (default for desktop clients):**
-```bash
-uv run python -m server.mcp
-```
+## Setting Up on Your Own Machine (checklist)
 
-**Streamable HTTP (for network/remote clients):**
-```bash
-uv run python -m server.mcp --transport streamable-http --host 127.0.0.1 --port 8000
-```
+The path from a fresh clone to reviewed and recalled memory, with your own keys and no code changes:
+
+1. **Start the Docker preview** ([Quickstart](#quickstart-docker-compose-preview-recommended)) with your providers, keys and notes folder in `.env`.
+2. **Connect your AI apps** ([Connecting Your MCP Client](#connecting-your-mcp-client)) and [check that it works](#4-check-that-it-works).
+3. **Use it.** The server's own instructions tell connected apps when to use CMF, so you don't have to say "CMF" in your prompts. For apps that ignore them, paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into the app's custom instructions.
+4. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
+
+Automatic capture of your coding sessions ([Background Capture](#background-capture)) currently needs Developer mode.
 
 ---
 
 ## Connecting Your MCP Client
 
-### Claude Desktop
+**With CMF Setup**, turn the app on under Features → AI apps (or run `cmf clients set claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode` or `antigravity`). It writes one entry into the app's own config (backup kept, duplicates removed, read back to check), and Status confirms each app has exactly one working entry. Claude Desktop's entry runs `cmf bridge`, so Node.js isn't needed.
 
-Edit your Claude Desktop configuration file:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+The steps below are the manual way, for setups without the app.
 
-#### Option A: Docker Compose Preview (Streamable HTTP)
+### Advanced / no app: Claude Desktop (Chat tab)
 
-```json
-{
-  "mcpServers": {
-    "context-memory-fabric": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-proxy",
-        "http://127.0.0.1:8000/mcp"
-      ]
-    }
-  }
-}
-```
+Claude Desktop reaches the preview through a small bridge, [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which needs **Node.js** (`node --version` should print v18 or later; install from [nodejs.org](https://nodejs.org) if not).
 
-#### Option B: Local Source (stdio)
+1. Open the config file: Claude Desktop → **Settings → Developer → Edit Config**, or directly:
+   - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+2. Add **one** `context-memory-fabric` entry under `"mcpServers"` (keep any other servers that are already there, and remove any older CMF entry):
+   ```json
+   {
+     "mcpServers": {
+       "context-memory-fabric": {
+         "command": "npx",
+         "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
+       }
+     }
+   }
+   ```
+3. **Quit Claude Desktop completely** (macOS: Cmd+Q; Windows: right-click the tray icon → Quit) and reopen it.
+4. **Start a new session.** A resumed or already-open conversation never loads newly added MCP servers. This is the most common reason CMF "isn't there".
 
-```json
-{
-  "mcpServers": {
-    "context-memory-fabric": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/absolute/path/to/context-memory-fabric",
-        "python",
-        "-m",
-        "server.mcp"
-      ],
-      "env": {
-        "GEMINI_API_KEY": "AIzaSy...",
-        "FALKORDB_DATABASE": "memory-fabric",
-        "LLM_WIKI_PATH": "/absolute/path/to/starter-wiki"
-      }
-    }
-  }
-}
-```
+Why not **Settings → Connectors → Add custom connector**? Connectors run from Anthropic's cloud and reject `localhost` ("enter a public URL"). They work only with a public HTTPS address and OAuth; see [CLIENTS.md §4](CLIENTS.md#4-multi-agent--remote-harnesses-chatgpt-gemini-spark-etc).
 
-### Cursor / Generic MCP Clients
+### Advanced / no app: Claude Desktop (Code tab)
 
-In Cursor Settings → Features → MCP:
-- **Type:** `command`
-- **Command:** `uv run --directory /path/to/context-memory-fabric python -m server.mcp`
+On the first tester's machine, the Code tab used the same `claude_desktop_config.json` entry above after a restart and a new session. This is still being confirmed. To check, ask a new Code-tab session to list its CMF tools.
+
+### Advanced / no app: Cursor / Generic MCP Clients
+
+Clients that accept a URL (Cursor: Settings → MCP → Add) take `http://127.0.0.1:8000/mcp` directly. Clients that only start a command can use the same `npx -y mcp-remote http://127.0.0.1:8000/mcp` as Claude Desktop.
+
+More clients (Antigravity, Codex, ChatGPT, Gemini): [CLIENTS.md](CLIENTS.md).
 
 ---
 
 ## Background Capture
 
-There are two ways to get your coding sessions into CMF. They can run together.
+CMF can capture your coding sessions automatically, with Stop-hook **capture checkpoints** (the agent saves what was decided) and the **transcript poller** (CMF reads Claude Code, Codex, Cowork and Antigravity transcripts).
 
-### Capture checkpoints (no transcript reading)
+With CMF Setup both run without Python on your computer: the poller is the stack's `cmf-poller` container (on by default; the Capture feature turns it off), and `cmf capture hook install claude_code codex antigravity` adds the checkpoint hooks, which run `cmf hook stop`. `cmf capture` shows how each app is captured, what it costs, and how much prompt context CMF adds per session. The Docker preview on this page has no poller; there, capture needs [Developer mode](DEVELOPER-SETUP.md#background-capture).
 
-A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turns, to call `capture_session` with whatever was decided or concluded since the last checkpoint. The agent chooses what to keep, and nothing reads your transcripts. Instructions alone ([INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md)) rarely get an agent to save anything on its own; the hook supplies the trigger.
+## Remote access (ChatGPT, Gemini, claude.ai connectors)
 
-```bash
-.venv/bin/python3 -m server.adapters.capture_nudge install --harness all   # or claude_code / codex / antigravity
-.venv/bin/python3 -m server.adapters.capture_nudge status
-.venv/bin/python3 -m server.adapters.capture_nudge uninstall --harness all
-```
+Connectors run in their vendor's cloud, so they reach CMF only through a public HTTPS address, and only with OAuth on. `cmf remote` shows where you stand; `cmf remote enable tailscale` turns OAuth on and publishes only CMF's port with Tailscale Funnel; `cmf remote use https://<address>` does the OAuth part for a tunnel you run yourself (a named Cloudflare Tunnel, ngrok). `cmf remote disable` undoes only what it added. Then add a connector with `https://<address>/mcp`; its consent page asks for `CMF_MCP_OAUTH_PASSWORD` from `~/.cmf/.env`.
 
-- The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 5), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
-- **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing. Its `hooks.json` uses `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "..."}]}]}}`. If `/hooks` reports an unknown top-level `SessionStart` or `Stop`, rerun the Codex hook installer (`.venv/bin/python3 -m server.adapters.codex.cli hooks install`); it backs up and migrates the old flat format while preserving existing handlers. Close and reopen `/hooks` to review the corrected definitions. Installation/status does not prove that hooks are trusted or firing.
-- **Each nudge costs one extra agent step**, and the session must have CMF connected. Without it the agent just finishes.
-- Antigravity has no pre-compaction hook, and Claude Code's and Codex's can't prompt the agent, so a very long session is covered only by the periodic nudges.
-- Chat apps without hooks (Claude Desktop chat, Cowork, ChatGPT) rely on the instructions block, plus a nightly review.
-
-### Transcript pollers
-
-CMF can also capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
-
-Before turning them on:
-- **Set `CMF_CAPTURE_LLM_PROVIDER`.** The pollers extract with it, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it to the provider whose key you have. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
-- **On Linux and Windows, set `CMF_PROJECT_ROOTS`** (e.g. `~/code,~/work`), so sessions are tagged with their project rather than `other`.
-
-Cloud Cowork sessions leave no transcript on your computer; only their calls to CMF's tools are captured.
+With the preview alone, memories come from what your AI apps save through CMF's tools (`remember`, `capture_session`) as you work.
 
 ## Reviewing What Was Captured
 
@@ -294,13 +221,15 @@ Captured sessions become **episodes** (things decided, planned or found) and, wh
 3. `bulk_review_episodes` / `review_doc_proposal` record approve or reject, with a reason.
 4. `promote_approved_episodes` writes an approved episode into memory (one per call); `apply_doc_proposal` writes an approved doc into the wiki (dry run first; each apply is committed in the wiki's git repo when it has one).
 
-From a terminal, `uv run python -m server.review.cli queue --tier 1` lists the queue and `uv run python -m server.review.cli promote --apply` promotes every approved episode.
+In [Developer mode](DEVELOPER-SETUP.md), from a terminal, `uv run python -m server.review.cli queue --tier 1` lists the queue and `uv run python -m server.review.cli promote --apply` promotes every approved episode.
 
 **Nightly review.** A scheduled task in your AI app can do the first pass every night at 11:11 PM: it recommends approve, reject or flag for each new item and leaves you a summary to confirm in the morning. Set it up by pasting one block into the app: see [NIGHTLY-REVIEW.md](NIGHTLY-REVIEW.md).
 
 ---
 
 ## Notion knowledge (optional)
+
+**Developer mode only for now:** the Docker preview doesn't pass the Notion settings into its container yet.
 
 In your gitignored `.env`, set `CMF_KNOWLEDGE_PROVIDERS=notion` for Notion alone,
 or `wiki,notion` to query both. Built-in names are `wiki`, `gmail`, and `notion`;
@@ -350,7 +279,7 @@ live freshness assumptions.
 
 ## Configuration Reference
 
-Configuration can be supplied via `.env`, environment variables, or CLI flags.
+Configuration can be supplied via `.env`, environment variables, or CLI flags. The Docker preview passes only some settings into its container; the comments in `.env.example` say which.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -360,15 +289,15 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `FALKORDB_DATABASE` | Recommended | `default_db` | Target FalkorDB graph name. Always specify an explicit graph name (e.g. `CMF-local` or `memory-fabric`) to avoid silent collisions. |
 | `LLM_WIKI_PATH` | Optional | — | Path to your Markdown wiki or Obsidian vault. When unset or empty, the wiki tools (`search_wiki`, `propose_doc_update`, ...) are not offered and extraction proposes episodes only. |
 | `CMF_KNOWLEDGE_PROVIDERS` | No | `wiki` | Comma-separated `wiki`, `gmail`, `notion`, or external `module:Class` paths. |
-| `FALKORDB_HOST` | No | `localhost` | FalkorDB host. |
+| `FALKORDB_HOST` | No | `localhost` | FalkorDB host. Host install only; the preview sets or ignores it. |
 | `FALKORDB_USER` | No | — | FalkorDB ACL user every CMF client logs in as (alias `FALKORDB_USERNAME`). Unset: the built-in `default` user. |
 | `FALKORDB_PASSWORD` | No | — | Password for that user. |
-| `FALKORDB_PORT` | No | `6379` | FalkorDB port. |
-| `CMF_STATE_DIR` | No | repo root | Where `proposals-docs/` and `proposals-episode/` are kept. |
+| `FALKORDB_PORT` | No | `6379` | FalkorDB port. Host install only; the preview sets or ignores it. |
+| `CMF_STATE_DIR` | No | repo root | Where `proposals-docs/` and `proposals-episode/` are kept. Host install only; the preview sets or ignores it. |
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
-| `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
-| `CMF_NUDGE_MIN_TURNS` | No | `5` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](#capture-checkpoints-no-transcript-reading)). |
+| `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. Host install only; the preview sets or ignores it. |
+| `CMF_NUDGE_MIN_TURNS` | No | `5` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](DEVELOPER-SETUP.md#capture-checkpoints-no-transcript-reading)). |
 | `CMF_NUDGE_MIN_MINUTES` | No | `30` | Or nudge after this many minutes, once there are at least 2 replies. |
 | `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |
 | `CMF_ANTHROPIC_EFFORT` | No | model default | Claude effort: `low`, `medium`, `high`, `xhigh` or `max`. Lower is cheaper. |
@@ -382,7 +311,7 @@ Configuration can be supplied via `.env`, environment variables, or CLI flags.
 | `CMF_PROJECT_ROOTS` | No | macOS `~/Dev`, `~/Documents` | Folders whose subfolders are projects (comma-separated). Set it on Linux and Windows. |
 | `CMF_PROJECT_FOLDER_MAP` / `CMF_PROJECT_ALIASES` | No | — | Map a folder to a project, or fold one project name into another (`path=project,...` / `old=new,...`). |
 | `CMF_REVIEWER` | No | OS login name | Name recorded on review verdicts. |
-| `CMF_REVIEW_RULES_PATH` | No | — | A Markdown file of your own review rules, appended to the generic ones the [nightly review](NIGHTLY-REVIEW.md) follows. |
+| `CMF_REVIEW_RULES_PATH` | No | `<state>/review-rules.md` | A Markdown file of your own review rules, appended to the generic ones the [nightly review](NIGHTLY-REVIEW.md) follows. The default lives in CMF's state folder (`~/.cmf/state/review-rules.md`), where the Docker containers can read it too; a relative path counts from that folder. |
 | `CMF_EXTRACTION_WORKSTREAMS` / `_HARDWARE` / `_TOPICS` / `_PERSON` / `_DEBRIS_FILES` | No | generic examples | Names from your own work shown to the extraction model as examples (comma-separated). |
 | `CMF_MCP_AUTH_TOKEN`| No | — | Optional shared-secret bearer token for network HTTP/SSE transports. |
 
@@ -421,7 +350,7 @@ CMF provides `import_memories` and `import_chatgpt_exports` for parsing historic
 
 Have questions, setup difficulties, or retrieval feedback?
 - Please open an issue using the [Setup or Retrieval Problem template](https://github.com/tmargolis/context-memory-fabric/issues).
-- For sensitive security disclosures, see [SECURITY.md](SECURITY.md).
+- For sensitive security disclosures, see [SECURITY.md](../SECURITY.md).
 
 ### Notion paragraph proposals
 

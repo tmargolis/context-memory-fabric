@@ -15,15 +15,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
-
-
 def connection_params() -> dict[str, Any]:
     """host, port, username, password -- accepted by redis.Redis, falkordb.FalkorDB
     and graphiti's FalkorDriver alike."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv(_ENV_FILE, override=False)  # never clobbers values already set (tests, launchd)
+        from server.core.env import load_env
+        load_env()  # never clobbers values already set (tests, launchd)
     except ImportError:
         pass
     return {

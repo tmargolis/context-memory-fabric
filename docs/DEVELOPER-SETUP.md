@@ -1,0 +1,158 @@
+# Developer setup (from source)
+
+This is **Developer mode**: CMF's server runs on your computer with Python from a checkout of this repository, and FalkorDB runs in Docker. It is the author's own setup and the way to work on CMF itself.
+
+> [!IMPORTANT]
+> **New users: use the [Docker preview](SETUP.md#quickstart-docker-compose-preview-recommended) instead.** Don't install half of each. The two paths read different config, use different FalkorDB ports (6379 here, 6380 in the preview) and different graph names, and both want port 8000. If the preview is running, stop it first (`docker compose -f docker-compose.preview.yml down`; this keeps its data) and don't install the launchd MCP server alongside it.
+
+---
+
+## Consolidated install (`~/.cmf`, in progress)
+
+The setup plan ([setup-simplification-plan.md](setup-simplification-plan.md) §3.8) moves both modes to one folder, `~/.cmf`: one `.env`, one `state/` folder, one Docker stack (`deploy/docker/compose.yml`). Developer mode adds `deploy/docker/compose.dev.yml` as `~/.cmf/compose.override.yml`, which builds the server and poller from this checkout.
+
+- **Config:** every CMF process reads `$CMF_HOME/.env` (default `~/.cmf/.env`) when it exists, otherwise this repo's `.env` (`server/core/env.py`). With `~/.cmf/.env`, state (journal, proposals, imports) defaults to `~/.cmf/state`.
+- **Moving an existing install:** `scripts/consolidate_install.py plan` prints what would happen and changes nothing. `apply` backs up `.env`, state, a FalkorDB dump and the launchd plists to `~/.cmf/backups/<stamp>/`. It then copies config and state into `~/.cmf`, attaches the existing FalkorDB volume, disables (never removes) `com.cmf.mcp-server` and `com.cmf.capture-poller`, starts the stack and checks the graph's node count. If anything fails, it restores. `restore <stamp>` undoes it.
+- **The journal lives in a Docker volume (`cmf-journal`)**, not in `~/.cmf/state/imports/journal`. SQLite breaks ("disk I/O error") when a host process and a container open the same file through Docker Desktop's file sharing; two containers sharing it are fine. Proposals, `imports/results`, `imports/state` and `review-rules.md` stay in `~/.cmf/state`, where you can open them. Host-side CMF code that would open the journal stops with a pointer to the stack; run such tools inside it instead, e.g. `cd ~/.cmf && docker compose exec cmf-server python -m server.journal.cli stats`. An install consolidated before the volume existed moves its journal with `scripts/consolidate_install.py journal-to-volume` (stops the server and poller, copies, checks the event count, keeps the old copy as `journal.moved-<stamp>`, undoes itself on failure).
+- **Mode:** `go run ./cmd/cmf mode` shows whether `~/.cmf` runs Standard (published image) or Developer (built from `CMF_REPO`); `cmf mode set developer --repo <checkout>` or `cmf mode set standard` switches it (add `--dry-run` to see the changes first). It backs up what it changes to `~/.cmf/backups/<stamp>/` and keeps the install's own volume settings in `compose.override.yml`. The Go CLI (`cmd/cmf`, plan Phase 3) needs Go 1.24+ to build.
+- **Checks:** `go run ./cmd/cmf status` prints one line per check from the plan's Status list (Docker, containers, port 8000, leftover launchd jobs and containers, graph node count, capture, AI apps seen). `cmf doctor` adds the fix for each failing row; `cmf doctor --fix` runs them (or `--fix=<check>` for one) and checks again; `cmf doctor --json` is for scripts. Fixes stop and disable things, never delete them: a hung Docker Desktop is restarted, replaced launchd jobs are unloaded and disabled (plists stay), old CMF containers are stopped (not removed). Rows whose server support isn't built yet (provider test, embedding width, client entries, self-test) show `n/a`.
+- **Features:** `cmf features` lists every feature in the manifest (`internal/features/manifest.json`) with its state read from `~/.cmf/.env`, keys masked. To change some, write a feature file naming only those features, e.g. `{"features": {"notion": {"enabled": true, "token": "…"}, "capture": {"enabled": false}}}`, and run `cmf apply <file> --dry-run` to see the review list, then without `--dry-run` to apply it. The rules (no Anthropic embeddings, a key for every chosen provider, one knowledge option, embeddings locked once the graph has data, …) are all reported at once. Apply backs up `.env`, writes it, stops services it turned off, runs `docker compose up -d` and waits for `/health`; if the server doesn't come back it restores the backup itself. `cmf restore` lists backups; `cmf restore <stamp>` puts one back (backing up the current files first). Backups made by `consolidate_install.py` are restored with that script.
+- **Logs and diagnostics:** `cmf logs [service ...] [--tail N] [-f] [--errors]` shows the stack's recent logs as they are (they stay on your machine). `cmf diagnostics` prints a report to send when asking for help: versions, the checks, `/health`, which `.env` settings are set (values only for provider and feature switches), and the last 50 error lines from the logs. Keys, tokens, other settings' values (names, paths, URLs), email addresses, your home folder and long quoted text (memory content) are removed. The report is always shown first; `--copy` asks before putting it on the clipboard, `--out FILE` saves it (owner-only).
+- **Self-test:** `cmf selftest` (or `docker exec cmf-server python -m server.selftest`, or the `cmf_selftest` MCP tool) writes a test memory to a temporary `cmf_selftest_*` graph with your real providers, recalls it, and deletes the graph, printing each stage. Your memories aren't touched. `cmf status` shows the latest result. On startup the server also checks its configuration and port and exits with one sentence per problem (`cmf logs cmf-server --errors`); `CMF_STARTUP_CHECK=warn` serves anyway.
+- **AI app entries:** `cmf clients` shows each app's CMF entry (Claude Desktop, Claude Code, Codex, Cursor, VS Code, Antigravity). `cmf clients set <app>` writes one entry pointing at `http://127.0.0.1:<port>/mcp` (Desktop and Antigravity through `cmf bridge`, which needs no Node.js and keeps the token out of their config; `npx mcp-remote` when cmf runs from a temporary place), `cmf clients remove <app>` takes it out, and `cmf clients fix` repairs apps that have duplicate or stale CMF entries without adding any. An entry pointing at your public URL (`CMF_MCP_ISSUER_URL`) counts as correct and is kept. Other entries and settings in each file are left as they are; every write is backed up (`cmf restore` undoes it) and read back. A feature file can carry the same as `"clients": {"cursor": true}`.
+- **Migrating an older install:** `cmf migrate` (read-only) finds a repo-based install, either the host setup (the repo's `docker-compose.yml` FalkorDB with launchd running the server and pollers) or the preview stack (`docker-compose.preview.yml`), and prints the plan. `cmf migrate apply` backs everything up (repo `.env`, state, a FalkorDB dump, launchd plists), writes `~/.cmf` in Developer mode with the old FalkorDB volume attached as is, disables (never removes) the replaced launchd jobs, stops (never removes) the old containers, moves the journal into its volume, starts the stack and checks the same graph has the same node count; any failure restores the previous setup. `cmf migrate restore <stamp>` undoes it. It replaces `scripts/consolidate_install.py` and needs no Python on the machine.
+- **CMF Setup (the app):** `cmf ui`, or `cmf` with no command, opens the same engine in your browser: Status (each check, with a Fix button), Features (every manifest feature and AI app, as set on this machine) and Review changes (the same list `cmf apply --dry-run` prints) with live progress on Apply, plus Copy diagnostics (shown before copying), View logs, the FalkorDB Browser link and backups to restore. It listens on 127.0.0.1 on a random port, needs the one-time token in the address it opens (kept as a same-site cookie), refuses other hosts and cross-origin writes, and stops when the tab closes or after 30 idle minutes. `--no-open` prints the address instead of opening a browser.
+- **Remote access (connectors):** `cmf remote` shows whether connectors in ChatGPT, Gemini or claude.ai can reach CMF (they need a public HTTPS address and OAuth) and which tunnel tools are installed. `cmf remote enable tailscale` turns OAuth on (sets `CMF_MCP_ISSUER_URL`, generates `CMF_MCP_OAUTH_PASSWORD` if missing), publishes only CMF's port with Tailscale Funnel on a free Funnel port (443, 8443 or 10000; ports serving something else are left alone), recreates the server and checks the public `/health`. For a tunnel you run yourself (a named Cloudflare Tunnel, ngrok), `cmf remote use https://<its address>` does the OAuth part. `cmf remote disable` undoes only what `cmf remote` added (recorded in `state/remote.json`).
+- **Capture wiring:** `cmf capture` shows how each AI app is captured (checkpoint hook, the poller, both, or server instructions only), its transcript volume over the last 7 days, the estimate (tokens; $0 on a local model) and the prompt context CMF adds per session (read from the running server). `cmf capture hook install|remove claude_code|codex|antigravity` adds or removes the checkpoint Stop hook, which runs `cmf hook stop` (no Python); an existing checkpoint hook of any kind (the cmf-capture plugin, the Python one) counts as installed, so there's never a second. `cmf capture block <file>` writes a short block between `<!-- cmf:begin -->` / `<!-- cmf:end -->` for apps that get neither server instructions nor a hook, replacing it in place and flagging other CMF text as a possible duplicate.
+- **Backfill:** `cmf backfill [--days 14] [--source codex,...] [--dry-run]` shows how much transcript text the window holds per source and what it costs (tokens; $0 on a local model), then runs each adapter's own `backfill --since` inside the `cmf-poller` container with live output. What it finds goes to the review queue. `--decline` records that the first-run offer was turned down.
+- **Until then**, the steps below still apply unchanged.
+
+---
+
+## Install
+
+### 1. Prerequisites
+- **Python:** `>= 3.12`
+- **Package Manager:** [`uv`](https://github.com/astral-sh/uv) (recommended)
+- **Docker:** Required for running FalkorDB
+
+### 2. Install Dependencies
+
+```bash
+uv sync
+```
+
+### 3. Start FalkorDB Container
+
+Run the standard operational FalkorDB instance:
+
+```bash
+docker compose up -d falkordb
+```
+
+- FalkorDB: `localhost:6379`
+- FalkorDB Browser UI: `http://localhost:3001`
+
+FalkorDB starts with no password; both ports bind to `127.0.0.1` only. Users you add with `ACL SETUSER` (e.g. a login for the Browser UI) persist across restarts and container recreates: the server keeps them in `/data/users.acl` on the data volume, so run `ACL SAVE` after changing one. To require a login, create your own user (`ACL SETUSER <name> on ><password> ~* &* +@all`), put it in `.env` as `FALKORDB_USER` / `FALKORDB_PASSWORD`, then turn the built-in user off (`ACL SETUSER default off`) and `ACL SAVE`. Every CMF client (server, pollers, scripts, replay, tests) reads those two variables; with `FALKORDB_USER` unset they connect as `default`. To reach the Browser from your other devices, share it over your VPN only (Tailscale: `tailscale serve --bg --https=8443 http://127.0.0.1:3001`), never through a public Funnel: while `default` is on, anyone who reaches the Browser can log in as it.
+
+### 4. Configure Environment
+
+Create `.env` in the repository root:
+
+```bash
+cp .env.example .env
+```
+
+Set the required variables:
+```bash
+# Model providers and their keys (see Model Providers in SETUP.md)
+CMF_LLM_PROVIDER=anthropic
+CMF_EMBED_PROVIDER=openai
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# Target FalkorDB graph (always name this explicitly!)
+FALKORDB_DATABASE=memory-fabric
+
+# Optional: durable knowledge corpus. Leave it empty to run without a wiki:
+# the wiki tools are then not offered and extraction proposes episodes only.
+LLM_WIKI_PATH=/absolute/path/to/your/notes
+```
+
+For a local embedder (Ollama), see [Run a Small Local Embedder](SETUP.md#optional-run-a-small-local-embedder-ollama); on the host, its URL is `http://127.0.0.1:11434/v1`. For every other setting, see the comments in `.env.example`: the **Host install only** block is for this mode.
+
+### 5. Run the Server
+
+**Standard I/O (default for desktop clients):**
+```bash
+uv run python -m server.mcp
+```
+
+**Streamable HTTP (for network/remote clients):**
+```bash
+uv run python -m server.mcp --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+---
+
+## Connecting clients to a host server
+
+The server can run per client over stdio (each client starts its own copy) or once over HTTP (step 5, `--transport streamable-http`), shared by every client. For one server shared by several apps, use HTTP and the `mcp-remote` entry in [SETUP.md](SETUP.md#connecting-your-mcp-client); it works the same against a host server.
+
+**Claude Desktop, stdio.** In `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
+
+```json
+{
+  "mcpServers": {
+    "context-memory-fabric": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/context-memory-fabric",
+        "python",
+        "-m",
+        "server.mcp"
+      ]
+    }
+  }
+}
+```
+
+The server reads the repo's `.env`, so keys and the graph name don't need repeating in an `"env"` block. Claude Desktop may not find `uv` on its own `PATH`; if so, use its full path (`which uv`, e.g. `/opt/homebrew/bin/uv`). Quit and reopen Claude Desktop, then start a **new** session: a resumed one doesn't load new MCP servers.
+
+**Cursor and other stdio clients:** command `uv`, args `run --directory /absolute/path/to/context-memory-fabric python -m server.mcp`.
+
+More clients (Antigravity, Codex, remote connectors): [CLIENTS.md](CLIENTS.md).
+
+---
+
+## Background Capture
+
+There are two ways to get your coding sessions into CMF. They can run together.
+
+### Capture checkpoints (no transcript reading)
+
+A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turns, to call `capture_session` with whatever was decided or concluded since the last checkpoint. The agent chooses what to keep, and nothing reads your transcripts. Instructions alone ([INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md)) rarely get an agent to save anything on its own; the hook supplies the trigger.
+
+```bash
+.venv/bin/python3 -m server.adapters.capture_nudge install --harness all   # or claude_code / codex / antigravity
+.venv/bin/python3 -m server.adapters.capture_nudge status
+.venv/bin/python3 -m server.adapters.capture_nudge uninstall --harness all
+```
+
+- The nudge fires after `CMF_NUDGE_MIN_TURNS` agent replies (default 5), or after at least 2 replies and `CMF_NUDGE_MIN_MINUTES` (default 30). The reply that answers a nudge never triggers another.
+- **Codex** runs a new hook only after you trust it: run `/hooks` in the Codex CLI once after installing. Its `hooks.json` uses `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "..."}]}]}}`. If `/hooks` reports an unknown top-level `SessionStart` or `Stop`, rerun the Codex hook installer (`.venv/bin/python3 -m server.adapters.codex.cli hooks install`); it backs up and migrates the old flat format while preserving existing handlers. Close and reopen `/hooks` to review the corrected definitions. Installation/status does not prove that hooks are trusted or firing.
+- **Each nudge costs one extra agent step**, and the session must have CMF connected. Without it the agent just finishes.
+- Antigravity has no pre-compaction hook, and Claude Code's and Codex's can't prompt the agent, so a very long session is covered only by the periodic nudges.
+- Chat apps without hooks (Claude Desktop chat, Cowork, ChatGPT) rely on the instructions block, plus a nightly review.
+
+### Transcript pollers
+
+CMF can also capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
+
+Before turning them on:
+- **Set `CMF_CAPTURE_LLM_PROVIDER`.** The pollers extract with it, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it to the provider whose key you have. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
+- **On Linux and Windows, set `CMF_PROJECT_ROOTS`** (e.g. `~/code,~/work`), so sessions are tagged with their project rather than `other`.
+
+Cloud Cowork sessions leave no transcript on your computer; only their calls to CMF's tools are captured.

@@ -26,7 +26,7 @@ ENV_VARS = (
 @pytest.fixture
 def clean_env(monkeypatch):
     """Isolated from the developer's .env (see tests/test_spark_config.py)."""
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("FALKORDB_DATABASE", "test-graph")

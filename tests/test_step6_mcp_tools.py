@@ -82,6 +82,8 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
             "remember", "recall_mem", "search_wiki", "get_context", "propose_doc_update",
             "import_memories", "import_chatgpt_exports", "edit_memory", "reconcile_memories",
             "capture_health",  # MS4a MCP-boundary capture
+            "memory_status",  # background remember outcomes (2026-10-23)
+            "cmf_selftest",  # setup item 1.7 (2026-10-24)
             "capture_session",  # MS4a2 — Cowork live-session episode/wiki capture
             "promote_auto_accepted_memories",
             # MS6d — durable-knowledge proposal review/apply loop
@@ -150,7 +152,7 @@ class TestStep6MCPTools(unittest.IsolatedAsyncioTestCase):
         # status tool (MS4a) — every other tool here takes at least one
         # parameter, but that was never a general requirement, just true of
         # every tool that happened to exist before it.
-        zero_arg_tools = {"capture_health"}
+        zero_arg_tools = {"capture_health", "cmf_selftest"}
         for name, tool in tool_dict.items():
             props = tool.input_schema.get("properties", {})
             if name in zero_arg_tools:

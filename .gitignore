@@ -89,6 +89,8 @@ proposals-episode/
 doc-proposals
 episode-proposals
 imports/
+# Operator review rules (server.core.env.review_rules_path default without CMF_STATE_DIR)
+/review-rules.md
 
 # Memory-quality label fixtures — reference real personal content, keep local only
 tests/fixtures/memory_quality/

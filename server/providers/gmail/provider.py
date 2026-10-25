@@ -28,7 +28,7 @@ from pathlib import Path
 import re
 from typing import Optional
 
-from dotenv import load_dotenv
+from server.core.env import load_env
 
 from server.core.errors import ProviderConfigurationError
 from server.core.models import KnowledgeResult
@@ -94,7 +94,7 @@ class GmailKnowledgeProvider:
     name = "gmail"
 
     def __init__(self, snapshot_dir: Optional[str] = None, account: Optional[str] = None) -> None:
-        load_dotenv()
+        load_env()
         self._dir = snapshot_dir if snapshot_dir is not None else os.getenv("CMF_GMAIL_SNAPSHOT_DIR")
         self._account = account if account is not None else os.getenv("CMF_GMAIL_ACCOUNT")
         self._cache: Optional[tuple[float, str, _Index]] = None

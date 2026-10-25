@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
+from server.core.env import load_env
+
 
 class ExtractionStatus(StrEnum):
     """Normalized content extraction status for corpus assets."""
@@ -127,7 +129,7 @@ def get_corpus_root(env_file: Optional[Path] = None) -> Path:
     if env_file is not None:
         load_dotenv(dotenv_path=env_file, override=True)
     else:
-        load_dotenv()
+        load_env()
 
     raw_path = os.getenv("LLM_WIKI_PATH")
     if not raw_path or not raw_path.strip():

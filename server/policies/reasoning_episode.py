@@ -183,10 +183,11 @@ def _is_retryable_capacity_error(exc: Exception) -> bool:
 def _default_generate(model: str, prompt: str) -> str:
     import time as _time
 
-    from dotenv import load_dotenv
     from google import genai  # imported lazily so tests / no-key envs never touch it
 
-    load_dotenv()  # project-root .env, matching server.core.config's convention
+    from server.core.env import load_env
+
+    load_env()  # CMF's .env (server.core.env), matching server.core.config
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set (project-root .env). ReasoningEpisodePolicyV1 needs it for the model call.")

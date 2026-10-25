@@ -22,7 +22,7 @@ from server.policies.reasoning_episode import (
 
 @pytest.fixture
 def env(monkeypatch):
-    monkeypatch.setattr("server.core.config.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("server.core.config.load_env", lambda *a, **k: None)
     monkeypatch.setenv("FALKORDB_DATABASE", "test-graph")
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setenv("CMF_LOCAL_LLM_MODEL", "zai-org/glm-4.7-flash")

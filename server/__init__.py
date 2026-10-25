@@ -1,14 +1,13 @@
 """Context Memory Fabric.
 
-Loads the project-root .env as the very first thing that happens in the
+Loads CMF's .env (server.core.env) as the very first thing that happens in the
 `server` package, before any submodule (and therefore before graphiti_core)
 is imported.
 
-This is not redundant with the load_dotenv() calls in server.core.config,
-server.providers.wiki.corpus and server.providers.memory_graphiti. Those run when their
-function or module body executes, which is too late for one specific
-consumer: graphiti_core reads EMBEDDING_DIM into a module-level constant at
-import time --
+Later calls to load_env() (server.core.config and others) are no-ops once
+this has run. It has to run this early for one specific consumer:
+graphiti_core reads EMBEDDING_DIM into a module-level constant at import
+time --
 
     # graphiti_core/embedder/client.py
     EMBEDDING_DIM = int(os.getenv('EMBEDDING_DIM', 1024))
@@ -25,9 +24,9 @@ regular one. That is intentional and matches pyproject's
 `[tool.hatch.build.targets.wheel] packages = ["server"]`.
 """
 
-from dotenv import load_dotenv
+from server.core.env import load_env
 
-# override=False: a value already exported in the real environment (CI, a
-# launchd plist, an MCP client's `env` block) must win over the .env file,
-# matching the behaviour every other load_dotenv() call site here relies on.
-load_dotenv(override=False)
+# One .env per process: $CMF_HOME/.env (default ~/.cmf/.env), else the repo's
+# (server.core.env). override=False inside: a value already exported in the
+# real environment (CI, a launchd plist, an MCP client's `env` block) wins.
+load_env()

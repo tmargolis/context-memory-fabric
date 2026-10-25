@@ -1,5 +1,8 @@
 # Client Integration & Harness Guide
 
+> [!TIP]
+> **CMF Setup writes these entries for you:** Features → AI apps, or `cmf clients set <app>` ([QUICKSTART.md](QUICKSTART.md)). It keeps one entry per app, backs the file up, and checks it in Status. The sections below are the manual reference, for setups without the app.
+
 This guide describes how to connect **Context Memory Fabric** to AI clients, desktop harnesses, and developer tools via the Model Context Protocol (MCP).
 
 ---
@@ -92,61 +95,55 @@ If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs
 
 ## 1. Claude Desktop
 
-### Recommended: Local Desktop Configuration (`stdio`)
+### Recommended: `cmf clients set claude-desktop`
 
-Claude Desktop can launch and manage Context Memory Fabric automatically in the background using standard I/O (`stdio`).
-
-1. Open your Claude Desktop configuration file:
-   - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-2. Add `context-memory-fabric` under the `"mcpServers"` object:
+CMF Setup writes the entry for you (Features → AI apps, or `cmf clients set claude-desktop`). The entry runs `cmf bridge`, which relays Claude Desktop's stdio to the running server, reads the port and token from `~/.cmf/.env`, and needs no Node.js:
 
 ```json
 {
   "mcpServers": {
     "context-memory-fabric": {
-      "command": "/opt/homebrew/bin/uv",
-      "args": [
-        "run",
-        "--directory",
-        "/path/to/context-memory-fabric",
-        "python",
-        "-m",
-        "server.mcp"
-      ],
-      "env": {
-        "LLM_WIKI_PATH": "/path/to/your/LLM_Wiki",
-        "GEMINI_API_KEY": "your-gemini-api-key",
-        "FALKORDB_DATABASE": "mem-fabric-local-ep"
-      }
+      "command": "/Applications/cmf",
+      "args": ["bridge"]
     }
   }
 }
 ```
 
-> [!TIP]
-> You can also pass `--wiki-path /path/to/your/LLM_Wiki` directly inside the `"args"` array instead of using the `"env"` block.
+If `cmf` was started from somewhere temporary (a download that hasn't been moved, `go run`), it writes the `mcp-remote` entry below instead.
 
-> [!NOTE]
-> `FALKORDB_DATABASE` is optional. If omitted, the server falls back to `default_db`, a non-production sandbox — see §0 for why.
+### Alternative: `mcp-remote` to the running server
 
-3. Restart Claude Desktop (`Cmd + Q` and reopen). All Context Memory Fabric tools will appear in the connectors/tool list — see [Available MCP Tools Summary](#available-mcp-tools-summary) below for the full, current list (count varies with whether `LLM_WIKI_PATH` is configured).
+Point Claude Desktop at the one running server (the [Docker preview](SETUP.md#quickstart-docker-compose-preview-recommended), or a host server started per §0) through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. It needs Node.js 18 or later.
+
+1. Open `claude_desktop_config.json` (Settings → Developer → Edit Config; macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`).
+2. Add **one** `context-memory-fabric` entry under `"mcpServers"`, and remove any older CMF entry:
+
+```json
+{
+  "mcpServers": {
+    "context-memory-fabric": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
+    }
+  }
+}
+```
+
+3. Quit Claude Desktop completely (`Cmd + Q`) and reopen it, then **start a new session**: a resumed or already-open conversation never loads newly added MCP servers. All CMF tools then appear in the tool list; see [Available MCP Tools Summary](#available-mcp-tools-summary) (the count varies with whether `LLM_WIKI_PATH` is configured).
+
+The desktop **Code tab** used this same entry on the first tester's machine; that is still being confirmed.
 
 > [!NOTE]
 > **Cowork tab vs. Code tab.** These are two separate connections to the same server, not one shared connection — each needs its own connector entry configured (whether stdio per above, or the network connector below), and each registers as its own OAuth client if OAuth is configured (confirmed 2026-09-14: six separate `Claude`-named DCR client registrations exist for one person's Desktop app, one per tab/session that connected). Verified in the journal (2026-09-16) that the two resolve to **distinct** harness identities — `claude_desktop` and `claude_code` — not a collapsed single identity, so capture and `explain()` provenance correctly attribute a call to the tab it came from.
 
----
+### Developer mode: stdio
 
-### Alternative: Network Connector (streamable-http or SSE)
+With a [from-source install](DEVELOPER-SETUP.md), Claude Desktop can instead start its own copy of the server over stdio. The config is in [DEVELOPER-SETUP.md](DEVELOPER-SETUP.md#connecting-clients-to-a-host-server). Each stdio client resolves its own environment, so prefer one HTTP server (above) when several apps should share a graph.
 
-If you'd rather connect to an already-running server instance (see §0) instead of having Claude Desktop spawn its own subprocess — e.g. so it shares one server/graph with other clients during a harness comparison:
+### Remote: Connectors (public URL only)
 
-1. Start the server per §0, with `--transport streamable-http` (preferred) or `--transport sse` (legacy).
-2. In Claude Desktop, go to **Settings > Connectors > Add custom connector**.
-3. Set the remote MCP server URL to `http://localhost:8000/mcp` (streamable-http) or `http://localhost:8000/sse` (SSE) — or a tunneled/VPN HTTPS URL if the server isn't running on the same machine (see §4).
-
-Since Claude Desktop's connector flow is OAuth-only with no field for a static header, use §0's OAuth setup (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) if you want this connection authenticated — it'll self-register via DCR and walk you through the consent page automatically.
+**Settings → Connectors → Add custom connector** connects from Anthropic's cloud, so it **rejects `localhost`** ("enter a public URL"). It works only with a public HTTPS URL (§4, e.g. Tailscale Funnel) and OAuth (§0's `CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`). In return, one connector reaches every Claude surface, including claude.ai. Enter `https://<your-public-host>/mcp`; it self-registers via DCR and walks you through the consent page.
 
 ---
 
@@ -207,15 +204,9 @@ uv run python -m server.adapters.codex.cli hooks uninstall
 
 ## 3. Cursor / Other MCP-Enabled Clients
 
-Add the MCP server command in your client settings:
+Clients that accept a server URL (Cursor's `mcp.json`: `{"url": "http://127.0.0.1:8000/mcp"}`) connect to the running server directly. Clients that only start a command can use `npx -y mcp-remote http://127.0.0.1:8000/mcp`, as in §1.
 
-- **Type:** `command` (or `stdio`)
-- **Command:** `uv`
-- **Args:** `run --directory /path/to/context-memory-fabric python -m server.mcp`
-- **Environment Variables:**
-  - `LLM_WIKI_PATH`: `/path/to/your/LLM_Wiki`
-  - `GEMINI_API_KEY`: `AIzaSy...`
-  - `FALKORDB_DATABASE`: `mem-fabric-local-ep` (optional — omit to use the `default_db` sandbox; see §0)
+In [Developer mode](DEVELOPER-SETUP.md), a stdio entry also works: command `uv`, args `run --directory /path/to/context-memory-fabric python -m server.mcp`. The server reads the repo's `.env`.
 
 ---
 
@@ -270,7 +261,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 **What this captures:** every tool call routed through this server, with harness provenance, redacted arguments, and a truncated result summary.
 
-**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. For clients that write transcripts to disk, the transcript pollers close that gap: Claude Code (CLI and the desktop Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity are captured in full ([docs/SETUP.md, Background Capture](SETUP.md#background-capture); install with [`deploy/pollers/`](../deploy/pollers/README.md)). For a chat with no transcript on disk (Claude Desktop chat, cloud Cowork sessions, ChatGPT, Gemini), these mitigations remain:
+**What it does not capture — a real limitation, not a technicality:** turns where the client never calls a Context Memory Fabric tool. Capture is *interaction-triggered*, not a continuous transcript. For clients that write transcripts to disk, the transcript pollers close that gap: Claude Code (CLI and the desktop Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity are captured in full ([DEVELOPER-SETUP.md, Background Capture](DEVELOPER-SETUP.md#background-capture); install with [`deploy/pollers/`](../deploy/pollers/README.md)). For a chat with no transcript on disk (Claude Desktop chat, cloud Cowork sessions, ChatGPT, Gemini), these mitigations remain:
 
 - At natural checkpoints (a decision reached, a milestone hit, a session wrapping up), call `capture_session` — it stages real episodic memory or a Wiki proposal per item, reviewable via the same path offline reasoning-episode extraction uses. Still interaction-triggered, not continuous — Cowork has no session-end signal this can hook into (Milestone 4a2, 2026-09-18).
 - `get_context` at session start pulls in durable/recent state proactively.
@@ -298,7 +289,7 @@ Every tool call any connected client makes is automatically journaled as evidenc
 
 ## Available MCP Tools Summary
 
-All connected clients receive access to the full suite of 29 Context Memory Fabric tools (22 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_doc_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured, 7 tools total; `capture_session`'s doc_proposal destination is likewise a no-op without one; the proposals-episode review tools and `list_review_conversations` are always registered, since episodic memory has no knowledge-provider dependency):
+All connected clients receive access to the full suite of 34 Context Memory Fabric tools (27 when `LLM_WIKI_PATH` is unset — `search_wiki`/`propose_doc_update` and the five MS6d proposal-review tools below are only registered when a knowledge provider is configured, 7 tools total; `capture_session`'s doc_proposal destination is likewise a no-op without one; the proposals-episode review tools and `list_review_conversations` are always registered, since episodic memory has no knowledge-provider dependency):
 
 1. **`get_context(topic, max_wiki_results, max_memory_results)`** *(Read-Only)* — Default unified context retrieval tool combining durable Wiki notes and recent episodic memory. Both result caps default to 8.
 2. **`search_wiki(query, max_results, force_rescan)`** *(Read-Only)* — Lexical search across the local curated `LLM_Wiki` corpus (`WIKI/`, `REPORTS/`, `RAW/`, etc.). `max_results` defaults to 10; `force_rescan=True` bypasses the in-memory cache.
@@ -309,7 +300,7 @@ All connected clients receive access to the full suite of 29 Context Memory Fabr
 7. **`propose_doc_update(target_path, proposed_content, rationale, source_context)`** *(Proposal Write)* — Creates a reviewable staging proposal in `proposals-docs/` without mutating the canonical Wiki. `source_context` is optional background/decision references for the reviewer.
 8. **`import_memories(content, source, source_description, dry_run)`** *(Admin Ingest)* — Administrative bulk import tool for importing AI memory summaries (ChatGPT, Claude, Gemini) into episodic memory.
 9. **`import_chatgpt_exports(paths, dry_run, graph_name, review_overrides, review_overrides_path)`** *(Admin Ingest)* — Parses native ChatGPT `conversations-*.json` export files by explicit file path and classifies candidates into episodic, durable, ambiguous, and non-memory buckets. Requires an explicit non-default `graph_name` when committing.
-10. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth.
+10. **`capture_health()`** *(Read-Only)* — Milestone 4a: in-process capture status — events captured, dropped, redacted, current queue depth — plus the server status also served at `GET /health`: version, Docker or host, graph, whether FalkorDB answers, providers, knowledge sources, the latest background memory writes, and the AI apps that called CMF in the last 24 h.
 11. **`promote_auto_accepted_memories(dry_run, limit)`** *(Memory Write)* — Promotes consolidation candidates already classified `auto_accepted` into episodic memory (Graphiti/FalkorDB). Idempotent; only `auto_accepted` candidates are eligible — everything else needs Milestone 6 review tooling.
 12. **`list_doc_proposals(status, conversation_id, project)`** *(Read-Only)* — MS6d: lists doc proposals, optionally filtered by status (`pending_review`/`approved`/`rejected`/`applied`), source conversation, or project (`project` added 2026-09-23 for reviewing a multi-project batch one project at a time — see `list_review_conversations` below).
 13. **`get_doc_proposal(proposal_id)`** *(Read-Only)* — MS6d: full detail for one proposal — rationale, unified diff, and the sha256 hashes needed to review or apply it.
@@ -332,6 +323,8 @@ All connected clients receive access to the full suite of 29 Context Memory Fabr
 30. **`merge_episodes(memory_ids, statement, reason, reviewer, dry_run)`** *(Decision Record)* — merges 2–20 pending or deferred episodes from one conversation into a replacement whose text the caller writes. `dry_run=True` by default. A real merge supersedes and rejects the constituents and stages the replacement for review; it never promotes, and merging is not approval. Refuses approved or already-promoted candidates, mixed conversations or projects, and text over 3,600 characters or 20 points. Retrying the same merge reuses the replacement.
 31. **`close_review_run(run_id, reason)`** *(Decision Record)* — closes an unconfirmed nightly run without recording any verdict, for a stale run whose items were decided elsewhere (added 2026-10-18). The run stops showing as unconfirmed and can't be confirmed; its still-queued items are offered to the next run. Changes nothing in the queue, memory or wiki.
 32. **`inspect_knowledge_document(provider, document_id)`** *(Read-Only)* — bounded live source inspection. Notion returns a block tree, exact paragraph text, editability reasons, target URIs and explicit omissions. Use a returned URI with `propose_knowledge_change` to stage one plain-text paragraph replacement. Staging re-fetches the block and ancestry; it requires only the read token and makes no Notion writes. Automatic review/apply continues excluding these proposals; guarded application is manual and off by default.
+33. **`memory_status(episode)`** *(Read-Only)* — whether a memory queued by `remember` was saved: `queued`, `committed`, `failed` (with a plain-language reason), or `lost` (the server restarted first). Omit `episode` for the latest 10 writes.
+34. **`cmf_selftest()`** *(Self-Test)* — checks memory end to end: writes a test memory to a temporary `cmf_selftest_*` graph with the configured providers, recalls it, and deletes that graph, reporting each stage (config, embed, write, recall, cleanup). Never touches the user's memories. Extraction can take a minute or two on a local model. The same test runs as `docker exec cmf-server python -m server.selftest`.
 
 
 Episode review had no MCP-exposed equivalent to the doc proposal lifecycle until 2026-09-18 — only `server/review/cli.py`'s CLI exposed `approve_episode`/`reject_episode`. Found the same day a live `capture_session` test needed rejecting: no MCP client could do it.

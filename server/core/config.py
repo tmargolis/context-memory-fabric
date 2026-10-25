@@ -20,8 +20,9 @@ import getpass
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
-from dotenv import load_dotenv
+from server.core.env import in_container, load_env
 
 GEMINI_PROVIDER = "gemini"
 LOCAL_PROVIDER = "local"
@@ -137,6 +138,14 @@ class CMFConfig:
     # None = the model's own default effort (high on claude-sonnet-5-5).
     anthropic_effort: Optional[str] = None
 
+    # Ranked LLM providers (setup item 1.8): CMF_LLM_PROVIDERS, in order;
+    # llm_provider is its first entry. Empty means just llm_provider.
+    llm_provider_chain: tuple[str, ...] = ()
+
+    @property
+    def llm_providers(self) -> tuple[str, ...]:
+        return self.llm_provider_chain or (self.llm_provider,)
+
     @property
     def llm_is_local(self) -> bool:
         return self.llm_provider == LOCAL_PROVIDER
@@ -237,6 +246,33 @@ def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:
     return value
 
 
+def _llm_providers() -> tuple[str, ...]:
+    """CMF_LLM_PROVIDERS (ordered, comma-separated), else CMF_LLM_PROVIDER alone.
+
+    The list wins when both are set; CMF Setup writes both, with
+    CMF_LLM_PROVIDER as the list's first entry, so older readers of the
+    single variable see the same primary.
+    """
+    raw = os.getenv("CMF_LLM_PROVIDERS")
+    if raw is None or not raw.strip():
+        return (_provider("CMF_LLM_PROVIDER"),)
+    out: list[str] = []
+    for item in raw.split(","):
+        value = item.strip().lower()
+        if not value:
+            continue
+        if value not in VALID_PROVIDERS:
+            raise ValueError(
+                f"CMF_LLM_PROVIDERS={raw!r}: {item.strip()!r} is not a recognised provider. "
+                f"Valid values are {', '.join(VALID_PROVIDERS)}."
+            )
+        if value not in out:
+            out.append(value)
+    if not out:
+        return (_provider("CMF_LLM_PROVIDER"),)
+    return tuple(out)
+
+
 def default_reviewer() -> str:
     """Who a review verdict is recorded against when the caller names no one:
     CMF_REVIEWER, else the OS login name."""
@@ -325,17 +361,35 @@ def _embedding_dim() -> int:
     return value
 
 
+def container_reachable_url(url: str) -> str:
+    """A local model URL as this process can reach it.
+
+    One ~/.cmf/.env serves host-side tools and the Docker stack alike
+    (server.core.env). Its local model URLs naturally say 127.0.0.1 or
+    localhost, which inside a container is the container itself; the host
+    is host.docker.internal there. Outside a container the URL is unchanged.
+    """
+    if not url or not in_container():
+        return url
+    parts = urlsplit(url)
+    if parts.hostname not in ("127.0.0.1", "localhost"):
+        return url
+    netloc = "host.docker.internal" + (f":{parts.port}" if parts.port else "")
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
 def load_config() -> CMFConfig:
     """Read the current environment into a CMFConfig snapshot.
 
-    Calls load_dotenv() itself rather than depending on some other module
+    Calls load_env() itself rather than depending on some other module
     having already loaded .env as an import-time side effect (see
     server.providers.wiki.provider.FileKnowledgeProvider.is_configured
     for why that dependency is fragile).
     """
-    load_dotenv()
-    local_base_url = os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL)
+    load_env()
+    local_base_url = container_reachable_url(os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL))
     local_api_key = os.getenv("CMF_LOCAL_API_KEY", DEFAULT_LOCAL_API_KEY)
+    llm_providers = _llm_providers()
     return CMFConfig(
         llm_wiki_path=os.getenv("LLM_WIKI_PATH"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
@@ -345,7 +399,8 @@ def load_config() -> CMFConfig:
         falkordb_username=os.getenv("FALKORDB_USER") or os.getenv("FALKORDB_USERNAME") or None,
         falkordb_database=os.getenv("FALKORDB_DATABASE"),
         cmf_state_dir=_resolve_state_dir(),
-        llm_provider=_provider("CMF_LLM_PROVIDER"),
+        llm_provider=llm_providers[0],
+        llm_provider_chain=llm_providers,
         embed_provider=_embed_provider(),
         local_base_url=local_base_url,
         local_api_key=local_api_key,
@@ -354,9 +409,9 @@ def load_config() -> CMFConfig:
         local_structured_mode=_env_or("CMF_LOCAL_STRUCTURED_MODE", DEFAULT_LOCAL_STRUCTURED_MODE),
         embedding_dim=_embedding_dim(),
         extraction_profile=extraction_profile_from_env(),
-        local_llm_base_url=_env_or("CMF_LOCAL_LLM_BASE_URL", local_base_url),
+        local_llm_base_url=container_reachable_url(_env_or("CMF_LOCAL_LLM_BASE_URL", local_base_url)),
         local_llm_api_key=_env_or("CMF_LOCAL_LLM_API_KEY", local_api_key),
-        local_embed_base_url=_env_or("CMF_LOCAL_EMBED_BASE_URL", local_base_url),
+        local_embed_base_url=container_reachable_url(_env_or("CMF_LOCAL_EMBED_BASE_URL", local_base_url)),
         local_embed_api_key=_env_or("CMF_LOCAL_EMBED_API_KEY", local_api_key),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,

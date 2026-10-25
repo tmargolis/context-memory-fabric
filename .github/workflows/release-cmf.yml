@@ -1,0 +1,100 @@
+# Build the cmf binary (CMF Setup: the app and its CLI) for every platform
+# and attach it to the GitHub Release for a v<version> tag (setup plan 3.7).
+# The same tag publishes the server image (release-image.yml), so a cmf
+# release and the image it pins (CMF_VERSION) always come together.
+#
+# A manual run (workflow_dispatch) builds and uploads the binaries as a
+# workflow artifact without making a release.
+name: Release cmf
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version from the tag, checked against pyproject.toml
+        id: v
+        run: |
+          project=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$project" ]; then
+              echo "::error::tag v$tag doesn't match pyproject.toml version $project; the binary, the image and /health must agree"
+              exit 1
+            fi
+          fi
+          echo "version=$project" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./... && go test ./...
+
+  build:
+    needs: check
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        target:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          ext=""; [ "$GOOS" = windows ] && ext=".exe"
+          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.check.outputs.version }}" \
+            -o "dist/cmf-${GOOS}-${GOARCH}${ext}" ./cmd/cmf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmf-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
+          path: dist/
+
+  release:
+    needs: [check, build]
+    runs-on: macos-14 # lipo, for the universal macOS binary
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Package
+        run: |
+          cd dist
+          lipo -create -output cmf-macos-universal cmf-darwin-arm64 cmf-darwin-amd64
+          rm cmf-darwin-arm64 cmf-darwin-amd64
+          chmod +x cmf-macos-universal cmf-linux-*
+          mv cmf-windows-amd64.exe cmf-windows.exe
+          shasum -a 256 cmf-* > SHA256SUMS
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmf-release
+          path: dist/
+      - name: GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sed "s/{{VERSION}}/${{ needs.check.outputs.version }}/g" deploy/RELEASE-NOTES.md > notes.md
+          gh release create "${GITHUB_REF_NAME}" dist/* --title "CMF ${{ needs.check.outputs.version }}" --notes-file notes.md --prerelease
