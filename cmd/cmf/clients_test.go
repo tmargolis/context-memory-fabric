@@ -142,3 +142,42 @@ func TestHookStopPrintsJSONAndNeverFails(t *testing.T) {
 		t.Fatalf("code %d %q", code, out.String())
 	}
 }
+
+func TestBackfill(t *testing.T) {
+	fake := fakeMachine(t, true)
+	user := clientEnv().Home
+	userHome = func() (string, error) { return user, nil }
+	t.Cleanup(func() { userHome = os.UserHomeDir })
+	os.MkdirAll(filepath.Join(user, ".codex", "sessions"), 0o700)
+	os.WriteFile(filepath.Join(user, ".codex", "sessions", "a.jsonl"), []byte(strings.Repeat("x", 4000)), 0o600)
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"backfill", "--days", "7", "--dry-run"}, &out, &errOut); code != 0 ||
+		!strings.Contains(out.String(), "Codex") || !strings.Contains(out.String(), "≈ 1k tokens at most") || !strings.Contains(out.String(), "$0") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	// fakeMachine's stack has no running poller (capture profile, poller down).
+	out.Reset()
+	if code := runCLI([]string{"backfill", "--yes"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "cmf-poller container isn't running") {
+		t.Fatal(errOut.String())
+	}
+	home := os.Getenv("CMF_HOME")
+	fake.Answers["docker compose --project-directory "+home+" ps --all --format json"] = run.Result{Stdout: `{"Name":"cmf-falkordb","Service":"falkordb","State":"running","Health":"healthy"}
+{"Name":"cmf-server","Service":"cmf-server","State":"running"}
+{"Name":"cmf-poller","Service":"cmf-poller","State":"running"}
+`}
+	fake.Answers["docker compose --project-directory "+home+" exec -T cmf-poller*"] = run.Result{}
+	out.Reset()
+	if code := runCLI([]string{"backfill", "--yes", "--source", "codex"}, &out, &errOut); code != 0 {
+		t.Fatalf("%s%s", out.String(), errOut.String())
+	}
+	if !fake.Ran("docker compose --project-directory " + home + " exec -T cmf-poller python -m server.adapters.codex.cli backfill --all --since 2026-10-10T13:00:00Z") {
+		t.Fatal(fake.Calls)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, "state", "backfill.json"))
+	if !strings.Contains(string(data), `"result": "done"`) {
+		t.Fatal(string(data))
+	}
+	if code := runCLI([]string{"backfill", "--source", "notes"}, &out, &errOut); code != 1 {
+		t.Fatal("unknown source")
+	}
+}

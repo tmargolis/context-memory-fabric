@@ -65,8 +65,12 @@ func PollerSources(env *home.Env) map[string]bool {
 
 // weekBytes sums the transcript files changed in the last 7 days.
 func weekBytes(root string, now time.Time) int64 {
+	return WindowBytes(root, now.Add(-7*24*time.Hour))
+}
+
+// WindowBytes sums the transcript files under root changed since cutoff.
+func WindowBytes(root string, cutoff time.Time) int64 {
 	var total int64
-	cutoff := now.Add(-7 * 24 * time.Hour)
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
