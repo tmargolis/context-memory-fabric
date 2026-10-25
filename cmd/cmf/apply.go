@@ -16,6 +16,7 @@ import (
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
+	"github.com/tmargolis/context-memory-fabric/internal/probe"
 )
 
 // Replaced in tests.
@@ -128,92 +129,139 @@ func runApply(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	h, err := home.Default()
-	if err != nil {
-		return err
-	}
-	m, err := features.Load()
-	if err != nil {
-		return err
-	}
-	env, err := loadEnv(h)
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
-	facts, err := collect(ctx)
+	rp, err := planRequest(ctx, req)
 	if err != nil {
 		return err
 	}
-	pctx := features.Context{Nodes: facts.Nodes}
-	if state, err := mode.Load(h); err == nil && state.Mode.Mode == mode.Developer {
-		pctx.Repo = state.Mode.Repo
-	}
-
-	plan := m.Plan(env, req, pctx)
-	// AI app entries (item 3.4) reach the server the new .env describes.
-	for id := range req.Clients {
-		if _, ok := clients.Find(id); !ok {
-			plan.Errors = append(plan.Errors, fmt.Sprintf("unknown AI app %q under \"clients\" (one of %s)", id, strings.Join(clients.IDs(), ", ")))
-		}
-	}
-	var writes []apply.ClientWrite
-	if plan.OK() && len(req.Clients) > 0 {
-		if writes, err = planClientWrites(req.Clients, clientTarget(plan.Env), clientEnv()); err != nil {
-			plan.Errors = append(plan.Errors, err.Error())
-		}
-	}
-	for _, w := range plan.Warnings {
+	for _, w := range rp.Plan.Warnings {
 		fmt.Fprintln(out, "Note:", w)
 	}
-	if !plan.OK() {
+	if !rp.Plan.OK() {
 		fmt.Fprintln(out, "Can't apply this feature file:")
-		for _, e := range plan.Errors {
+		for _, e := range rp.Plan.Errors {
 			fmt.Fprintln(out, "  -", e)
 		}
 		return errors.New("nothing was changed")
 	}
-	if plan.Empty() && len(writes) == 0 {
+	if rp.Empty() {
 		fmt.Fprintln(out, "Nothing to change: the machine already matches the feature file.")
 		return nil
 	}
-	summary := describe(plan)
 	fmt.Fprintln(out, "Review changes:")
-	if summary != "" {
-		fmt.Fprintln(out, "  "+summary)
-	}
-	printClientWrites(out, writes)
-	if !plan.Empty() {
-		fmt.Fprintf(out, "  Write %s (backup kept):\n", h.EnvFile())
-		for _, c := range plan.Changes {
-			fmt.Fprintln(out, "    -", c)
-		}
-		for _, svc := range plan.Stop {
-			fmt.Fprintf(out, "  Stop the %s container\n", svc)
-		}
-		fmt.Fprintln(out, "  Recreate the containers whose settings changed (docker compose up -d), then wait for the server")
-	}
-	for _, n := range plan.Notes {
-		fmt.Fprintln(out, "  Cost: "+n)
+	for _, line := range rp.Review() {
+		fmt.Fprintln(out, line)
 	}
 	if dryRun {
 		fmt.Fprintln(out, "Dry run: nothing was changed.")
 		return nil
 	}
-	if !plan.Empty() && !facts.Docker.Responding {
-		return errors.New("Docker isn't answering, so the change can't be checked; run `cmf doctor` first")
+	if err := rp.Ready(); err != nil {
+		return err
 	}
 	if !yes && !confirm(out, "Apply?") {
 		return errors.New("cancelled; nothing was changed")
 	}
 	fmt.Fprintln(out, "Applying:")
-	backup, err := executor(h, m, facts.Port, out).Apply(ctx, plan, summary, writes...)
+	backup, err := rp.Apply(ctx, out)
 	if err != nil {
 		return err
 	}
-	afterNotes(out, writes)
 	fmt.Fprintf(out, "Done. Undo with: cmf restore %s\n", backup.Stamp)
 	return nil
+}
+
+// requestPlan is a feature request worked out against this machine: the
+// .env plan and the AI app writes. The CLI and the UI review and apply it
+// the same way.
+type requestPlan struct {
+	Home     home.Home
+	Manifest *features.Manifest
+	Plan     *features.Plan
+	Writes   []apply.ClientWrite
+	Facts    probe.Facts
+}
+
+func planRequest(ctx context.Context, req *features.Request) (*requestPlan, error) {
+	h, err := home.Default()
+	if err != nil {
+		return nil, err
+	}
+	m, err := features.Load()
+	if err != nil {
+		return nil, err
+	}
+	env, err := loadEnv(h)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pctx := features.Context{Nodes: facts.Nodes}
+	if state, err := mode.Load(h); err == nil && state.Mode.Mode == mode.Developer {
+		pctx.Repo = state.Mode.Repo
+	}
+	rp := &requestPlan{Home: h, Manifest: m, Plan: m.Plan(env, req, pctx), Facts: facts}
+	// AI app entries (item 3.4) reach the server the new .env describes.
+	for id := range req.Clients {
+		if _, ok := clients.Find(id); !ok {
+			rp.Plan.Errors = append(rp.Plan.Errors, fmt.Sprintf("unknown AI app %q under \"clients\" (one of %s)", id, strings.Join(clients.IDs(), ", ")))
+		}
+	}
+	if rp.Plan.OK() && len(req.Clients) > 0 {
+		if rp.Writes, err = planClientWrites(req.Clients, clientTarget(rp.Plan.Env), clientEnv()); err != nil {
+			rp.Plan.Errors = append(rp.Plan.Errors, err.Error())
+		}
+	}
+	return rp, nil
+}
+
+func (rp *requestPlan) Empty() bool { return rp.Plan.Empty() && len(rp.Writes) == 0 }
+
+// Review is the plain-language list of what Apply will do.
+func (rp *requestPlan) Review() []string {
+	var lines []string
+	if summary := describe(rp.Plan); summary != "" && !rp.Plan.Empty() {
+		lines = append(lines, "  "+summary)
+	}
+	var b strings.Builder
+	printClientWrites(&b, rp.Writes)
+	if s := strings.TrimRight(b.String(), "\n"); s != "" {
+		lines = append(lines, strings.Split(s, "\n")...)
+	}
+	if !rp.Plan.Empty() {
+		lines = append(lines, fmt.Sprintf("  Write %s (backup kept):", rp.Home.EnvFile()))
+		for _, c := range rp.Plan.Changes {
+			lines = append(lines, "    - "+c.String())
+		}
+		for _, svc := range rp.Plan.Stop {
+			lines = append(lines, fmt.Sprintf("  Stop the %s container", svc))
+		}
+		lines = append(lines, "  Recreate the containers whose settings changed (docker compose up -d), then wait for the server")
+	}
+	for _, n := range rp.Plan.Notes {
+		lines = append(lines, "  Cost: "+n)
+	}
+	return lines
+}
+
+// Ready says why Apply can't run now, if it can't.
+func (rp *requestPlan) Ready() error {
+	if !rp.Plan.Empty() && !rp.Facts.Docker.Responding {
+		return errors.New("Docker isn't answering, so the change can't be checked; run `cmf doctor` first")
+	}
+	return nil
+}
+
+func (rp *requestPlan) Apply(ctx context.Context, out io.Writer) (*home.Backup, error) {
+	backup, err := executor(rp.Home, rp.Manifest, rp.Facts.Port, out).Apply(ctx, rp.Plan, describe(rp.Plan), rp.Writes...)
+	if err != nil {
+		return backup, err
+	}
+	afterNotes(out, rp.Writes)
+	return backup, nil
 }
 
 func describe(p *features.Plan) string {

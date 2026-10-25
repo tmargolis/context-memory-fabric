@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CMF Setup</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="mark" aria-hidden="true"></span>CMF Setup</div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="status" aria-selected="true">Status</button>
+    <button role="tab" data-tab="features" aria-selected="false">Features</button>
+    <button role="tab" data-tab="review" aria-selected="false" id="review-tab" hidden>Review changes</button>
+  </nav>
+  <div class="meta" id="meta"></div>
+</header>
+
+<main>
+  <section id="status" class="panel" role="tabpanel">
+    <div class="summary" id="summary">Checking this install…</div>
+    <ul class="checks" id="checks"></ul>
+    <div class="actions">
+      <button id="refresh">Check again</button>
+      <button id="diag-open">Copy diagnostics</button>
+      <button id="logs-open">View logs</button>
+      <a id="browser-link" class="button" target="_blank" rel="noopener">Open FalkorDB Browser</a>
+    </div>
+  </section>
+
+  <section id="features" class="panel" role="tabpanel" hidden>
+    <p class="lede">Each feature shows what's set on this machine now. Change what you want, then review the changes before anything is written.</p>
+    <div id="groups"></div>
+    <div class="actions sticky">
+      <span id="dirty-note" class="muted">No changes yet.</span>
+      <button id="discard" disabled>Discard</button>
+      <button id="review-btn" class="primary" disabled>Review changes</button>
+    </div>
+    <details class="history">
+      <summary>Backups and undo</summary>
+      <p class="muted">Every change keeps a dated backup. Restoring one puts those files back (after backing up the current ones) and recreates the containers if needed.</p>
+      <ul id="backups" class="backups"></ul>
+    </details>
+  </section>
+
+  <section id="review" class="panel" role="tabpanel" hidden>
+    <h2>Review changes</h2>
+    <div id="review-body"></div>
+    <div class="actions">
+      <button id="back">Back to Features</button>
+      <button id="apply-btn" class="primary">Apply</button>
+    </div>
+  </section>
+</main>
+
+<dialog id="dialog">
+  <form method="dialog" class="dialog-head">
+    <h3 id="dialog-title"></h3>
+    <button class="close" aria-label="Close">✕</button>
+  </form>
+  <div id="dialog-tools" class="dialog-tools"></div>
+  <pre id="dialog-body" class="log"></pre>
+  <div id="dialog-foot" class="dialog-foot"></div>
+</dialog>
+</body>
+</html>

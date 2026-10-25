@@ -14,7 +14,7 @@
       "id": "llm",
       "group": "models",
       "label": "LLM for extraction",
-      "description": "Providers in order of preference. The first is used; the rest are fallbacks on rate-limit or auth errors (fallback arrives with plan item 1.8).",
+      "description": "Providers in order of preference. The first is used; the rest are fallbacks on rate-limit or auth errors.",
       "always_on": true,
       "inputs": [
         {"id": "providers", "label": "Providers, in order", "type": "ranked", "choices": ["anthropic", "openai", "gemini", "local"],

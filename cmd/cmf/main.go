@@ -28,6 +28,7 @@ var commands = map[string]command{
 	"selftest":    {"write, recall and delete a test memory in a scratch graph (calls your providers)", runSelftest},
 	"clients":     {"each AI app's CMF entry: list, set / remove <app>, fix duplicates", runClients},
 	"migrate":     {"move a repo-based install (host or preview stack) into ~/.cmf: plan, apply, restore <stamp>", runMigrate},
+	"ui":          {"open CMF Setup in the browser (local only; --no-open prints the address)", runUI},
 	"version":     {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 
@@ -41,7 +42,8 @@ func usage(out io.Writer) {
 	for _, name := range names {
 		fmt.Fprintf(out, "  %-12s %s\n", name, commands[name].summary)
 	}
-	fmt.Fprintln(out, "\nCMF_HOME picks the install folder (default ~/.cmf).")
+	fmt.Fprintln(out, "\nWith no command, cmf opens CMF Setup in your browser (same as `cmf ui`).")
+	fmt.Fprintln(out, "CMF_HOME picks the install folder (default ~/.cmf).")
 }
 
 func main() {
@@ -49,7 +51,11 @@ func main() {
 }
 
 func runCLI(args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		// Double-clicking the binary opens the app (plan section 3.1).
+		args = []string{"ui"}
+	}
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		usage(out)
 		return 0
 	}
