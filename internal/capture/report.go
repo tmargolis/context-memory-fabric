@@ -132,6 +132,21 @@ func Report(userHome string, env *home.Env, now time.Time) []SourceState {
 	return out
 }
 
+// LLM is the provider background capture extracts with first: an older
+// install's CMF_CAPTURE_LLM_PROVIDER, else the shared ranked list's first
+// (CMF_LLM_PROVIDERS, then CMF_LLM_PROVIDER), else the server's default.
+func LLM(env *home.Env) string {
+	for _, key := range []string{"CMF_CAPTURE_LLM_PROVIDER", "CMF_LLM_PROVIDERS", "CMF_LLM_PROVIDER"} {
+		if v := strings.TrimSpace(strings.Split(env.Get(key), ",")[0]); v != "" {
+			return strings.ToLower(v)
+		}
+	}
+	return "gemini"
+}
+
+// ToFree is how to make capture cost nothing.
+const ToFree = "put local first under LLM in CMF management for $0"
+
 // Estimate says what live capture costs, in tokens: the poller sends each
 // source's new transcript text to CMF's capture LLM; a checkpoint hook costs
 // the app a few hundred tokens per checkpoint instead.
@@ -146,7 +161,7 @@ func Estimate(states []SourceState, captureProvider string) []string {
 	if pollTok > 0 {
 		cost := "$0 (a local model; it costs time, not money)"
 		if captureProvider != "local" {
-			cost = "priced by " + captureProvider + "'s per-token rate (set CMF_CAPTURE_LLM_PROVIDER=local for $0)"
+			cost = "priced by " + captureProvider + "'s per-token rate (" + ToFree + ")"
 		}
 		lines = append(lines, fmt.Sprintf("Poller: at most about %s tokens/day (all transcript text of the last 7 days; it extracts from only part of it), %s.", Human(pollTok), cost))
 	}

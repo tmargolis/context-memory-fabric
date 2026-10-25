@@ -8,10 +8,9 @@ lock (server.adapters.file_lock) on imports/journal/spark_job.lock. A pass that
 can't get the slot skips *before tailing*, so no tail offset advances and the
 next pass retries -- nothing is lost, only delayed.
 
-The slot exists only to protect a local host. When neither the capture
-provider (CMF_CAPTURE_LLM_PROVIDER) nor the interactive provider
-(CMF_LLM_PROVIDER) is "local", a hosted API takes the concurrency and the slot
-is a no-op. CMF_LLM_SLOT=always|never overrides that (e.g. a self-hosted
+The slot exists only to protect a local host. When no LLM provider CMF uses
+(the ranked CMF_LLM_PROVIDERS, or an older CMF_CAPTURE_LLM_PROVIDER) is
+"local", a hosted API takes the concurrency and the slot is a no-op. CMF_LLM_SLOT=always|never overrides that (e.g. a self-hosted
 OpenAI-compatible endpoint configured as "openai").
 
 Until 2026-10-19 the wiki extraction was detected with `pgrep -f
@@ -34,7 +33,7 @@ import sys
 from typing import Iterator, Optional
 
 from server.adapters.file_lock import WorkerLock
-from server.core.config import LOCAL_PROVIDER, _provider, capture_llm_provider_from_env
+from server.core.config import LOCAL_PROVIDER, _llm_providers, capture_llm_providers_from_env
 from server.journal.store import DEFAULT_JOURNAL_PATH
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ def slot_required() -> bool:
         return False
     if mode != "auto":
         raise ValueError(f"CMF_LLM_SLOT={mode!r} is not recognised. Valid values are auto, always, never.")
-    return LOCAL_PROVIDER in (capture_llm_provider_from_env(), _provider("CMF_LLM_PROVIDER"))
+    return LOCAL_PROVIDER in capture_llm_providers_from_env() + _llm_providers()
 
 
 def _lock_path(journal_db: Optional[Path]) -> Path:

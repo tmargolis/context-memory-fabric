@@ -316,15 +316,30 @@ def _env_or(name: str, fallback: str) -> str:
     return value if value and value.strip() else fallback
 
 
-def capture_llm_provider_from_env() -> str:
-    """Read CMF_CAPTURE_LLM_PROVIDER: the LLM provider unattended background
-    capture workers extract with, independent of CMF_LLM_PROVIDER.
+def capture_llm_providers_from_env() -> tuple[str, ...]:
+    """The ranked LLM providers unattended background capture extracts with.
 
-    Defaults to "local": a poller runs with no human review gate in front of
-    it, and one long transcript is dozens of extraction calls, so it must
-    never fall through to a metered API unless the operator opts in.
+    Since v0.1.2 capture shares the extraction list (CMF_LLM_PROVIDERS, else
+    CMF_LLM_PROVIDER), so CMF management has one LLM card. An older install
+    may still set CMF_CAPTURE_LLM_PROVIDER (the app wrote "local" there by
+    default); it still wins, alone, so nobody's unattended capture moves to a
+    metered API without seeing it. Saving the LLM card removes it.
     """
-    return _provider("CMF_CAPTURE_LLM_PROVIDER", default=LOCAL_PROVIDER)
+    raw = os.getenv("CMF_CAPTURE_LLM_PROVIDER")
+    if raw is not None and raw.strip():
+        return (_provider("CMF_CAPTURE_LLM_PROVIDER"),)
+    return _llm_providers()
+
+
+def capture_llm_override() -> bool:
+    """Whether an older CMF_CAPTURE_LLM_PROVIDER still sets capture apart."""
+    raw = os.getenv("CMF_CAPTURE_LLM_PROVIDER")
+    return raw is not None and bool(raw.strip())
+
+
+def capture_llm_provider_from_env() -> str:
+    """The first provider background capture uses (see capture_llm_providers_from_env)."""
+    return capture_llm_providers_from_env()[0]
 
 
 def extraction_profile_from_env() -> str:

@@ -119,10 +119,7 @@ func runCapture(args []string, out io.Writer) error {
 	switch verb {
 	case "", "--json":
 		states := capture.Report(user, env, now())
-		provider := env.Get("CMF_CAPTURE_LLM_PROVIDER")
-		if provider == "" {
-			provider = "local"
-		}
+		provider := capture.LLM(env)
 		t := clientTarget(env)
 		instr, tools, berr := promptBudget(context.Background(), t.LocalURL(), t.Token)
 		if verb == "--json" {

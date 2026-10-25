@@ -229,6 +229,12 @@ func (m *Manifest) planFeature(p *Plan, current *home.Env, f *Feature, fields ma
 			p.fail("%s.%s: %v", f.ID, name, err)
 			continue
 		}
+		for _, key := range in.Replaces {
+			if was := p.Env.Get(key); was != "" {
+				p.Env.Unset(key)
+				p.Notes = append(p.Notes, strings.ReplaceAll(in.ReplacesNote, "{{was}}", was))
+			}
+		}
 		setInput(p.Env, in, values)
 	}
 }

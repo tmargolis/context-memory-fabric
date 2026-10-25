@@ -54,6 +54,10 @@ type Input struct {
 	FirstEnv string   `json:"first_env"` // ranked: also write the first item here
 	Default  string   `json:"default"`
 	Required bool     `json:"required"`
+	// Replaces names older settings this input took over; writing the input
+	// removes them, with ReplacesNote in the review when one was set.
+	Replaces     []string `json:"replaces"`
+	ReplacesNote string   `json:"replaces_note"`
 }
 
 // Writes is what turning a feature on or off does to .env. List items are

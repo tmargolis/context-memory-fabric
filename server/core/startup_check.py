@@ -31,6 +31,7 @@ from server.core.config import (
     LOCAL_PROVIDER,
     OPENAI_PROVIDER,
     CMFConfig,
+    capture_llm_override,
     capture_llm_provider_from_env,
     load_config,
 )
@@ -143,9 +144,12 @@ def check(
         if problem := _key_problem("LLM fallback", provider, config):
             result.warnings.append(problem + " That fallback is skipped until it's set.")
     try:
-        capture_provider = capture_llm_provider_from_env()
-        if problem := _key_problem("background capture", capture_provider, config):
-            result.warnings.append(problem + " Recall works; background capture will fail until it's set.")
+        # Capture shares the list above unless an older install still sets
+        # CMF_CAPTURE_LLM_PROVIDER on its own.
+        if capture_llm_override():
+            capture_provider = capture_llm_provider_from_env()
+            if problem := _key_problem("background capture", capture_provider, config):
+                result.warnings.append(problem + " Recall works; background capture will fail until it's set.")
     except ValueError as e:
         result.warnings.append(str(e))
 
@@ -323,7 +327,8 @@ def provider_tests(get: Optional[Callable[..., Any]] = None) -> list[dict[str, A
     roles = [("LLM", config.llm_provider)] + [("LLM fallback", p) for p in config.llm_providers[1:]]
     roles.append(("embeddings", config.embed_provider))
     try:
-        roles.append(("background capture", capture_llm_provider_from_env()))
+        if capture_llm_override():
+            roles.append(("background capture", capture_llm_provider_from_env()))
     except ValueError as e:
         return [{"role": "background capture", "provider": "", "ok": False, "detail": str(e)}]
     from concurrent.futures import ThreadPoolExecutor

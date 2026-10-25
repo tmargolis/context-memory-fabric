@@ -13,15 +13,17 @@
     {
       "id": "llm",
       "group": "models",
-      "label": "LLM for extraction",
-      "description": "Providers in order of preference. The first is used; the rest are fallbacks on rate-limit or auth errors.",
+      "label": "LLM",
+      "description": "Turns what you save, and the transcripts background capture reads, into memories. Providers in order of preference: the first is used; the rest are fallbacks on rate-limit or auth errors.",
       "always_on": true,
       "inputs": [
         {"id": "providers", "label": "Providers, in order", "type": "ranked", "choices": ["anthropic", "openai", "gemini", "local"],
-         "env": "CMF_LLM_PROVIDERS", "first_env": "CMF_LLM_PROVIDER", "default": "gemini", "required": true}
+         "env": "CMF_LLM_PROVIDERS", "first_env": "CMF_LLM_PROVIDER", "default": "gemini", "required": true,
+         "replaces": ["CMF_CAPTURE_LLM_PROVIDER"],
+         "replaces_note": "Background capture now uses this list too; it was set separately to {{was}}. Unattended capture of one long session is dozens of calls on the first provider."}
       ],
       "checks": ["providers"],
-      "cost_note": "Each memory written is a few LLM calls on the first provider."
+      "cost_note": "Each memory written is a few LLM calls on the first provider; background capture of one long session is dozens. Put local first for $0."
     },
     {
       "id": "embeddings",
@@ -34,18 +36,6 @@
          "env": "CMF_EMBED_PROVIDER", "default": "gemini", "required": true}
       ],
       "checks": ["embedding"]
-    },
-    {
-      "id": "capture-llm",
-      "group": "models",
-      "label": "Background capture LLM",
-      "description": "Used by the capture poller and promotion. Unattended, so it defaults to a local model.",
-      "always_on": true,
-      "inputs": [
-        {"id": "provider", "label": "Provider", "type": "choice", "choices": ["anthropic", "openai", "gemini", "local"],
-         "env": "CMF_CAPTURE_LLM_PROVIDER", "default": "local", "required": true}
-      ],
-      "cost_note": "One long session is dozens of extraction calls on this provider."
     },
     {
       "id": "provider-keys",
@@ -122,12 +112,12 @@
       "id": "capture",
       "group": "sources",
       "label": "Background capture (transcript poller)",
-      "description": "Captures Claude Code, Codex, Antigravity and local Cowork transcripts every 15 minutes, with the background capture LLM.",
+      "description": "Captures Claude Code, Codex, Antigravity and local Cowork transcripts every 15 minutes, with the LLM list above.",
       "enabled_when": {"list_has": {"key": "COMPOSE_PROFILES", "item": "capture"}},
       "on_enable": {"list_add": {"COMPOSE_PROFILES": "capture"}},
       "on_disable": {"list_remove": {"COMPOSE_PROFILES": "capture"}, "stop": ["cmf-poller"]},
       "checks": ["capture"],
-      "cost_note": "Spends the background capture LLM on every captured session."
+      "cost_note": "Spends the first LLM provider on every captured session."
     }
   ],
   "rules": [
@@ -142,8 +132,6 @@
      "keys": {"anthropic": ["ANTHROPIC_API_KEY"], "openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_LLM_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
     {"type": "needs_key", "feature": "embeddings", "input": "provider",
      "keys": {"openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_EMBED_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
-    {"type": "needs_key", "feature": "capture-llm", "input": "provider",
-     "keys": {"anthropic": ["ANTHROPIC_API_KEY"], "openai": ["OPENAI_API_KEY"], "gemini": ["GEMINI_API_KEY"], "local": ["CMF_LOCAL_LLM_BASE_URL", "CMF_LOCAL_BASE_URL"]}},
     {"type": "locked_when_graph_has_data", "feature": "embeddings", "input": "provider",
      "message": "The graph already holds memories embedded with the current provider; changing it would mix vectors. Starting a new graph comes with a later step."}
   ]

@@ -152,7 +152,7 @@ A Stop hook in Claude Code, Codex or Antigravity tells the agent, every few turn
 CMF can also capture your coding sessions by polling their transcripts every 15 minutes: Claude Code (the CLI and the desktop app's Code tab, including subagents), Codex CLI, local Cowork sessions and Antigravity. [`deploy/pollers/README.md`](../deploy/pollers/README.md) installs the pollers as background jobs on macOS (launchd), Linux (systemd) or Windows (Task Scheduler).
 
 Before turning them on:
-- **Set `CMF_CAPTURE_LLM_PROVIDER`.** The pollers extract with it, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it to the provider whose key you have. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
+- **Pick the LLM list.** The pollers extract with the same ranked `CMF_LLM_PROVIDERS` as the server (an older `CMF_CAPTURE_LLM_PROVIDER`, while set, still wins on its own). Without a local model server, put the provider whose key you have first. Unattended capture spends that provider's credit: one long session is dozens of extraction calls.
 - **On Linux and Windows, set `CMF_PROJECT_ROOTS`** (e.g. `~/code,~/work`), so sessions are tagged with their project rather than `other`.
 
 Cloud Cowork sessions leave no transcript on your computer; only their calls to CMF's tools are captured.

@@ -78,7 +78,7 @@ The same log explains a bare "Error executing tool" in Claude.
 
 CMF uses a model for two separate jobs, and each can come from a different provider:
 
-- **LLM (extraction):** turns conversations into episodes, and episodes into graph entities and facts. Set by `CMF_LLM_PROVIDER`, and for the background transcript pollers by `CMF_CAPTURE_LLM_PROVIDER`.
+- **LLM (extraction):** turns conversations into episodes, and episodes into graph entities and facts. Set by one ranked list, `CMF_LLM_PROVIDERS` (the app's **LLM** card), used both for what your AI apps save and for background capture; the first provider answers and the rest are fallbacks.
 - **Embeddings:** turn text into vectors for search. Set by `CMF_EMBED_PROVIDER`.
 
 | Provider | LLM | Embeddings | Needs |
@@ -127,7 +127,7 @@ Things to know:
 - **Pick the embedder before your graph has data.** A graph's vectors and index are built at one width. Switching embedders later (e.g. to 1024-wide Gemini or OpenAI vectors) means a new `FALKORDB_DATABASE` and re-importing your history into it, not an in-place change.
 - **Ollama must be running** whenever CMF writes or searches memory. If it's down, those calls fail rather than falling back.
 - **Any LLM can pair with it:** `anthropic`, `openai`, `gemini`, or a local LLM on a different server. The embedder reads `CMF_LOCAL_EMBED_BASE_URL` and a local LLM reads `CMF_LOCAL_LLM_BASE_URL`; each falls back to `CMF_LOCAL_BASE_URL` when unset.
-- **Background transcript capture** (the `cmf-poller` container) extracts with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`. It defaults to `local`, so with an embedder-only Ollama setup, set it to your LLM provider (for example `anthropic`) before turning the pollers on.
+- **Background transcript capture** (the `cmf-poller` container) extracts with the same LLM list as everything else. Unattended, one long session is dozens of calls on the first provider, so with an embedder-only Ollama setup and a paid LLM first, expect capture to spend that provider's credit.
 
 ---
 
@@ -279,7 +279,7 @@ Configuration lives in `~/.cmf/.env`, which the app's Features page edits; the s
 | `CMF_STATE_DIR` | No | `~/.cmf/state` | Where `proposals-docs/` and `proposals-episode/` are kept. Inside the stack it's set for you; this is for CMF processes run on the host. |
 | `CMF_LLM_PROVIDER` | No | `gemini` | LLM provider: `anthropic`, `openai`, `gemini` or `local` ([which provider does what](#model-providers)). |
 | `CMF_EMBED_PROVIDER` | No | `gemini` | Embeddings provider: `openai`, `gemini` or `local`. Not `anthropic`: it has no embeddings API. |
-| `CMF_CAPTURE_LLM_PROVIDER` | No | `local` | LLM the background transcript pollers extract with. Same values as `CMF_LLM_PROVIDER`. |
+| `CMF_CAPTURE_LLM_PROVIDER` | No | — | Older installs only: a separate provider for background capture. While set it wins over the shared list; saving the app's LLM card removes it. |
 | `CMF_NUDGE_MIN_TURNS` | No | `5` | Agent replies between capture-checkpoint nudges ([Capture checkpoints](DEVELOPER-SETUP.md#capture-checkpoints-no-transcript-reading)). |
 | `CMF_NUDGE_MIN_MINUTES` | No | `30` | Or nudge after this many minutes, once there are at least 2 replies. |
 | `CMF_ANTHROPIC_MODEL` | No | `claude-sonnet-5-5` | Claude model for extraction. `claude-opus-5-5` is the step up, `claude-haiku-5-5` costs less. |

@@ -99,7 +99,7 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
 
     provider_tests adds a live call to each provider's model list (item 1.1).
     """
-    from server.core.config import capture_llm_provider_from_env, load_config
+    from server.core.config import capture_llm_override, capture_llm_provider_from_env, load_config
     from server.memory_writes import get_default_write_log
     from server.providers.memory_graphiti import resolve_target_database
 
@@ -134,6 +134,9 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
             "llm_chain": list(config.llm_providers),
             "embeddings": config.embed_provider,
             "capture_llm": capture_provider,
+            # True only while an older CMF_CAPTURE_LLM_PROVIDER sets capture
+            # apart from the shared list.
+            "capture_llm_separate": capture_llm_override(),
             "embedding_dim": config.embedding_dim,
         },
         "knowledge_sources": knowledge,
@@ -194,7 +197,8 @@ def format_status_lines(snap: dict[str, Any]) -> list[str]:
         f"**Server:** CMF {snap['version']} on {snap['runtime']}, started {snap['started_at'][:19]}Z",
         f"**FalkorDB:** {fdb_line}",
         f"**Providers:** LLM `{p['llm']}`, embeddings `{p['embeddings']}` ({p['embedding_dim']}-d), "
-        f"background capture `{p['capture_llm']}`",
+        + (f"background capture `{p['capture_llm']}` (set separately)" if p.get("capture_llm_separate")
+           else "background capture uses the same LLM list"),
         f"**Knowledge sources:** {knowledge_text}",
         "**Background memory writes (latest 5):**",
     ]

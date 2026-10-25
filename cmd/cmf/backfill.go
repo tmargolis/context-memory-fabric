@@ -92,10 +92,7 @@ func runBackfill(args []string, out io.Writer) error {
 		}
 	}
 	since := now().Add(-time.Duration(days) * 24 * time.Hour)
-	provider := env.Get("CMF_CAPTURE_LLM_PROVIDER")
-	if provider == "" {
-		provider = "local"
-	}
+	provider := capture.LLM(env)
 
 	var chosen []string
 	var total int64
@@ -118,7 +115,7 @@ func runBackfill(args []string, out io.Writer) error {
 	}
 	cost := "$0 on the local model; it takes time (the Spark lock queues it behind other extraction)"
 	if provider != "local" {
-		cost = "priced by " + provider + "'s per-token rate; set CMF_CAPTURE_LLM_PROVIDER=local for $0"
+		cost = "priced by " + provider + "'s per-token rate; " + capture.ToFree
 	}
 	fmt.Fprintf(out, "Estimate: at most ≈ %s tokens through the capture LLM (%s). Everything lands in the review queue; nothing reaches the graph until it's approved.\n", capture.Human(total), cost)
 	if dryRun {

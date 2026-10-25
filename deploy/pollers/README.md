@@ -17,7 +17,7 @@ The older layout, one job per source (`--pollers "claude-code codex"`), still in
 
 ### Concurrency
 
-Extraction on a local model server (`CMF_CAPTURE_LLM_PROVIDER=local`) can only take one big job at a time. Capture passes, backfills, the wiki relationship extraction and `edit_memory` re-extracts share one slot, a file lock on `imports/journal/spark_job.lock` (`server/adapters/spark_lock.py`). A capture pass that finds the slot taken skips before reading anything, its log names the job holding it, and the next pass catches up. Nothing is lost.
+Extraction on a local model server (`local` in `CMF_LLM_PROVIDERS`) can only take one big job at a time. Capture passes, backfills, the wiki relationship extraction and `edit_memory` re-extracts share one slot, a file lock on `imports/journal/spark_job.lock` (`server/adapters/spark_lock.py`). A capture pass that finds the slot taken skips before reading anything, its log names the job holding it, and the next pass catches up. Nothing is lost.
 
 With a hosted provider (`anthropic`, `openai`, `gemini`) for both capture and interactive use, the slot does nothing. `CMF_LLM_SLOT=always` forces it on, e.g. for a self-hosted OpenAI-compatible server; `never` turns it off.
 
@@ -29,7 +29,7 @@ The pollers read every transcript in full. To capture without reading transcript
 > These jobs are for **Developer mode** (a from-source install, [docs/DEVELOPER-SETUP.md](../../docs/DEVELOPER-SETUP.md)). If you use the `~/.cmf` stack (the [Quickstart](../../docs/QUICKSTART.md)), don't install them, and above all not `--mcp-server`: it starts a second CMF server on port 8000 that fights the stack's. The stack's `cmf-poller` container already does their job.
 
 1. **Set up CMF first** ([docs/DEVELOPER-SETUP.md](../../docs/DEVELOPER-SETUP.md)): the virtualenv (`uv sync`), FalkorDB, and a `.env`. The jobs run the repo's own interpreter, `.venv/bin/python3` (Windows: `.venv\Scripts\python.exe`), from the repo folder, so they read the same `.env`.
-2. **Pick the extraction LLM for background capture.** The pollers extract with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it in `.env` to the provider whose key you have (`anthropic`, `openai` or `gemini`). Unattended capture spends that provider's quota: one long session is dozens of extraction calls.
+2. **Pick the LLM list.** The pollers extract with the same ranked `CMF_LLM_PROVIDERS` as the server (an older `CMF_CAPTURE_LLM_PROVIDER`, while set, still wins on its own). Without a local model server, put the provider whose key you have (`anthropic`, `openai` or `gemini`) first. Unattended capture spends that provider's quota: one long session is dozens of extraction calls.
 3. **On Linux and Windows, set `CMF_PROJECT_ROOTS`** in `.env` to the folders your projects live in, e.g. `CMF_PROJECT_ROOTS=~/code,~/work` or `C:\Users\you\Dev`. The built-in default only knows the macOS layout (`/Users/<you>/Dev`, `/Users/<you>/Documents`), and without it sessions land in project `other`.
 4. **Try one pass by hand** before scheduling it, to see it work and catch configuration errors:
    ```bash

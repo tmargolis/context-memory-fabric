@@ -175,6 +175,30 @@ func TestEmbeddingsLockedWhenGraphHasData(t *testing.T) {
 	}
 }
 
+// One LLM card since v0.1.2: saving it takes over an older install's separate
+// background-capture provider, and the review says so.
+func TestLLMCardReplacesSeparateCaptureProvider(t *testing.T) {
+	p := plan(t, toddEnv, `{"features": {"llm": {"providers": ["local", "gemini"]}, "provider-keys": {"gemini_api_key": "AIza123456789"}}}`, Context{})
+	if !p.OK() {
+		t.Fatal(p.Errors)
+	}
+	if p.Env.Get("CMF_CAPTURE_LLM_PROVIDER") != "" || !slices.ContainsFunc(p.Changes, func(c Change) bool {
+		return c.Key == "CMF_CAPTURE_LLM_PROVIDER" && c.Removed
+	}) {
+		t.Fatal("the separate capture setting must be removed", p.Changes)
+	}
+	if !slices.ContainsFunc(p.Notes, func(n string) bool { return strings.Contains(n, "it was set separately to local") }) {
+		t.Fatal(p.Notes)
+	}
+	if manifest(t).Feature("capture-llm") != nil {
+		t.Fatal("no separate capture card")
+	}
+	// An unrelated change leaves the older setting alone.
+	if p := plan(t, toddEnv, `{"features": {"capture": {"enabled": false}}}`, Context{}); p.Env.Get("CMF_CAPTURE_LLM_PROVIDER") != "local" {
+		t.Fatal("touched without saving the LLM card")
+	}
+}
+
 func TestRankedProvidersNeedKeysAndWriteBothVariables(t *testing.T) {
 	p := plan(t, toddEnv, `{"features": {"llm": {"providers": ["anthropic", "local"]}}}`, Context{})
 	if !hasError(p, "uses anthropic, but ANTHROPIC_API_KEY isn't set") {
@@ -196,8 +220,8 @@ func TestRankedProvidersNeedKeysAndWriteBothVariables(t *testing.T) {
 }
 
 func TestPlaceholderKeyDoesNotCount(t *testing.T) {
-	p := plan(t, "GEMINI_API_KEY=your_gemini_key_here\n", `{"features": {"capture-llm": {"provider": "gemini"}}}`, Context{})
-	if !hasError(p, "GEMINI_API_KEY isn't set") {
+	p := plan(t, "OPENAI_API_KEY=your_openai_key_here\n", `{"features": {"llm": {"providers": ["openai"]}}}`, Context{})
+	if !hasError(p, "OPENAI_API_KEY isn't set") {
 		t.Fatal(p.Errors)
 	}
 }
