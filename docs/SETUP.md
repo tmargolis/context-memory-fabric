@@ -56,7 +56,7 @@ The stack it starts:
 - **CMF MCP server:** Streamable HTTP endpoint at `http://127.0.0.1:8000/mcp`
 - **FalkorDB:** on `127.0.0.1:6379`, with the FalkorDB Browser at `http://127.0.0.1:3001`
 - **Your notes:** the folder in `LLM_WIKI_PATH` (the demo wiki, your own Markdown folder, or none), mounted read-only at `/wiki` inside the container
-- **Capture poller:** the `cmf-poller` container, unless the Capture feature is off
+- **Capture poller:** the `cmf-poller` container, always on: it reads every AI app's transcript folder on this computer
 
 ### Check That It Works
 
@@ -175,7 +175,7 @@ Why not **Settings → Connectors → Add custom connector**? Connectors run fro
 
 ### Advanced / no app: Claude Desktop (Code tab)
 
-On the first tester's machine, the Code tab used the same `claude_desktop_config.json` entry above after a restart and a new session. This is still being confirmed. To check, ask a new Code-tab session to list its CMF tools.
+The Code tab reads the same connectors as the rest of Claude Desktop: the [claude.ai connector](#the-claudeai-connector-claude-desktop-cowork-claude-code) is the simplest way to reach CMF there. To check, ask a new Code-tab session to list its CMF tools.
 
 ### Advanced / no app: Cursor / Generic MCP Clients
 
@@ -189,11 +189,24 @@ More clients (Antigravity, Codex, ChatGPT, Gemini): [CLIENTS.md](CLIENTS.md).
 
 CMF can capture your coding sessions automatically, with Stop-hook **capture checkpoints** (the agent saves what was decided) and the **transcript poller** (CMF reads Claude Code, Codex, Cowork and Antigravity transcripts).
 
-With Context Memory Fabric management both run without Python on your computer: the poller is the stack's `cmf-poller` container (on by default; the Capture feature turns it off), and `cmf capture hook install claude_code codex antigravity` adds the checkpoint hooks, which run `cmf hook stop`. `cmf capture` shows how each app is captured, what it costs, and how much prompt context CMF adds per session.
+With Context Memory Fabric management both run without Python on your computer: the poller is the stack's `cmf-poller` container (always on; it costs the first LLM provider per captured session, $0 on a local model), and `cmf capture hook install claude_code codex antigravity` adds the checkpoint hooks, which run `cmf hook stop`. `cmf capture` shows how each app is captured, what it costs, and how much prompt context CMF adds per session.
 
 ## Remote access (ChatGPT, Gemini, claude.ai connectors)
 
 Connectors run in their vendor's cloud, so they reach CMF only through a public HTTPS address, and only with OAuth on. `cmf remote` shows where you stand; `cmf remote enable tailscale` turns OAuth on and publishes only CMF's port with Tailscale Funnel; `cmf remote use https://<address>` does the OAuth part for a tunnel you run yourself (a named Cloudflare Tunnel, ngrok). `cmf remote disable` undoes only what it added. Then add a connector with `https://<address>/mcp`; its consent page asks for `CMF_MCP_OAUTH_PASSWORD` from `~/.cmf/.env`.
+
+**AI apps on this computer keep working.** With OAuth on, the server still accepts a local access token, `CMF_MCP_AUTH_TOKEN`, which the app entries CMF management writes carry (it generates the token the first time you turn an app on with remote access on). OAuth's own tokens expire and can be revoked; the local token is a random 256-bit secret kept in `~/.cmf/.env` and those apps' configs. Remove it from `.env` and Apply to shut every local entry out.
+
+### The claude.ai connector (Claude Desktop, Cowork, Claude Code)
+
+One connector on your claude.ai account reaches CMF from Claude Desktop's Chat and Cowork, the Desktop Code tab, Claude Code in a terminal (when it's signed in with that account) and claude.ai in a browser, with no per-app config.
+
+1. Turn on remote access: `cmf remote enable tailscale` (or `cmf remote use https://<address>`). `cmf remote` prints the address.
+2. In claude.ai (or Claude Desktop): **Settings → Connectors → Add custom connector**. Name it *Context Memory Fabric*, URL `https://<address>/mcp`.
+3. Click **Connect**. CMF's consent page asks for `CMF_MCP_OAUTH_PASSWORD` from `~/.cmf/.env`.
+4. Start a new conversation (or a new `claude` session). `claude mcp list` shows it as `claude.ai Context Memory Fabric`.
+
+Calls through the connector reach CMF named as Claude Desktop, whichever Claude app made them, so Status shows them on the Claude Desktop row. Don't also add a local entry for the same app: its tools would appear twice.
 
 With capture off, memories come from what your AI apps save through CMF's tools (`remember`, `capture_session`) as you work.
 

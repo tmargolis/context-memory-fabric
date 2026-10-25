@@ -131,7 +131,9 @@ async function loadStatus() {
       c.about ? el("div", { class: "check-about" }, ...withCode(c.about)) : null,
       el("div", { class: "check-detail" }, c.detail)),
     c.fix && c.level !== "ok"
-      ? el("button", { class: "small fix", title: c.fix.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c) }, "Fix: " + c.fix.label)
+      ? el("button", { class: "small fix", title: c.fix.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c, c.fix) }, "Fix: " + c.fix.label)
+      : c.action
+      ? el("button", { class: "small fix", title: c.action.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c, c.action) }, c.action.label)
       : el("span"),
   )));
 }
@@ -157,7 +159,8 @@ function checkTitle(c) {
 async function goToFeature(target) {
   show("features");
   await featuresLoading;
-  const node = $(target.startsWith("group:") ? "group-" + target.slice(6) : "feature-" + target);
+  const [kind, id] = target.includes(":") ? target.split(":") : ["feature", target];
+  const node = $(kind + "-" + id);
   if (!node) return;
   node.scrollIntoView({ behavior: "smooth", block: "start" });
   node.classList.remove("flash");
@@ -165,10 +168,10 @@ async function goToFeature(target) {
   node.classList.add("flash");
 }
 
-async function runFix(c) {
-  const steps = c.fix.steps.map((st) => "  $ " + st.show).join("\n");
-  if (!confirm(`${c.fix.label}\n\nThis runs:\n${steps}`)) return;
-  await stream(`/api/fix/${encodeURIComponent(c.id)}`, null, c.fix.label);
+async function runFix(c, fix) {
+  const steps = fix.steps.map((st) => "  $ " + st.show).join("\n");
+  if (!confirm(`${fix.label}\n\nThis runs:\n${steps}`)) return;
+  await stream(`/api/fix/${encodeURIComponent(c.id)}`, null, fix.label);
   loadStatus();
 }
 
@@ -220,6 +223,12 @@ let features = null; // the machine's state as loaded
 let featuresLoading = null; // the load in progress, if any
 let edits = {};      // feature id -> {enabled?, <input id>: value}
 let clientEdits = {}; // app id -> bool
+
+// The transcript source the poller reads for each AI app (always on).
+const sourceFor = { "claude-code": "claude_code", "codex": "codex", "antigravity": "antigravity" };
+// Claude Desktop is covered by the claude.ai connector card, not an entry.
+const connectorApps = new Set(["claude-code", "claude-desktop"]);
+const connectorDoc = "https://github.com/tmargolis/context-memory-fabric/blob/main/docs/SETUP.md#the-claudeai-connector-claude-desktop-cowork-claude-code";
 
 const groupNames = { core: "Core", models: "Models", knowledge: "Knowledge", sources: "Sources", apps: "AI apps" };
 
@@ -284,12 +293,13 @@ function featureCard(f) {
   const on = featureEnabled(f);
   const changed = !!edits[f.id];
   let control;
-  if (f.always_on) control = el("span", { class: "badge" }, "always on");
+  if (f.coming_soon) control = el("span", { class: "badge soon" }, "coming soon");
+  else if (f.always_on) control = el("span", { class: "badge" }, "always on");
   else if (f.derived) control = el("span", { class: "badge" }, f.enabled ? "on" : "off");
   else control = el("label", { class: "switch", title: on ? "On" : "Off" },
     el("input", { type: "checkbox", checked: on, "aria-label": f.label, onchange: (ev) => edit(f.id, "enabled", ev.target.checked) }), el("span"));
   const showInputs = (on || f.always_on) && f.inputs && f.inputs.length;
-  return el("div", { class: "card" + (changed ? " changed" : ""), id: "feature-" + f.id },
+  return el("div", { class: "card" + (changed ? " changed" : "") + (f.coming_soon ? " soon" : ""), id: "feature-" + f.id },
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, f.label), el("div", { class: "card-desc" }, f.description)),
       control),
@@ -297,18 +307,50 @@ function featureCard(f) {
     on && !f.enabled && f.cost_note ? el("div", { class: "cost" }, "Cost: " + f.cost_note) : null);
 }
 
+function captureState(source) {
+  return (features.capture || []).find((s) => s.id === source);
+}
+
+// The recommended way for Claude Desktop (Chat, Cowork, Code tab) and Claude
+// Code to reach CMF: one connector on the claude.ai account. No switch: it's
+// added in claude.ai, and the poller always reads those apps' transcripts.
+function connectorCard() {
+  const url = features.public_url ? features.public_url.replace(/\/$/, "") + "/mcp" : "";
+  const state = features.connector ? "active: Claude calls came through it in the last day"
+    : url ? "not seen yet: remote access is on; add the connector in claude.ai" : "not set up: turn on remote access first";
+  const cowork = captureState("claude_cowork");
+  return el("div", { class: "card", id: "client-connector" },
+    el("div", { class: "card-head" },
+      el("div", { class: "text" }, el("div", { class: "card-title" }, "claude.ai connector (recommended for Claude)"),
+        el("div", { class: "card-desc" }, state)),
+      el("span", { class: "badge" + (features.connector ? "" : " soon") }, features.connector ? "active" : "not active")),
+    el("div", { class: "card-desc note" },
+      "One connector on your claude.ai account covers Claude Desktop (Chat, Cowork and the Code tab), Claude Code and claude.ai. ",
+      url ? null : el("span", {}, "First turn on remote access in a terminal: ", el("code", {}, "cmf remote enable tailscale"), ". "),
+      "Then in claude.ai: Settings → Connectors → Add custom connector, URL ", el("code", {}, url || "https://<your address>/mcp"),
+      ". CMF's consent page asks for ", el("code", {}, "CMF_MCP_OAUTH_PASSWORD"), " from ~/.cmf/.env. ",
+      el("a", { href: connectorDoc, target: "_blank", rel: "noopener" }, "Step by step ↗")),
+    cowork && cowork.present ? el("div", { class: "card-desc note" }, "Cowork's sessions: the poller reads " + (cowork.folder || cowork.dirs[0]) + ".") : null);
+}
+
 function clientCard(c) {
   const has = (c.entries || []).some((e) => e.cmf);
   const healthy = has && c.entries.filter((e) => e.cmf).length === 1 && c.entries.find((e) => e.cmf).correct;
   const want = c.id in clientEdits ? clientEdits[c.id] : has;
-  const state = !c.installed ? "not installed" : c.error ? "can't read its config" : !has ? "no CMF entry" : healthy ? "connected" : "needs fixing (duplicates or a stale entry)";
+  const viaConnector = !has && features.connector && connectorApps.has(c.id);
+  const state = !c.installed ? "not installed" : c.error ? "can't read its config" : viaConnector ? "connected through the claude.ai connector; no entry needed"
+    : !has ? "no CMF entry" : healthy ? "connected" : "needs fixing (duplicates or a stale entry)";
+  const src = sourceFor[c.id] && captureState(sourceFor[c.id]);
   return el("div", { class: "card" + (c.id in clientEdits ? " changed" : ""), id: "client-" + c.id },
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, c.label), el("div", { class: "card-desc" }, state + (c.exists ? " · " + c.path : ""))),
-      el("label", { class: "switch" },
-        el("input", { type: "checkbox", checked: want, disabled: !c.installed || !!c.error, "aria-label": c.label,
+      el("label", { class: "switch", title: "A CMF entry in this app's own config" },
+        el("input", { type: "checkbox", checked: want, disabled: !c.installed || !!c.error, "aria-label": c.label + ": CMF entry",
           onchange: (ev) => { if (ev.target.checked === has && healthy) delete clientEdits[c.id]; else clientEdits[c.id] = ev.target.checked; renderFeatures(); } }),
-        el("span"))));
+        el("span"))),
+    connectorApps.has(c.id) ? el("div", { class: "card-desc note" },
+      "The switch writes a local entry, for when you don't use the claude.ai connector above. With the connector, leave it off, or CMF's tools appear twice.") : null,
+    src && src.present ? el("div", { class: "card-desc note" }, "Transcripts: the poller reads " + (src.folder || src.dirs[0]) + ".") : null);
 }
 
 function request() {
@@ -332,8 +374,9 @@ function request() {
 }
 
 function renderFeatures() {
-  const groups = [...features.groups.map((g) => [g, features.features.filter((f) => f.group === g).map(featureCard)]),
-    ["apps", features.clients.map(clientCard)]];
+  const cards = (g) => features.features.filter((f) => f.group === g && !f.hidden).map(featureCard);
+  const order = features.groups.filter((g) => g !== "sources");
+  const groups = [...order.map((g) => [g, cards(g)]), ["apps", [connectorCard(), ...features.clients.filter((c) => c.id !== "claude-desktop").map(clientCard)]], ["sources", cards("sources")]];
   $("groups").replaceChildren(...groups.filter(([, cards]) => cards.length).map(([g, cards]) =>
     el("div", { class: "group", id: "group-" + g }, el("h3", {}, groupNames[g] || g), ...cards)));
   const req = request();

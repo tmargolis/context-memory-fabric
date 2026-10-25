@@ -71,8 +71,8 @@ func TestClientsFixOnlyTouchesAppsWithEntries(t *testing.T) {
 	os.MkdirAll(cursor, 0o700)
 	var out, errOut bytes.Buffer
 	runCLI([]string{"status"}, &out, &errOut)
-	if !strings.Contains(out.String(), "[FAIL] Each AI app has exactly one CMF entry: Claude Desktop has 2 CMF entries; no entry: cursor") ||
-		!strings.Contains(out.String(), "") {
+	if !strings.Contains(out.String(), "[FAIL] Each AI app has exactly one CMF entry: Claude Desktop has 2 CMF entries\n") ||
+		!strings.Contains(out.String(), "[n/a ] Cursor: not connected · connection no CMF entry") {
 		t.Fatal(out.String())
 	}
 	out.Reset()

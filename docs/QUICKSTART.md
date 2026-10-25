@@ -33,8 +33,8 @@ Context Memory Fabric management opens in your browser. It runs only on your com
 1. **Status** opens first. The top row says CMF isn't installed yet: click **Install CMF here**.
 2. Open **Features**:
    - **Models.** Pick the LLM provider(s) you have a key for and paste the key. You can list several in order; the first is used and the rest take over when it's rate-limited. Pick **one** embeddings provider (it can't change once you have memories). A local model (Ollama, LM Studio) costs nothing per call.
-   - **Knowledge.** No knowledge base, the demo wiki (fictional), or your own notes (a Markdown folder or Notion).
-   - **AI apps.** Turn on the apps you use: Claude Desktop, Claude Code, Codex, Cursor, VS Code, Antigravity. CMF writes one entry into each app's own config, with a backup.
+   - **Knowledge.** The demo wiki (fictional), or your own notes (a Markdown folder or Notion). Leave them all off to keep memory only.
+   - **AI apps.** For Claude Desktop (Chat, Cowork, Code tab) and Claude Code, the **claude.ai connector** card shows how to add one connector to your claude.ai account; it needs remote access on ([steps](SETUP.md#the-claudeai-connector-claude-desktop-cowork-claude-code)). For the other apps you use (Codex, Cursor, VS Code, Antigravity), turn on their entry: CMF writes it into the app's own config, with a backup. The poller reads every app's transcripts on this computer in the background and queues what's worth keeping for your review.
 3. Click **Review changes**. You see every file CMF will write before anything happens.
 4. Click **Apply**. The first start downloads the server (a few minutes). Status runs again when it's done.
 

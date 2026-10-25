@@ -1,6 +1,8 @@
 package features
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 )
 
@@ -43,6 +46,7 @@ type Context struct {
 	Repo  string // developer mode's checkout, "" in standard mode
 	Home  string // the CMF home (~/.cmf)
 	Nodes int    // graph node count, -1 when unknown
+	User  string // the user's home folder, for capture's transcript folders; "" skips them
 }
 
 type Change struct {
@@ -169,8 +173,38 @@ func (m *Manifest) Plan(current *home.Env, req *Request, ctx Context) *Plan {
 			p.Errors = append(p.Errors, msg)
 		}
 	}
+	// Capture is always on: the poller runs (the compose profile) and mounts
+	// every AI app's transcript folder on this computer; unset, compose
+	// mounts empty ones and nothing is captured.
+	if ctx.User != "" {
+		m.write(p, m.Feature("capture"), &Writes{ListAdd: map[string]string{"COMPOSE_PROFILES": "capture"}}, ctx)
+		for key, dir := range capture.DefaultFolders(ctx.User, p.Env) {
+			p.Env.Set(key, dir)
+		}
+	}
+	// With remote access on (OAuth), the server lets the AI apps on this
+	// computer in only with CMF_MCP_AUTH_TOKEN, which their entries carry.
+	if p.Env.Get("CMF_MCP_ISSUER_URL") != "" && p.Env.Get("CMF_MCP_AUTH_TOKEN") == "" && slices.Contains(mapValues(req.Clients), true) {
+		p.Env.Set("CMF_MCP_AUTH_TOKEN", NewToken())
+		p.Notes = append(p.Notes, "Remote access is on, so the AI apps on this computer get a local access token (CMF_MCP_AUTH_TOKEN); the server restarts to accept it.")
+	}
 	p.Changes = m.diff(current, p.Env)
 	return p
+}
+
+// NewToken is a random 256-bit token, hex.
+func NewToken() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func mapValues(m map[string]bool) []bool {
+	out := make([]bool, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }
 
 func (m *Manifest) index(id string) int {
@@ -185,6 +219,10 @@ func (m *Manifest) index(id string) int {
 func (m *Manifest) planFeature(p *Plan, current *home.Env, f *Feature, fields map[string]json.RawMessage, ctx Context) {
 	if f.Derived {
 		p.fail("%s can't be set directly: %s", f.ID, f.Description)
+		return
+	}
+	if f.ComingSoon {
+		p.fail("%s is coming soon; it can't be turned on yet", f.Label)
 		return
 	}
 	was := m.Enabled(current, f.ID)

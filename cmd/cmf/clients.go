@@ -145,6 +145,9 @@ func runClients(args []string, out io.Writer) error {
 		return errors.New("usage: cmf clients [--json] | cmf clients set|remove <app ...> | cmf clients fix  [--dry-run] [--yes]")
 	}
 
+	if verb == "set" && target.PublicURL != "" && target.Token == "" {
+		return errors.New("remote access (OAuth) is on, so a local app needs CMF_MCP_AUTH_TOKEN, which isn't set yet. Turn the app on in CMF management (Features → AI apps), which adds the token and restarts the server, or run `cmf apply` with {\"clients\": {...}}")
+	}
 	writes, err := planClientWrites(want, target, cenv)
 	if err != nil {
 		return err

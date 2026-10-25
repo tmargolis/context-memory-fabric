@@ -18,26 +18,31 @@ type Source struct {
 	Label   string   `json:"label"`
 	Harness string   `json:"harness,omitempty"` // whose Stop hook nudges it ("" = no hook system on this machine)
 	Dirs    []string `json:"dirs"`              // transcript roots, relative to home
+	// EnvKey names the folder the poller container mounts for this source
+	// (deploy/docker/compose.yml); unset, it mounts an empty folder.
+	EnvKey string `json:"env_key"`
 }
 
 var Sources = []Source{
-	{ID: "claude_code", Label: "Claude Code and the Code tab", Harness: "claude_code", Dirs: []string{".claude/projects"}},
-	{ID: "claude_cowork", Label: "Cowork", Harness: "claude_code", Dirs: []string{"Library/Application Support/Claude/local-agent-mode-sessions"}},
-	{ID: "codex", Label: "Codex", Harness: "codex", Dirs: []string{".codex/sessions"}},
-	{ID: "antigravity", Label: "Antigravity", Harness: "antigravity", Dirs: []string{".gemini/antigravity"}},
+	{ID: "claude_code", Label: "Claude Code and the Code tab", Harness: "claude_code", Dirs: []string{".claude/projects"}, EnvKey: "CMF_CAPTURE_CLAUDE_CODE_DIR"},
+	{ID: "claude_cowork", Label: "Cowork", Harness: "claude_code", Dirs: []string{"Library/Application Support/Claude/local-agent-mode-sessions"}, EnvKey: "CMF_CAPTURE_COWORK_DIR"},
+	{ID: "codex", Label: "Codex", Harness: "codex", Dirs: []string{".codex/sessions"}, EnvKey: "CMF_CAPTURE_CODEX_DIR"},
+	{ID: "antigravity", Label: "Antigravity", Harness: "antigravity", Dirs: []string{".gemini/antigravity"}, EnvKey: "CMF_CAPTURE_ANTIGRAVITY_DIR"},
 }
 
 // SourceState is how one source is captured on this machine.
 type SourceState struct {
 	Source
-	Present  bool   `json:"present"`          // transcripts on disk
-	Hook     string `json:"hook,omitempty"`   // nudge kind, see Hooks.Nudge
-	Worker   bool   `json:"worker,omitempty"` // a legacy host worker hook
-	Poller   bool   `json:"poller"`           // the cmf-poller container reads it
-	Method   string `json:"method"`           // plain words
-	Week     int64  `json:"week_bytes"`       // transcript bytes written in the last 7 days
-	DailyTok int64  `json:"daily_tokens"`     // ≈ Week/4/7
-	Note     string `json:"note,omitempty"`
+	Present  bool      `json:"present"`               // transcripts on disk
+	Hook     string    `json:"hook,omitempty"`        // nudge kind, see Hooks.Nudge
+	Worker   bool      `json:"worker,omitempty"`      // a legacy host worker hook
+	Poller   bool      `json:"poller"`                // the cmf-poller container reads it
+	Folder   string    `json:"folder,omitempty"`      // the folder the poller mounts (EnvKey), "" when unset
+	Last     time.Time `json:"last_change,omitempty"` // newest transcript file there
+	Method   string    `json:"method"`                // plain words
+	Week     int64     `json:"week_bytes"`            // transcript bytes written in the last 7 days
+	DailyTok int64     `json:"daily_tokens"`          // ≈ Week/4/7
+	Note     string    `json:"note,omitempty"`
 }
 
 // PollerSources is the poller's set: COMPOSE_PROFILES must include capture;
@@ -70,19 +75,49 @@ func weekBytes(root string, now time.Time) int64 {
 
 // WindowBytes sums the transcript files under root changed since cutoff.
 func WindowBytes(root string, cutoff time.Time) int64 {
+	total, _ := scan(root, cutoff)
+	return total
+}
+
+// scan sums the transcript files under root changed since cutoff and
+// returns the newest one's time.
+func scan(root string, cutoff time.Time) (int64, time.Time) {
 	var total int64
+	var latest time.Time
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		if strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".pb") {
-			if info, err := d.Info(); err == nil && info.ModTime().After(cutoff) {
-				total += info.Size()
+			if info, err := d.Info(); err == nil {
+				if info.ModTime().After(cutoff) {
+					total += info.Size()
+				}
+				if info.ModTime().After(latest) {
+					latest = info.ModTime()
+				}
 			}
 		}
 		return nil
 	})
-	return total
+	return total, latest
+}
+
+// DefaultFolders are the capture folder settings for the sources whose
+// default transcript folder exists here and has none set yet: what turning
+// capture on should write so the poller mounts the real folders.
+func DefaultFolders(userHome string, env *home.Env) map[string]string {
+	out := map[string]string{}
+	for _, s := range Sources {
+		if strings.TrimSpace(env.Get(s.EnvKey)) != "" {
+			continue
+		}
+		root := filepath.Join(userHome, s.Dirs[0])
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			out[s.EnvKey] = root
+		}
+	}
+	return out
 }
 
 // Report reads how each source is captured. Read-only.
@@ -94,14 +129,27 @@ func Report(userHome string, env *home.Env, now time.Time) []SourceState {
 	}
 	var out []SourceState
 	for _, s := range Sources {
-		st := SourceState{Source: s, Poller: poller[s.ID]}
-		for _, d := range s.Dirs {
-			root := filepath.Join(userHome, d)
-			if _, err := os.Stat(root); err == nil {
-				st.Present = true
-				st.Week += weekBytes(root, now)
+		st := SourceState{Source: s, Folder: strings.TrimSpace(env.Get(s.EnvKey))}
+		roots := []string{st.Folder}
+		if st.Folder == "" {
+			roots = nil
+			for _, d := range s.Dirs {
+				roots = append(roots, filepath.Join(userHome, d))
 			}
 		}
+		for _, root := range roots {
+			if _, err := os.Stat(root); err == nil {
+				st.Present = true
+				week, last := scan(root, now.Add(-7*24*time.Hour))
+				st.Week += week
+				if last.After(st.Last) {
+					st.Last = last
+				}
+			}
+		}
+		// The poller reads only a folder it mounts (EnvKey); unset, it
+		// mounts an empty one.
+		st.Poller = poller[s.ID] && st.Folder != ""
 		st.DailyTok = st.Week / 4 / 7
 		if h, ok := hooks[s.Harness]; ok {
 			st.Hook, st.Worker = h.Nudge, h.Worker
@@ -110,6 +158,7 @@ func Report(userHome string, env *home.Env, now time.Time) []SourceState {
 			st.Hook = "" // only the plugin reaches Cowork sessions
 		}
 		st.Poller = st.Poller && st.Present
+		unmounted := poller[s.ID] && st.Folder == "" && st.Present
 		switch {
 		case st.Hook != "" && st.Poller:
 			st.Method = "checkpoint hook and poller (full transcript)"
@@ -123,6 +172,9 @@ func Report(userHome string, env *home.Env, now time.Time) []SourceState {
 			st.Note = "no hook and no poller: capture depends on the app following CMF's instructions"
 		default:
 			st.Method = "not on this machine"
+		}
+		if unmounted {
+			st.Note = strings.TrimPrefix(st.Note+"; the poller isn't pointed at it ("+s.EnvKey+" isn't set), so it mounts an empty folder", "; ")
 		}
 		if st.Worker {
 			st.Note = strings.TrimPrefix(st.Note+"; legacy host worker hook installed (the poller container does its job)", "; ")

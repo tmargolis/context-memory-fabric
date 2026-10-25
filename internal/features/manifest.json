@@ -55,6 +55,7 @@
     {
       "id": "memory-only",
       "group": "knowledge",
+      "hidden": true,
       "label": "No knowledge base (memory only)",
       "description": "On when no knowledge source is. Turn the sources off to choose it.",
       "derived": true,
@@ -73,6 +74,7 @@
     {
       "id": "own-knowledge",
       "group": "knowledge",
+      "hidden": true,
       "label": "Bring your own knowledge",
       "description": "On when your notes folder or Notion is on.",
       "derived": true,
@@ -109,15 +111,35 @@
       "checks": ["knowledge"]
     },
     {
+      "id": "google-drive",
+      "group": "knowledge",
+      "label": "Google Drive",
+      "description": "Search and cite the documents in your Google Drive as a knowledge source, read-only.",
+      "coming_soon": true
+    },
+    {
+      "id": "microsoft-365",
+      "group": "knowledge",
+      "label": "Microsoft 365 / SharePoint",
+      "description": "Search and cite OneDrive and SharePoint documents as a knowledge source, read-only.",
+      "coming_soon": true
+    },
+    {
       "id": "capture",
       "group": "sources",
+      "hidden": true,
+      "always_on": true,
       "label": "Background capture (transcript poller)",
-      "description": "Captures Claude Code, Codex, Antigravity and local Cowork transcripts every 15 minutes, with the LLM list above.",
-      "enabled_when": {"list_has": {"key": "COMPOSE_PROFILES", "item": "capture"}},
-      "on_enable": {"list_add": {"COMPOSE_PROFILES": "capture"}},
-      "on_disable": {"list_remove": {"COMPOSE_PROFILES": "capture"}, "stop": ["cmf-poller"]},
+      "description": "The poller reads every AI app's transcripts on this computer every 15 minutes, with the LLM list above, and queues what's worth keeping for review.",
       "checks": ["capture"],
       "cost_note": "Spends the first LLM provider on every captured session."
+    },
+    {
+      "id": "messaging-apps",
+      "group": "sources",
+      "label": "Messaging apps",
+      "description": "Gmail (redesigned), Slack and Microsoft Teams: CMF reads the conversations you choose and queues what's worth keeping for review.",
+      "coming_soon": true
     }
   ],
   "rules": [

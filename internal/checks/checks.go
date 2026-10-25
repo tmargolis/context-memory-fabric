@@ -8,10 +8,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
 	"github.com/tmargolis/context-memory-fabric/internal/probe"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
@@ -44,6 +46,9 @@ type Result struct {
 	Level  Level  `json:"level"`
 	Detail string `json:"detail"`
 	Fix    *Fix   `json:"fix,omitempty"`
+	// Action can be run whatever the row's state (the self-test's "run it
+	// now"); Fix is offered only when something is wrong.
+	Action *Fix `json:"action,omitempty"`
 	// Where the row's setting is changed: a feature id or "group:<id>" on the
 	// Features page, or Doc for things set outside the app.
 	Feature string `json:"feature,omitempty"`
@@ -81,8 +86,20 @@ var guide = map[string]struct{ About, Feature, Doc string }{
 		Feature: "capture"},
 	"clients": {About: "Each AI app needs one CMF entry in its own config. Duplicates or a stale address make it connect twice or not at all. Apps that use a claude.ai connector don't need one.",
 		Feature: "group:apps"},
-	"apps-seen": {About: "Apps that called CMF in the last day. One that's set up but not seen usually needs a restart and a new conversation.",
-		Feature: "group:apps"},
+	"connector": {About: "One connector on your claude.ai account reaches CMF from Claude Desktop (Chat, Cowork and the Code tab), Claude Code and claude.ai, with nothing to set up in each app. It needs remote access on.",
+		Feature: "client:connector"},
+	"app-claude-code": {About: "Claude Code in a terminal and the Desktop app's Code tab. Its entry lives in `~/.claude.json`; both write transcripts to the same folder. Calls through a claude.ai connector show under Claude Desktop.",
+		Feature: "client:claude-code"},
+	"app-claude-desktop": {About: "Chat and Cowork share Claude Desktop's connection: a claude.ai connector, or its config file (`cmf bridge`). Chat keeps no transcripts on disk; the poller reads Cowork's local sessions.",
+		Feature: "client:claude-desktop"},
+	"app-codex": {About: "OpenAI's Codex CLI. Its entry lives in `~/.codex/config.toml`; its checkpoint hook in `~/.codex/hooks.json`.",
+		Feature: "client:codex"},
+	"app-antigravity": {About: "Google's Antigravity. Its entry and checkpoint hook live under `~/.gemini`.",
+		Feature: "client:antigravity"},
+	"app-cursor": {About: "Cursor connects through its MCP settings. It has no hooks and keeps no transcripts CMF can read.",
+		Feature: "client:cursor"},
+	"app-vscode": {About: "VS Code's MCP support (Copilot agent mode). No hooks or transcripts CMF can read.",
+		Feature: "client:vscode"},
 	"selftest": {About: "Writes a test memory to a scratch graph, finds it again and deletes the graph. Your own memories aren't touched."},
 }
 
@@ -112,7 +129,9 @@ func Evaluate(f probe.Facts) []Result {
 	results := []Result{checkMode(f), checkDocker(f)}
 	results = append(results, checkStack(f), checkPort(f), checkLaunchd(f), checkStrays(f), checkHostMCP(f),
 		checkGraph(f), checkProviders(f), checkEmbedding(f), checkKnowledge(f), checkCapture(f),
-		checkClients(f), checkAppsSeen(f), checkSelfTest(f))
+		checkClients(f), checkConnector(f))
+	results = append(results, checkApps(f)...)
+	results = append(results, checkSelfTest(f))
 	for i := range results {
 		g := guide[results[i].ID]
 		results[i].About, results[i].Feature, results[i].Doc = g.About, g.Feature, g.Doc
@@ -465,7 +484,7 @@ func checkKnowledge(f probe.Facts) Result {
 func checkCapture(f probe.Facts) Result {
 	r := Result{ID: "capture", Title: "Background capture running"}
 	if !f.HasProfile("capture") {
-		r.Level, r.Detail = Warn, "capture is off (no \"capture\" in COMPOSE_PROFILES)"
+		r.Level, r.Detail = Warn, "capture is off (no \"capture\" in COMPOSE_PROFILES, removed by hand); any Apply in Features turns it back on"
 		return r
 	}
 	if r, skip := needsDocker(r, f); skip {
@@ -478,6 +497,19 @@ func checkCapture(f probe.Facts) Result {
 		return r
 	}
 	r.Level, r.Detail = OK, "cmf-poller is running"
+	var reading []string
+	for _, s := range f.Capture {
+		if s.Poller {
+			reading = append(reading, s.Label)
+		}
+	}
+	if f.Capture != nil {
+		if len(reading) == 0 {
+			r.Level, r.Detail = Warn, "cmf-poller is running but reads no transcript folder: no AI app's transcripts were found on this computer, or the CMF_CAPTURE_*_DIR settings are unset (any Apply sets them)"
+			return r
+		}
+		r.Detail += "; reading " + strings.Join(reading, ", ")
+	}
 	if f.Health == nil {
 		return r
 	}
@@ -507,7 +539,7 @@ func checkClients(f probe.Facts) Result {
 		r.Level, r.Detail = NA, "not checked"
 		return r
 	}
-	var bad, good, unset []string
+	var bad, good []string
 	for _, s := range f.Clients {
 		cmf := s.CMF()
 		switch {
@@ -515,7 +547,6 @@ func checkClients(f probe.Facts) Result {
 			bad = append(bad, s.Label+": "+s.Err)
 		case !s.Installed:
 		case len(cmf) == 0:
-			unset = append(unset, s.ID)
 		case s.Healthy():
 			good = append(good, s.Label)
 		case len(cmf) > 1:
@@ -524,10 +555,7 @@ func checkClients(f probe.Facts) Result {
 			bad = append(bad, fmt.Sprintf("%s's CMF entry %q doesn't reach this install", s.Label, cmf[0].Name))
 		}
 	}
-	tail := ""
-	if len(unset) > 0 {
-		tail = "; no entry: " + strings.Join(unset, ", ") + " (`cmf clients set <app>` adds one; apps using a claude.ai connector don't need one)"
-	}
+	tail := "" // apps with no entry: their own rows below say so
 	switch {
 	case len(bad) > 0:
 		r.Level, r.Detail = Fail, strings.Join(bad, "; ")+tail
@@ -546,27 +574,163 @@ func checkClients(f probe.Facts) Result {
 	return r
 }
 
-func checkAppsSeen(f probe.Facts) Result {
-	r := Result{ID: "apps-seen", Title: "AI apps seen in the last 24 hours"}
-	if r, missing := healthMissing(r, f); missing {
-		r.Fix = nil
+// checkConnector: the claude.ai connector, the recommended way for Claude
+// Desktop (Chat, Cowork, Code tab) and Claude Code to reach CMF. It needs
+// remote access (a public address with OAuth); it's active when Claude calls
+// came in through it in the last day.
+func checkConnector(f probe.Facts) Result {
+	r := Result{ID: "connector", Title: "claude.ai connector"}
+	addr := strings.TrimRight(f.Env["CMF_MCP_ISSUER_URL"], "/")
+	if addr == "" {
+		r.Level, r.Detail = NA, "not set up: it needs remote access first (`cmf remote enable tailscale`), then the connector added in claude.ai"
 		return r
 	}
-	var seen []string
-	clients := append([]probe.ClientSeen(nil), f.Health.ClientsSeen...)
-	sort.Slice(clients, func(i, j int) bool { return clients[i].LastSeen.After(clients[j].LastSeen) })
-	for _, c := range clients {
-		if f.At.Sub(c.LastSeen) <= 24*time.Hour {
-			seen = append(seen, fmt.Sprintf("%s (%s)", c.Harness, ago(f.At.Sub(c.LastSeen))))
+	var last time.Time
+	if f.Health != nil {
+		for _, c := range f.Health.ClientsSeen {
+			if c.Harness == "claude_desktop" && c.LastSeen.After(last) {
+				last = c.LastSeen
+			}
 		}
 	}
-	if len(seen) == 0 {
-		r.Level = Warn
-		r.Detail = "no AI app has called CMF since the server started or in the last 24 h. Quit and reopen the app, then start a new session"
+	if last.IsZero() {
+		r.Level, r.Detail = NA, "remote access is on, but no Claude call came through a connector in the last day\naddress     "+addr+"/mcp\nadd it in claude.ai → Settings → Connectors, then start a new conversation"
 		return r
 	}
-	r.Level, r.Detail = OK, strings.Join(seen, ", ")
+	r.Level, r.Detail = OK, "active\naddress     "+addr+"/mcp\nlast call   "+ago(f.At.Sub(last))+"\ncovers      Claude Desktop (Chat, Cowork, Code tab) and Claude Code"
 	return r
+}
+
+// appRows are the AI apps Status shows one row each for: the app's own
+// CMF entry (clients), the transcript source the poller reads (capture), and
+// the names its calls arrive under (the journal's harness).
+var appRows = []struct {
+	ID, Title, Client, Source string
+	Seen                      []string
+}{
+	{"app-claude-code", "Claude Code (CLI and Code tab)", "claude-code", "claude_code", []string{"claude_code", "claude_desktop_code"}},
+	{"app-claude-desktop", "Claude Desktop (Chat and Cowork)", "claude-desktop", "claude_cowork", []string{"claude_desktop", "claude_cowork"}},
+	{"app-codex", "Codex", "codex", "codex", []string{"codex"}},
+	{"app-antigravity", "Antigravity", "antigravity", "antigravity", []string{"antigravity"}},
+	{"app-cursor", "Cursor", "cursor", "", []string{"cursor"}},
+	{"app-vscode", "VS Code", "vscode", "", []string{"vscode", "visual_studio_code", "copilot"}},
+}
+
+var hookNames = map[string]string{
+	"plugin": "the cmf-capture plugin (Python)",
+	"cmf":    "cmf hook stop",
+	"python": "the older Python checkpoint hook",
+}
+
+// checkApps is one row per AI app: whether it's connected to CMF, its
+// checkpoint hook, and the transcript folder the poller reads. OK means the
+// app is on; n/a means it's off or not on this computer.
+func checkApps(f probe.Facts) []Result {
+	clientByID := map[string]clients.State{}
+	for _, s := range f.Clients {
+		clientByID[s.ID] = s
+	}
+	sourceByID := map[string]capture.SourceState{}
+	for _, s := range f.Capture {
+		sourceByID[s.ID] = s
+	}
+	// A claude.ai connector belongs to the account, so every Claude app
+	// signed in to it has it; its calls arrive named claude_desktop.
+	connector := false
+	if d, ok := clientByID["claude-desktop"]; ok && len(d.CMF()) == 0 && f.Health != nil {
+		for _, c := range f.Health.ClientsSeen {
+			connector = connector || c.Harness == "claude_desktop"
+		}
+	}
+	var out []Result
+	for _, a := range appRows {
+		r := Result{ID: a.ID, Title: a.Title}
+		var lines []string
+		connected, installed, noEntry := false, a.Client == "", false
+		if c, ok := clientByID[a.Client]; ok {
+			installed = c.Installed
+			cmf := c.CMF()
+			switch {
+			case c.Err != "":
+				lines = append(lines, "connection  can't read "+tilde(c.Path)+": "+c.Err)
+			case !c.Installed:
+				lines = append(lines, "connection  app not on this computer")
+			case len(cmf) == 0:
+				noEntry = true
+				lines = append(lines, "connection  no CMF entry in "+tilde(c.Path))
+			default:
+				where := "local"
+				if !strings.Contains(cmf[0].URL, "127.0.0.1") && !strings.Contains(cmf[0].URL, "localhost") {
+					where = "public URL"
+				}
+				state := where + " entry"
+				if !c.Healthy() {
+					state = fmt.Sprintf("%d CMF entries, see the row below", len(cmf))
+					if len(cmf) == 1 {
+						state = "an entry that doesn't reach this install"
+					}
+				}
+				connected = c.Healthy()
+				lines = append(lines, "connection  "+state+" in "+tilde(c.Path))
+			}
+		}
+		if noEntry && connector && a.ID == "app-claude-code" {
+			lines[0] = "connection  the claude.ai connector (its calls show under Claude Desktop)"
+			connected = true
+		}
+		if s, ok := sourceByID[a.Source]; ok {
+			installed = installed || s.Present
+			hook := hookNames[s.Hook]
+			if hook == "" {
+				hook = "none"
+			}
+			if s.Worker {
+				hook += "; plus an older host worker hook (the poller does its job)"
+			}
+			lines = append(lines, "hook        "+hook)
+			switch {
+			case s.Poller:
+				poll := tilde(s.Folder)
+				if !s.Last.IsZero() {
+					poll += " · last transcript " + ago(f.At.Sub(s.Last))
+				}
+				lines = append(lines, "poller      "+poll)
+			case s.Present && s.Folder == "":
+				lines = append(lines, "poller      not pointed at its folder ("+s.EnvKey+" isn't set)")
+			case s.Present:
+				lines = append(lines, "poller      off")
+			}
+		}
+		if f.Health != nil {
+			var last time.Time
+			for _, c := range f.Health.ClientsSeen {
+				if slices.Contains(a.Seen, c.Harness) && c.LastSeen.After(last) {
+					last = c.LastSeen
+				}
+			}
+			if !last.IsZero() {
+				lines = append(lines, "seen        "+ago(f.At.Sub(last)))
+				if noEntry {
+					// Called CMF without a local entry: a claude.ai connector
+					// (or another remote one) reaches it over the public URL.
+					lines[0] = "connection  the claude.ai connector (no local entry in " + tilde(clientByID[a.Client].Path) + ")"
+				}
+				connected = true
+			}
+		}
+		r.Detail = strings.Join(lines, "\n")
+		if !connected && !installed {
+			continue // not on this computer: the Features page still lists it
+		}
+		r.Level = NA // installed, not connected
+		if connected {
+			r.Level = OK
+		} else {
+			r.Detail = "not connected\n" + r.Detail
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func ago(d time.Duration) string {
@@ -595,7 +759,7 @@ func checkSelfTest(f probe.Facts) Result {
 		return r
 	}
 	t := f.Health.Selftest
-	rerun := &Fix{Label: "Run the self-test", Steps: []Step{step("write, recall and delete a test memory in a scratch graph (a few minutes)", SelftestCmd(f.Home))}}
+	rerun := &Fix{Label: "Run self-test", Steps: []Step{step("write, recall and delete a test memory in a scratch graph (a few minutes)", SelftestCmd(f.Home))}}
 	switch {
 	case t == nil:
 		r.Level, r.Detail = NA, "not run yet; `cmf selftest` runs it (a few minutes, calls your providers once)"
@@ -603,6 +767,9 @@ func checkSelfTest(f probe.Facts) Result {
 		r.Level, r.Detail = OK, fmt.Sprintf("passed %s (%.0f s)", ago(f.At.Sub(t.At)), t.Seconds)
 	default:
 		r.Level, r.Detail, r.Fix = Fail, fmt.Sprintf("%s failed %s: %s", t.FailedStage, ago(f.At.Sub(t.At)), t.FailedDetail), rerun
+	}
+	if r.Fix == nil {
+		r.Action = rerun
 	}
 	return r
 }

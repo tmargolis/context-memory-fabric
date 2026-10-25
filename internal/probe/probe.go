@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
@@ -150,9 +151,10 @@ type Facts struct {
 	HealthErr string
 	Nodes     int // -1 when unknown
 	NodesErr  string
-	Clients   []clients.State // each AI app's CMF entries; nil when not checked
-	Self      string          // this cmf binary, for fixes that run cmf itself
-	Installed bool            // ~/.cmf has a .env and a compose file
+	Clients   []clients.State       // each AI app's CMF entries; nil when not checked
+	Capture   []capture.SourceState // how each transcript source is captured; nil when not checked
+	Self      string                // this cmf binary, for fixes that run cmf itself
+	Installed bool                  // ~/.cmf has a .env and a compose file
 }
 
 // Service returns the stack's container for a compose service, if any.
@@ -227,7 +229,8 @@ var envKeys = []string{"COMPOSE_PROFILES", "CMF_MCP_PORT", "FALKORDB_USER", "FAL
 func (p Prober) Collect(ctx context.Context) Facts {
 	f := Facts{At: p.Now(), OS: p.OS, Home: p.Home.Dir, Env: map[string]string{}, Port: 8000, Nodes: -1}
 	f.Installed = home.Exists(p.Home.EnvFile()) && home.Exists(p.Home.ComposeFile())
-	if env, err := home.ReadEnv(p.Home.EnvFile()); err == nil {
+	env, envErr := home.ReadEnv(p.Home.EnvFile())
+	if envErr == nil {
 		for _, k := range envKeys {
 			if v := env.Get(k); v != "" {
 				f.Env[k] = v
@@ -240,6 +243,9 @@ func (p Prober) Collect(ctx context.Context) Facts {
 	if p.ClientEnv != nil {
 		t := clients.Target{Port: f.Port, PublicURL: f.Env["CMF_MCP_ISSUER_URL"]}
 		f.Clients = clients.InspectAll(*p.ClientEnv, t)
+		if envErr == nil {
+			f.Capture = capture.Report(p.ClientEnv.Home, env, f.At)
+		}
 	}
 	if state, err := mode.Load(p.Home); err != nil {
 		f.ModeErr = err.Error()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/migrate"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
@@ -58,6 +59,11 @@ func runInstall(args []string, out io.Writer) error {
 	}
 	env.Set("FALKORDB_DATABASE", "cmf")    // one graph per install, never asked (section 3.4)
 	env.Set("COMPOSE_PROFILES", "capture") // capture on by default (section 3.9)
+	if user, err := userHome(); err == nil {
+		for key, dir := range capture.DefaultFolders(user, env) { // the poller mounts these
+			env.Set(key, dir)
+		}
+	}
 	var kept []mode.Change
 	for _, c := range changes {
 		if c.Path != h.EnvFile() {

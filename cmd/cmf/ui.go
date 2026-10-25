@@ -20,11 +20,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/checks"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/diag"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
+	"github.com/tmargolis/context-memory-fabric/internal/probe"
 	"github.com/tmargolis/context-memory-fabric/internal/remote"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
 )
@@ -325,7 +327,31 @@ func (s *uiServer) status(r *http.Request) (any, error) {
 		"graph": graph, "nodes": facts.Nodes, "browser_url": browserURL, "version": version}, nil
 }
 
-func (s *uiServer) features(*http.Request) (any, error) {
+// connectorSeen: Claude Desktop called CMF in the last day with no local
+// entry, so a claude.ai connector reaches it (it covers every Claude app
+// signed in to that account).
+func connectorSeen(ctx context.Context, env *home.Env) bool {
+	port := 8000
+	if p, err := strconv.Atoi(env.Get("CMF_MCP_PORT")); err == nil && p > 0 {
+		port = p
+	}
+	body, err := getHealth(ctx, fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	if err != nil {
+		return false
+	}
+	var h probe.Health
+	if json.Unmarshal(body, &h) != nil {
+		return false
+	}
+	for _, c := range h.ClientsSeen {
+		if c.Harness == "claude_desktop" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *uiServer) features(r *http.Request) (any, error) {
 	h, err := home.Default()
 	if err != nil {
 		return nil, err
@@ -338,8 +364,13 @@ func (s *uiServer) features(*http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	user, _ := userHome()
 	return map[string]any{"groups": m.Groups, "features": m.States(env),
-		"clients": clients.InspectAll(clientEnv(), clientTarget(env))}, nil
+		"clients": clients.InspectAll(clientEnv(), clientTarget(env)),
+		// Each transcript source, for the AI app cards' capture switches,
+		// and the public address a claude.ai connector would use.
+		"capture": capture.Report(user, env, now()), "public_url": env.Get("CMF_MCP_ISSUER_URL"),
+		"connector": connectorSeen(r.Context(), env)}, nil
 }
 
 func readRequest(r *http.Request) (*features.Request, error) {
@@ -416,11 +447,15 @@ func (s *uiServer) fix(r *http.Request, out io.Writer) (string, error) {
 		if res.ID != id {
 			continue
 		}
-		if res.Fix == nil || res.Level == checks.OK {
+		fix := res.Fix
+		if fix == nil || res.Level == checks.OK {
+			fix = res.Action // run-any-time actions, such as the self-test
+		}
+		if fix == nil {
 			return "", fmt.Errorf("nothing to fix for %q", id)
 		}
-		fmt.Fprintf(out, "Fixing: %s\n", res.Fix.Label)
-		if err := checks.ApplyFix(ctx, runner, res.Fix, func(s string) { fmt.Fprintln(out, s) }); err != nil {
+		fmt.Fprintf(out, "Running: %s\n", fix.Label)
+		if err := checks.ApplyFix(ctx, runner, fix, func(s string) { fmt.Fprintln(out, s) }); err != nil {
 			return "", err
 		}
 		if id == "docker" {

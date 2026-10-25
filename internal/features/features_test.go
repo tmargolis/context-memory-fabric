@@ -84,27 +84,23 @@ func TestStatesOfToddsInstall(t *testing.T) {
 func TestFreshInstallDefaults(t *testing.T) {
 	m := manifest(t)
 	e := env(t, "")
-	if !m.Enabled(e, "memory-only") || m.Enabled(e, "wiki") || m.Enabled(e, "capture") {
-		t.Fatal("no .env: memory only, no capture")
+	if !m.Enabled(e, "memory-only") || m.Enabled(e, "wiki") || !m.Enabled(e, "capture") {
+		t.Fatal("no .env: memory only; capture is always on")
 	}
 	if Value(e, m.Feature("embeddings").Input("provider")) != "gemini" {
 		t.Fatal("server default embeddings provider")
 	}
 }
 
-func TestTurnOffCaptureStopsThePoller(t *testing.T) {
-	p := plan(t, toddEnv, `{"features": {"capture": {"enabled": false}}}`, Context{Nodes: 10})
-	if !p.OK() {
+// Capture is always on: it can't be turned off, and any Apply brings the
+// poller back if the profile was removed by hand.
+func TestCaptureIsAlwaysOn(t *testing.T) {
+	if p := plan(t, toddEnv, `{"features": {"capture": {"enabled": false}}}`, Context{Nodes: 10}); !hasError(p, "always on") {
 		t.Fatal(p.Errors)
 	}
-	if got := p.Env.Get("COMPOSE_PROFILES"); got != "spark" {
-		t.Fatalf("other profiles kept: %q", got)
-	}
-	if !slices.Equal(p.Stop, []string{"cmf-poller"}) || !slices.Equal(p.Disabled, []string{"capture"}) {
-		t.Fatalf("%+v", p)
-	}
-	if len(p.Changes) != 1 || p.Changes[0].String() != "set COMPOSE_PROFILES=spark (was spark,capture)" {
-		t.Fatalf("%+v", p.Changes)
+	p := plan(t, "COMPOSE_PROFILES=spark\n", `{"features": {"notion": {"enabled": false}}}`, Context{User: t.TempDir()})
+	if got := p.Env.Get("COMPOSE_PROFILES"); got != "spark,capture" {
+		t.Fatalf("%q", got)
 	}
 }
 
@@ -273,12 +269,6 @@ func TestExistingProblemsAreWarningsNotBlockers(t *testing.T) {
 	}
 }
 
-func TestStopsBetweenEnvs(t *testing.T) {
-	m := manifest(t)
-	if got := m.Stops(env(t, toddEnv), env(t, "COMPOSE_PROFILES=spark\n")); !slices.Equal(got, []string{"cmf-poller"}) {
-		t.Fatal(got)
-	}
-}
 
 func TestParseRequestRejectsUnknownTopLevel(t *testing.T) {
 	if _, err := ParseRequest([]byte(`{"feature": {}}`)); err == nil {
@@ -297,5 +287,62 @@ func TestManifestChecksItself(t *testing.T) {
 	bad = `{"groups": ["core"], "features": [{"id": "a", "group": "core", "always_on": true}], "rules": [{"type": "conflicts", "feature": "a", "with": "b"}]}`
 	if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), `unknown feature "b"`) {
 		t.Fatal(err)
+	}
+}
+
+// With OAuth on, turning an AI app on adds a local token the server also
+// accepts; without OAuth, or with one already set, nothing is added.
+func TestClientsGetALocalTokenUnderOAuth(t *testing.T) {
+	oauth := toddEnv + "CMF_MCP_ISSUER_URL=https://mac.tail1.ts.net\n"
+	p := plan(t, oauth, `{"clients": {"claude-code": true}}`, Context{})
+	if tok := p.Env.Get("CMF_MCP_AUTH_TOKEN"); len(tok) != 64 || !p.OK() {
+		t.Fatal(tok, p.Errors)
+	}
+	if !slices.ContainsFunc(p.Changes, func(c Change) bool { return c.Key == "CMF_MCP_AUTH_TOKEN" && c.Secret }) {
+		t.Fatal("the new token must be in the review, masked", p.Changes)
+	}
+	if p := plan(t, toddEnv, `{"clients": {"claude-code": true}}`, Context{}); p.Env.Get("CMF_MCP_AUTH_TOKEN") != "" {
+		t.Fatal("no OAuth, no token")
+	}
+	if p := plan(t, oauth+"CMF_MCP_AUTH_TOKEN=keep\n", `{"clients": {"claude-code": true}}`, Context{}); p.Env.Get("CMF_MCP_AUTH_TOKEN") != "keep" {
+		t.Fatal("an existing token is kept")
+	}
+	if p := plan(t, oauth, `{"clients": {"claude-code": false}}`, Context{}); p.Env.Get("CMF_MCP_AUTH_TOKEN") != "" {
+		t.Fatal("turning an app off adds nothing")
+	}
+}
+
+// Capture on points the poller at the transcript folders that exist; unset,
+// compose mounts empty ones and nothing is captured.
+func TestCaptureOnSetsTranscriptFolders(t *testing.T) {
+	user := t.TempDir()
+	os.MkdirAll(filepath.Join(user, ".codex", "sessions"), 0o700)
+	p := plan(t, "", `{"features": {"notion": {"enabled": false}}}`, Context{User: user})
+	if p.Env.Get("CMF_CAPTURE_CODEX_DIR") != filepath.Join(user, ".codex", "sessions") || p.Env.Get("CMF_CAPTURE_CLAUDE_CODE_DIR") != "" {
+		t.Fatal(p.Env.Get("CMF_CAPTURE_CODEX_DIR"), p.Changes)
+	}
+	// A folder already set is kept.
+	if p := plan(t, toddEnv+"CMF_CAPTURE_CODEX_DIR=/elsewhere\n", `{"features": {"notion": {"enabled": false}}}`, Context{User: user}); p.Env.Get("CMF_CAPTURE_CODEX_DIR") != "/elsewhere" {
+		t.Fatal(p.Changes)
+	}
+}
+
+func TestComingSoonFeaturesAreShownButNeverOn(t *testing.T) {
+	m := manifest(t)
+	for _, id := range []string{"messaging-apps", "google-drive", "microsoft-365"} {
+		if f := m.Feature(id); f == nil || !f.ComingSoon || m.Enabled(env(t, toddEnv), id) {
+			t.Fatal(id)
+		}
+	}
+	if p := plan(t, toddEnv, `{"features": {"google-drive": {"enabled": true}}}`, Context{}); !hasError(p, "Google Drive is coming soon") {
+		t.Fatal(p.Errors)
+	}
+}
+
+func TestAutomaticCardsAreHidden(t *testing.T) {
+	for _, id := range []string{"capture", "memory-only", "own-knowledge"} {
+		if !manifest(t).Feature(id).Hidden {
+			t.Fatal(id, "has no card of its own")
+		}
 	}
 }

@@ -136,7 +136,8 @@ oauth_provider: Optional[CMFOAuthProvider] = None
 _auth_settings: Optional[AuthSettings] = None
 if _oauth_issuer_url and _oauth_password:
     _oauth_issuer_url = _oauth_issuer_url.rstrip("/")
-    oauth_provider = CMFOAuthProvider(consent_base_url=_oauth_issuer_url, consent_password=_oauth_password)
+    oauth_provider = CMFOAuthProvider(consent_base_url=_oauth_issuer_url, consent_password=_oauth_password,
+                                      local_token=get_configured_auth_token())
     _auth_settings = AuthSettings(
         issuer_url=_oauth_issuer_url,
         # Must match the actual resource path (the /mcp endpoint), not just
@@ -155,7 +156,7 @@ if _oauth_issuer_url and _oauth_password:
 # Initialize MCP Server with instructions
 app = MCPServer(
     name="context-memory-fabric",
-    version="0.1.2",
+    version="0.1.3",
     instructions=SERVER_INSTRUCTIONS,
     auth_server_provider=oauth_provider,
     auth=_auth_settings,
@@ -2121,23 +2122,20 @@ def main():
 
         auth_token = get_configured_auth_token()
 
-        # Mutually exclusive: OAuth's own middleware (wired in by the SDK
-        # via auth_server_provider/auth on the MCPServer constructor,
-        # already baked into sse_app()/streamable_http_app() below) protects
-        # the MCP endpoint while correctly leaving /register, /authorize,
-        # /token, and /.well-known/* unauthenticated per spec. Layering the
-        # static-token middleware on top would 401 those discovery/DCR
+        # With OAuth, its own middleware (wired in by the SDK via
+        # auth_server_provider/auth on the MCPServer constructor, already
+        # baked into sse_app()/streamable_http_app() below) protects the MCP
+        # endpoint while correctly leaving /register, /authorize, /token, and
+        # /.well-known/* unauthenticated per spec. The static token is then
+        # checked by the OAuth provider itself (load_access_token), not by
+        # the static-token middleware, which would 401 those discovery/DCR
         # requests before OAuth ever got a chance to run.
         if oauth_provider is not None:
             migrated = oauth_provider.hash_legacy_tokens()
             if migrated:
                 logger.info(f"OAuth: hashed {migrated} legacy plaintext token row(s) at rest.")
             if auth_token:
-                logger.warning(
-                    f"OAuth is configured (CMF_MCP_ISSUER_URL set) -- ignoring {AUTH_TOKEN_ENV_VAR}. "
-                    "The two are mutually exclusive; OAuth-issued access tokens are what protect "
-                    "this endpoint now."
-                )
+                logger.info(f"OAuth is configured; {AUTH_TOKEN_ENV_VAR} is also accepted, for the AI apps on this computer.")
                 auth_token = None
         elif not auth_token:
             logger.warning(

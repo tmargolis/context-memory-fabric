@@ -12,10 +12,11 @@ promote_auto_accepted_memories -- full read/write access to the memory graph.
 This is the static shared-secret fallback, for direct/manual HTTP access.
 The client apps (Claude Desktop, ChatGPT, Gemini) connect through the OAuth
 authorization server in server.core.oauth_provider instead, since none of
-their connector UIs accept a static bearer token. The two are mutually
-exclusive on the network transport: when OAuth is configured
-(CMF_MCP_ISSUER_URL), server/mcp.py ignores CMF_MCP_AUTH_TOKEN and this
-middleware isn't installed.
+their connector UIs accept a static bearer token. When OAuth is configured
+(CMF_MCP_ISSUER_URL) this middleware isn't installed (it would 401 OAuth's
+discovery and registration routes); the OAuth provider accepts
+CMF_MCP_AUTH_TOKEN itself instead, so the AI apps on this computer keep
+working beside remote connectors.
 """
 
 import os

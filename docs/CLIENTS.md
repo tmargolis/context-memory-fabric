@@ -43,7 +43,7 @@ Instead of letting each client spawn its own `stdio` subprocess (§1–3), you c
 
 ### Auth: OAuth 2.1 (recommended) or a static bearer token
 
-`stdio` (§1–3's default configs) is trusted by process ownership alone — only something your OS already let spawn the subprocess can talk to it. `streamable-http`/`sse` have no such boundary: anyone who can reach the port can call every tool, full read/write, unless one of the two mechanisms below is configured. They're **mutually exclusive** — if both are set, OAuth wins and the static token is ignored (with a startup warning).
+`stdio` (§1–3's default configs) is trusted by process ownership alone — only something your OS already let spawn the subprocess can talk to it. `streamable-http`/`sse` have no such boundary: anyone who can reach the port can call every tool, full read/write, unless one of the two mechanisms below is configured. They work together: with OAuth on, the static token is still accepted, and it's how the AI apps on this computer get in (CMF management generates it when you turn an app on while remote access is on).
 
 #### OAuth 2.1 (`CMF_MCP_ISSUER_URL` + `CMF_MCP_OAUTH_PASSWORD`) — use this for GUI clients
 

@@ -65,12 +65,14 @@ func fakeMachine(t *testing.T, dockerUp bool) *run.Fake {
 	runner, goos = fake, "darwin"
 	appHome := t.TempDir() // AI app configs live here, never in the real home folder
 	clientEnv = func() clients.Env { return clients.Env{Home: appHome, OS: "darwin"} }
+	userHome = func() (string, error) { return appHome, nil } // transcript folders too
 	getHealth = func(context.Context, string) ([]byte, error) {
 		return []byte(`{"status":"ok","graph":"g","falkordb":{"reachable":true,"graph_exists":true},"clients_seen":[{"harness":"codex","last_seen":"2026-10-24T12:00:00Z"}]}`), nil
 	}
 	now = func() time.Time { return time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC) }
 	t.Cleanup(func() {
 		runner, getHealth, goos, now = run.Exec{}, probe.HTTPGet, runtime.GOOS, time.Now
+		userHome = os.UserHomeDir
 		clientEnv = defaultClientEnv
 	})
 	return fake
@@ -169,19 +171,16 @@ func TestApplyDryRunCancelAndYes(t *testing.T) {
 	fake := fakeMachine(t, true)
 	fake.Answers["docker compose*"] = run.Result{}
 	home := os.Getenv("CMF_HOME")
-	os.WriteFile(filepath.Join(home, ".env"), []byte("COMPOSE_PROFILES=capture\nGEMINI_API_KEY=g-123456789\n"), 0o600)
-	file := filepath.Join(t.TempDir(), "off.json")
-	os.WriteFile(file, []byte(`{"features": {"capture": {"enabled": false}}}`), 0o600)
+	os.WriteFile(filepath.Join(home, ".env"), []byte("COMPOSE_PROFILES=capture\nGEMINI_API_KEY=g-123456789\nCMF_LLM_PROVIDER=local\nCMF_LOCAL_BASE_URL=http://127.0.0.1:1234/v1\n"), 0o600)
+	file := filepath.Join(t.TempDir(), "llm.json")
+	os.WriteFile(file, []byte(`{"features": {"llm": {"providers": ["gemini"]}}}`), 0o600)
 	sleep, healthTimeout = func(time.Duration) {}, time.Second
 	t.Cleanup(func() { sleep, healthTimeout, stdin = time.Sleep, 3*time.Minute, os.Stdin })
 
 	var out, errOut bytes.Buffer
 	if code := runCLI([]string{"apply", file, "--dry-run"}, &out, &errOut); code != 0 ||
-		!strings.Contains(out.String(), "set COMPOSE_PROFILES=empty (was capture)") && !strings.Contains(out.String(), "set COMPOSE_PROFILES= (was capture)") {
+		!strings.Contains(out.String(), "set CMF_LLM_PROVIDERS=gemini") || !strings.Contains(out.String(), "Dry run") {
 		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
-	}
-	if !strings.Contains(out.String(), "Stop the cmf-poller container") || !strings.Contains(out.String(), "Dry run") {
-		t.Fatal(out.String())
 	}
 
 	stdin = strings.NewReader("n\n")
@@ -189,7 +188,7 @@ func TestApplyDryRunCancelAndYes(t *testing.T) {
 	if code := runCLI([]string{"apply", file}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "cancelled") {
 		t.Fatalf("code %d %s", code, errOut.String())
 	}
-	if data, _ := os.ReadFile(filepath.Join(home, ".env")); !strings.Contains(string(data), "COMPOSE_PROFILES=capture") {
+	if data, _ := os.ReadFile(filepath.Join(home, ".env")); strings.Contains(string(data), "CMF_LLM_PROVIDERS") {
 		t.Fatal("cancel writes nothing")
 	}
 
@@ -199,7 +198,7 @@ func TestApplyDryRunCancelAndYes(t *testing.T) {
 	}
 	out.Reset()
 	runCLI([]string{"restore"}, &out, &errOut)
-	if !strings.Contains(out.String(), "20261024-130000  cmf apply: turn off capture") {
+	if !strings.Contains(out.String(), "20261024-130000  cmf apply:") {
 		t.Fatal(out.String())
 	}
 }

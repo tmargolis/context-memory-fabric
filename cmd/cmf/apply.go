@@ -71,7 +71,9 @@ func runFeatures(args []string, out io.Writer) error {
 			state = "on"
 		}
 		kind := ""
-		if s.Derived {
+		if s.ComingSoon {
+			state, kind = "-", ", coming soon"
+		} else if s.Derived {
 			kind = ", follows the others"
 		} else if s.AlwaysOn {
 			kind = ", always"
@@ -203,6 +205,9 @@ func planRequest(ctx context.Context, req *features.Request) (*requestPlan, erro
 		return nil, err
 	}
 	pctx := features.Context{Nodes: facts.Nodes, Home: h.Dir}
+	if user, err := userHome(); err == nil {
+		pctx.User = user
+	}
 	if state, err := mode.Load(h); err == nil && state.Mode.Mode == mode.Developer {
 		pctx.Repo = state.Mode.Repo
 	}

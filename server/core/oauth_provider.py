@@ -51,6 +51,9 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from server.core.oauth_store import OAuthStore
 
+# The client id an accepted CMF_MCP_AUTH_TOKEN is reported under.
+LOCAL_CLIENT_ID = "cmf-local"
+
 _AUTH_CODE_TTL_SECONDS = 5 * 60
 _PENDING_REQUEST_TTL_SECONDS = 10 * 60
 ACCESS_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days -- personal, low-churn clients
@@ -65,10 +68,24 @@ class PendingRequest:
 
 
 class CMFOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]):
-    def __init__(self, *, consent_base_url: str, consent_password: str, store: Optional[OAuthStore] = None) -> None:
+    def __init__(
+        self,
+        *,
+        consent_base_url: str,
+        consent_password: str,
+        store: Optional[OAuthStore] = None,
+        local_token: Optional[str] = None,
+    ) -> None:
         self._consent_base_url = consent_base_url.rstrip("/")
         self._consent_password = consent_password
         self._store = store or OAuthStore()
+        # CMF_MCP_AUTH_TOKEN, for the AI apps on this computer (CMF management
+        # writes it into their entries). Accepted as a long-lived access token
+        # beside the OAuth-issued ones, so turning remote access on doesn't
+        # lock local apps out. Behind Docker and a tunnel every request comes
+        # from the same gateway address, so the token, not the source, is
+        # what tells them apart.
+        self._local_token = local_token or None
         self._pending: dict[str, PendingRequest] = {}
         self._codes: dict[str, AuthorizationCode] = {}
 
@@ -227,6 +244,9 @@ class CMFOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Refre
     # -- token verification (drives ProviderTokenVerifier too) -------------
 
     async def load_access_token(self, token: str) -> Optional[AccessToken]:
+        if self._local_token and secrets.compare_digest(token.encode("utf-8"), self._local_token.encode("utf-8")):
+            return AccessToken(token=token, client_id=LOCAL_CLIENT_ID, scopes=[], expires_at=None,
+                               resource=f"{self._consent_base_url}/mcp")
         row = self._store.get_access_token(token)
         if row is None:
             return None
@@ -242,6 +262,8 @@ class CMFOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Refre
         )
 
     async def revoke_token(self, token: Union[AccessToken, RefreshToken]) -> None:
+        if isinstance(token, AccessToken) and token.client_id == LOCAL_CLIENT_ID:
+            return  # the local token lives in .env; it isn't revoked over OAuth
         if isinstance(token, AccessToken):
             self._store.delete_access_token(token.token)
         else:

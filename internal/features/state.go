@@ -73,6 +73,9 @@ func (m *Manifest) enabled(env *home.Env, id string, visiting map[string]int) (b
 	if f.AlwaysOn {
 		return true, nil
 	}
+	if f.ComingSoon {
+		return false, nil
+	}
 	if visiting[id] > 0 {
 		return false, fmt.Errorf("feature %q's enabled_when refers back to itself", id)
 	}
@@ -131,6 +134,8 @@ type State struct {
 	Enabled     bool         `json:"enabled"`
 	AlwaysOn    bool         `json:"always_on,omitempty"`
 	Derived     bool         `json:"derived,omitempty"`
+	ComingSoon  bool         `json:"coming_soon,omitempty"`
+	Hidden      bool         `json:"hidden,omitempty"`
 	Inputs      []InputState `json:"inputs,omitempty"`
 	CostNote    string       `json:"cost_note,omitempty"`
 }
@@ -140,7 +145,7 @@ func (m *Manifest) States(env *home.Env) []State {
 	var out []State
 	for _, f := range m.Features {
 		s := State{ID: f.ID, Group: f.Group, Label: f.Label, Description: f.Description,
-			Enabled: m.Enabled(env, f.ID), AlwaysOn: f.AlwaysOn, Derived: f.Derived, CostNote: f.CostNote}
+			Enabled: m.Enabled(env, f.ID), AlwaysOn: f.AlwaysOn, Derived: f.Derived, ComingSoon: f.ComingSoon, Hidden: f.Hidden, CostNote: f.CostNote}
 		for i := range f.Inputs {
 			in := &f.Inputs[i]
 			value := Value(env, in)

@@ -402,3 +402,40 @@ class TestEndToEndHTTP(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocalToken(OAuthProviderBase):
+    """CMF_MCP_AUTH_TOKEN beside OAuth: the AI apps on this computer keep
+    working once remote access (OAuth) is on."""
+
+    LOCAL = "a" * 64
+
+    def setUp(self):
+        super().setUp()
+        self.provider = CMFOAuthProvider(
+            consent_base_url="http://localhost/", consent_password=PASSWORD, store=self.store, local_token=self.LOCAL
+        )
+
+    async def test_local_token_is_accepted_without_expiry(self):
+        token = await self.provider.load_access_token(self.LOCAL)
+        self.assertIsNotNone(token)
+        self.assertEqual(token.client_id, "cmf-local")
+        self.assertIsNone(token.expires_at)
+        self.assertEqual(token.resource, "http://localhost/mcp")
+
+    async def test_near_misses_are_refused(self):
+        for wrong in ("a" * 63, "a" * 65, "b" + "a" * 63, ""):
+            self.assertIsNone(await self.provider.load_access_token(wrong))
+
+    async def test_oauth_tokens_still_work(self):
+        tokens = await self._tokens_for(_client())
+        self.assertIsNotNone(await self.provider.load_access_token(tokens.access_token))
+
+    async def test_revoking_the_local_token_is_a_no_op(self):
+        token = await self.provider.load_access_token(self.LOCAL)
+        await self.provider.revoke_token(token)
+        self.assertIsNotNone(await self.provider.load_access_token(self.LOCAL))
+
+    async def test_no_local_token_configured_accepts_nothing_extra(self):
+        plain = CMFOAuthProvider(consent_base_url="http://localhost/", consent_password=PASSWORD, store=self.store)
+        self.assertIsNone(await plain.load_access_token(self.LOCAL))

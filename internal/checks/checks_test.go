@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/capture"
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
 	"github.com/tmargolis/context-memory-fabric/internal/probe"
@@ -60,8 +62,8 @@ func TestHealthyInstallIsGreen(t *testing.T) {
 		t.Fatal("expected all ok / n/a")
 	}
 	r := byID(results)
-	if !strings.Contains(r["graph"].Detail, "6769 nodes") || !strings.Contains(r["apps-seen"].Detail, "claude_desktop (13 h ago)") {
-		t.Fatalf("%+v %+v", r["graph"], r["apps-seen"])
+	if !strings.Contains(r["graph"].Detail, "6769 nodes") || r["app-claude-desktop"].Level != OK || !strings.Contains(r["app-claude-desktop"].Detail, "seen        13 h ago") {
+		t.Fatalf("%+v %+v", r["graph"], r["app-claude-desktop"])
 	}
 	if !strings.Contains(r["launchd"].Detail, "com.cmf.spark-tunnel") {
 		t.Fatal("the user's own jobs are listed, not touched")
@@ -178,11 +180,62 @@ func TestFailedBackgroundWritesWarn(t *testing.T) {
 	}
 }
 
-func TestNoAppsSeenWarns(t *testing.T) {
+// One row per AI app: on (OK) when its entry works or it called CMF;
+// otherwise n/a, saying "off" when the app is on this computer.
+func TestAppRows(t *testing.T) {
 	f := healthy()
-	f.Health.ClientsSeen[0].LastSeen = at.Add(-30 * time.Hour)
-	if byID(Evaluate(f))["apps-seen"].Level != Warn {
-		t.Fatal("stale client")
+	f.Health.ClientsSeen = nil
+	f.Clients = []clients.State{
+		{ID: "claude-code", Label: "Claude Code", Path: "/u/.claude.json", Installed: true, Exists: true,
+			Entries: []clients.Entry{{Name: "context-memory-fabric", URL: "http://127.0.0.1:8000/mcp", CMF: true, Correct: true, Kind: "url"}}},
+		{ID: "cursor", Label: "Cursor", Path: "/u/.cursor/mcp.json", Installed: true},
+		{ID: "vscode", Label: "VS Code"},
+	}
+	f.Capture = []capture.SourceState{
+		{Source: capture.Source{ID: "claude_code", EnvKey: "CMF_CAPTURE_CLAUDE_CODE_DIR"}, Present: true, Hook: "plugin", Poller: true,
+			Folder: "/u/.claude/projects", Last: at.Add(-3 * time.Minute)},
+		{Source: capture.Source{ID: "codex", EnvKey: "CMF_CAPTURE_CODEX_DIR"}, Present: true, Hook: "python", Worker: true},
+	}
+	r := byID(Evaluate(f))
+	code := r["app-claude-code"]
+	for _, want := range []string{"connection  local entry in /u/.claude.json", "hook        the cmf-capture plugin (Python)", "poller      /u/.claude/projects · last transcript 3 min ago"} {
+		if code.Level != OK || !strings.Contains(code.Detail, want) {
+			t.Fatalf("%q in %+v", want, code)
+		}
+	}
+	if c := r["app-cursor"]; c.Level != NA || !strings.HasPrefix(c.Detail, "not connected\nconnection  no CMF entry") {
+		t.Fatalf("%+v", c)
+	}
+	if _, shown := r["app-vscode"]; shown {
+		t.Fatal("an app that isn't on this computer gets no row")
+	}
+	if !strings.Contains(r["capture"].Detail, "reading") {
+		t.Fatalf("%+v", r["capture"])
+	}
+	if r["selftest"].Action == nil || r["selftest"].Fix != nil {
+		t.Fatalf("the self-test can be run any time: %+v", r["selftest"])
+	}
+
+	// A claude.ai connector: Desktop calls CMF with no local entry, so Claude
+	// Code (same account) has it too; Chat and Cowork share one row.
+	f.Clients = append(f.Clients, clients.State{ID: "claude-desktop", Label: "Claude Desktop", Path: "/u/cfg.json", Installed: true})
+	f.Clients[0].Entries = nil
+	f.Health.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-time.Hour)}}
+	r = byID(Evaluate(f))
+	if c := r["app-claude-code"]; c.Level != OK || !strings.Contains(c.Detail, "the claude.ai connector") {
+		t.Fatalf("%+v", c)
+	}
+	if c := r["app-claude-desktop"]; c.Title != "Claude Desktop (Chat and Cowork)" || c.Level != OK || !strings.Contains(c.Detail, "the claude.ai connector (no local entry") {
+		t.Fatalf("%+v", c)
+	}
+	if _, old := r["app-cowork"]; old {
+		t.Fatal("Cowork is part of the Claude Desktop row")
+	}
+	if c := r["app-codex"]; !strings.Contains(c.Detail, "older Python checkpoint hook; plus an older host worker") || !strings.Contains(c.Detail, "CMF_CAPTURE_CODEX_DIR isn't set") {
+		t.Fatalf("%+v", c)
+	}
+	if Worst(Evaluate(f)) != OK {
+		t.Fatal("apps that are off don't make Status unhealthy")
 	}
 }
 
@@ -294,6 +347,9 @@ func TestEveryRowHasAboutAndATarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids := map[string]bool{"group:apps": true}
+	for _, id := range append(clients.IDs(), "connector") { // the Features page's connector card
+		ids["client:"+id] = true
+	}
 	for _, g := range m.Groups {
 		ids["group:"+g] = true
 	}
@@ -310,5 +366,22 @@ func TestEveryRowHasAboutAndATarget(t *testing.T) {
 		if r.Feature == "" && r.Doc == "" && r.ID != "selftest" {
 			t.Errorf("%s has nowhere to link", r.ID)
 		}
+	}
+}
+
+func TestConnectorRow(t *testing.T) {
+	f := healthy()
+	delete(f.Env, "CMF_MCP_ISSUER_URL")
+	if r := byID(Evaluate(f))["connector"]; r.Level != NA || !strings.Contains(r.Detail, "needs remote access") {
+		t.Fatalf("%+v", r)
+	}
+	f.Env["CMF_MCP_ISSUER_URL"] = "https://mac.tail1.ts.net/"
+	f.Health.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-2 * time.Hour)}}
+	if r := byID(Evaluate(f))["connector"]; r.Level != OK || !strings.Contains(r.Detail, "https://mac.tail1.ts.net/mcp") || !strings.Contains(r.Detail, "2 h ago") {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.ClientsSeen = nil
+	if r := byID(Evaluate(f))["connector"]; r.Level != NA || !strings.Contains(r.Detail, "Settings → Connectors") {
+		t.Fatalf("%+v", r)
 	}
 }

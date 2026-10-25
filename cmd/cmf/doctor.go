@@ -38,11 +38,20 @@ func collect(ctx context.Context) (probe.Facts, error) {
 	return f, nil
 }
 
+// oneLine folds a multi-line detail (the AI app rows) for the terminal.
+func oneLine(detail string) string {
+	parts := strings.Split(detail, "\n")
+	for i, p := range parts {
+		parts[i] = strings.Join(strings.Fields(p), " ")
+	}
+	return strings.Join(parts, " · ")
+}
+
 var marks = map[checks.Level]string{checks.OK: "ok  ", checks.Warn: "WARN", checks.Fail: "FAIL", checks.NA: "n/a "}
 
 func printResults(out io.Writer, results []checks.Result, details bool) {
 	for _, r := range results {
-		fmt.Fprintf(out, "[%s] %s: %s\n", marks[r.Level], r.Title, r.Detail)
+		fmt.Fprintf(out, "[%s] %s: %s\n", marks[r.Level], r.Title, oneLine(r.Detail))
 		if details && r.Fix != nil && r.Level != checks.OK {
 			fmt.Fprintf(out, "       Fix (cmf doctor --fix=%s): %s\n", r.ID, r.Fix.Label)
 			for _, s := range r.Fix.Steps {

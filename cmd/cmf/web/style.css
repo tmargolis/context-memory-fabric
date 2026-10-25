@@ -89,6 +89,7 @@ a.check-title:hover, a.check-title:focus-visible { color: var(--accent); text-de
   font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--code); border-radius: 6px; padding: 4px 8px; margin-top: 6px;
   display: inline-block; max-width: 100%; overflow-wrap: anywhere;
+  white-space: pre-wrap; /* the AI app rows are aligned lines */
 }
 
 .group { margin: 24px 0; scroll-margin-top: 72px; }
@@ -100,8 +101,13 @@ a.check-title:hover, a.check-title:focus-visible { color: var(--accent); text-de
 .group.flash { animation: none; }
 .group.flash > h3 { color: var(--accent); }
 .card.changed { border-color: var(--accent); }
+.card.soon { border-style: dashed; }
+.card.soon .card-title { color: var(--muted); }
+.badge.soon { border-style: dashed; }
 .card-head { display: flex; gap: 12px; align-items: flex-start; }
 .card-head .text { flex: 1; }
+.card-desc.note { margin-top: 10px; }
+.card-desc.note code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
 .card-title { font-weight: 600; }
 .card-desc { color: var(--muted); font-size: 14px; }
 .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }

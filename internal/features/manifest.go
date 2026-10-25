@@ -28,6 +28,12 @@ type Feature struct {
 	Description string   `json:"description"`
 	AlwaysOn    bool     `json:"always_on"`
 	Derived     bool     `json:"derived"` // on or off as a consequence of other features
+	// ComingSoon: shown on the Features page with no switch; always off and
+	// can't be requested.
+	ComingSoon bool `json:"coming_soon"`
+	// Hidden: no card of its own on the Features page (it follows other
+	// choices, or the AI app cards set it); `cmf features` still lists it.
+	Hidden bool `json:"hidden"`
 	EnabledWhen *Cond    `json:"enabled_when"`
 	Inputs      []Input  `json:"inputs"`
 	OnEnable    *Writes  `json:"on_enable"`
@@ -158,6 +164,9 @@ func (m *Manifest) check() error {
 			return fmt.Errorf("%s: unknown group %q", f.ID, f.Group)
 		}
 		switch {
+		case f.ComingSoon && (f.AlwaysOn || f.Derived || f.EnabledWhen != nil || f.OnEnable != nil || f.OnDisable != nil || len(f.Inputs) > 0):
+			return fmt.Errorf("%s: a coming-soon feature has a label and description only", f.ID)
+		case f.ComingSoon:
 		case f.AlwaysOn && (f.Derived || f.EnabledWhen != nil):
 			return fmt.Errorf("%s: always_on features have no enabled_when", f.ID)
 		case f.Derived && (f.EnabledWhen == nil || f.OnEnable != nil || f.OnDisable != nil || len(f.Inputs) > 0):

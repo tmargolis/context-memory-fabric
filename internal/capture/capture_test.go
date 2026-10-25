@@ -165,12 +165,24 @@ func TestReport(t *testing.T) {
 	write(t, HookFile("claude_code", user), `{"enabledPlugins":{"cmf-capture@context-memory-fabric":true}}`)
 	env := &home.Env{}
 	env.Set("COMPOSE_PROFILES", "spark,capture")
+	// Unset folders: the poller mounts empty ones, and turning capture on
+	// would point it at the real ones.
+	if s := Report(user, env, now)[0]; s.Poller || !strings.Contains(s.Note, "CMF_CAPTURE_CLAUDE_CODE_DIR isn't set") {
+		t.Fatalf("%+v", s)
+	}
+	defaults := DefaultFolders(user, env)
+	if defaults["CMF_CAPTURE_CLAUDE_CODE_DIR"] != filepath.Join(user, ".claude", "projects") || defaults["CMF_CAPTURE_CODEX_DIR"] == "" || defaults["CMF_CAPTURE_ANTIGRAVITY_DIR"] != "" {
+		t.Fatal(defaults)
+	}
+	for k, v := range defaults {
+		env.Set(k, v)
+	}
 	states := Report(user, env, now)
 	by := map[string]SourceState{}
 	for _, s := range states {
 		by[s.ID] = s
 	}
-	if s := by["claude_code"]; s.Method != "checkpoint hook and poller (full transcript)" || s.DailyTok != 1000 || !strings.Contains(s.Note, "twice on purpose") {
+	if s := by["claude_code"]; s.Method != "checkpoint hook and poller (full transcript)" || s.DailyTok != 1000 || !strings.Contains(s.Note, "twice on purpose") || s.Folder == "" || s.Last.IsZero() {
 		t.Fatalf("%+v", s)
 	}
 	if s := by["codex"]; s.Method != "poller" {

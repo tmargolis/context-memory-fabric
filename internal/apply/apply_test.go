@@ -34,13 +34,16 @@ func setup(t *testing.T, health func() ([]byte, error)) (Executor, *run.Fake, *[
 	return e, fake, &log
 }
 
+// capturePlan removes the capture profile and stops the poller. No feature
+// does that since capture became always on (v0.1.3), so the plan is built by
+// hand to keep the stop-and-roll-back path covered.
 func capturePlan(t *testing.T, e Executor) *features.Plan {
-	env, _ := home.ReadEnv(e.Home.EnvFile())
-	req, _ := features.ParseRequest([]byte(`{"features": {"capture": {"enabled": false}}}`))
-	p := e.Manifest.Plan(env, req, features.Context{})
-	if !p.OK() {
-		t.Fatal(p.Errors)
+	env, err := home.ReadEnv(e.Home.EnvFile())
+	if err != nil {
+		t.Fatal(err)
 	}
+	p := &features.Plan{Env: env.Clone(), Stop: []string{"cmf-poller"}}
+	p.Env.Set("COMPOSE_PROFILES", "")
 	return p
 }
 
@@ -110,21 +113,5 @@ func TestApplyRollsBackWhenComposeFails(t *testing.T) {
 	_, err := e.Apply(context.Background(), capturePlan(t, e), "turn off capture")
 	if err == nil || !strings.Contains(err.Error(), "no such service") || !strings.Contains(err.Error(), "restored") {
 		t.Fatal(err)
-	}
-}
-
-func TestRestoreStopsWhatItTurnsOff(t *testing.T) {
-	e, fake, _ := setup(t, func() ([]byte, error) { return []byte(`{"status":"ok"}`), nil })
-	b, _ := e.Home.NewBackup(time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC))
-	os.WriteFile(e.Home.EnvFile(), []byte("COMPOSE_PROFILES=\n"), 0o600)
-	b.Save(e.Home.EnvFile())
-	os.WriteFile(e.Home.EnvFile(), []byte("COMPOSE_PROFILES=capture\n"), 0o600)
-
-	undo, err := e.Restore(context.Background(), b.Stamp)
-	if err != nil || undo == nil {
-		t.Fatal(err)
-	}
-	if !fake.Ran("docker compose --project-directory " + e.Home.Dir + " stop cmf-poller") {
-		t.Fatalf("%+v", fake.Calls)
 	}
 }
