@@ -196,6 +196,46 @@ def run_startup_check(**kwargs: Any) -> bool:
     return False
 
 
+# --- port guard (item 1.6) ----------------------------------------------------------------------
+
+def port_problem(host: str, port: int) -> Optional[str]:
+    """One sentence when host:port can't be bound (another process holds it), else None.
+
+    Checked before serving so a second CMF (an old launchd job, a host server
+    next to the Docker stack) exits once with the reason, instead of uvicorn
+    failing to bind and KeepAlive restarting it forever.
+    """
+    import errno
+    import socket
+
+    taken = (
+        f"Another process is already on port {port}, so this CMF server can't start. "
+        "Run `cmf status` (or open CMF Setup) to see which one it is."
+    )
+    # Something answering counts even when a bind would succeed: on macOS,
+    # SO_REUSEADDR lets 127.0.0.1:port bind next to a listener on 0.0.0.0:port.
+    probe_host = {"0.0.0.0": "127.0.0.1", "::": "::1", "": "127.0.0.1"}.get(host, host)
+    try:
+        with socket.create_connection((probe_host, port), timeout=0.5):
+            return taken
+    except OSError:
+        pass
+
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        # Same option uvicorn sets, so a port in TIME_WAIT isn't reported as taken.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+    except OSError as e:
+        if e.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1)):
+            return taken
+        return f"Can't listen on {host}:{port} ({e.strerror or e})."
+    finally:
+        sock.close()
+    return None
+
+
 # --- live provider tests (on request) -----------------------------------------------------------
 
 def _models_request(provider: str, config: CMFConfig, role: str) -> tuple[str, dict[str, str]]:

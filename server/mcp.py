@@ -2078,10 +2078,16 @@ def main():
     # live GRAPH.CONFIG SET, silently puts TIMEOUT back at 1000 ms; say so
     # here rather than in a stream of "Query timed out" recalls.
     log_query_timeout_check()
+    # Item 1.6: a second server on the same port exits once with the reason
+    # instead of crash-looping under launchd KeepAlive. Checked first: it is
+    # instant, and the config check below may wait for FalkorDB.
+    from server.core.startup_check import port_problem, run_startup_check
+
+    if args.transport in ("sse", "streamable-http") and (problem := port_problem(args.host, args.port)):
+        logger.error(problem)
+        sys.exit(3)
     # Item 1.1: one plain sentence per configuration problem, then exit,
     # instead of serving tools that will fail on first use.
-    from server.core.startup_check import run_startup_check
-
     if not run_startup_check():
         sys.exit(2)
 

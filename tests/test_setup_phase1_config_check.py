@@ -194,3 +194,30 @@ def test_health_provider_tests_on_request(tmp_path, monkeypatch):
     with a, b, patch.object(startup_check, "provider_tests", return_value=[{"role": "LLM", "ok": True}]):
         snap = server_status.snapshot(provider_tests=True)
     assert snap["provider_tests"] == [{"role": "LLM", "ok": True}]
+
+
+# --- 1.6: port guard ------------------------------------------------------------------------------
+
+
+def test_port_guard_free_port():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert startup_check.port_problem("127.0.0.1", port) is None
+
+
+@pytest.mark.parametrize("listen_on", ["127.0.0.1", "0.0.0.0"])
+def test_port_guard_taken(listen_on):
+    import socket
+
+    with socket.socket() as s:
+        s.bind((listen_on, 0))
+        s.listen()
+        port = s.getsockname()[1]
+        problem = startup_check.port_problem("127.0.0.1", port)
+    assert problem == (
+        f"Another process is already on port {port}, so this CMF server can't start. "
+        "Run `cmf status` (or open CMF Setup) to see which one it is."
+    )
