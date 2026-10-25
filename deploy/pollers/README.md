@@ -26,7 +26,7 @@ The pollers read every transcript in full. To capture without reading transcript
 ## Before you install
 
 > [!IMPORTANT]
-> These jobs are for **Developer mode** (a from-source install, [docs/DEVELOPER-SETUP.md](../../docs/DEVELOPER-SETUP.md)). If you run the Docker preview, don't install them, and above all not `--mcp-server`: it starts a second CMF server on port 8000 that fights the preview's. A Docker version of the poller is planned.
+> These jobs are for **Developer mode** (a from-source install, [docs/DEVELOPER-SETUP.md](../../docs/DEVELOPER-SETUP.md)). If you use the `~/.cmf` stack (the [Quickstart](../../docs/QUICKSTART.md)), don't install them, and above all not `--mcp-server`: it starts a second CMF server on port 8000 that fights the stack's. The stack's `cmf-poller` container already does their job.
 
 1. **Set up CMF first** ([docs/DEVELOPER-SETUP.md](../../docs/DEVELOPER-SETUP.md)): the virtualenv (`uv sync`), FalkorDB, and a `.env`. The jobs run the repo's own interpreter, `.venv/bin/python3` (Windows: `.venv\Scripts\python.exe`), from the repo folder, so they read the same `.env`.
 2. **Pick the extraction LLM for background capture.** The pollers extract with `CMF_CAPTURE_LLM_PROVIDER`, not `CMF_LLM_PROVIDER`, and it defaults to `local`. Without a local model server, set it in `.env` to the provider whose key you have (`anthropic`, `openai` or `gemini`). Unattended capture spends that provider's quota: one long session is dozens of extraction calls.

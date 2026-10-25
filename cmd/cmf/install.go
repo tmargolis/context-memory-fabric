@@ -83,6 +83,6 @@ func runInstall(args []string, out io.Writer) error {
 	if _, err := mode.Apply(h, changes, now()); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Installed. Next: choose a model provider and its key under Features (`cmf` opens CMF Setup), then Apply; that starts the stack.")
+	fmt.Fprintln(out, "Installed. Next: choose a model provider and its key under Features (`cmf` opens CMF management), then Apply; that starts the stack.")
 	return nil
 }

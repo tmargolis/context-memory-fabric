@@ -112,3 +112,17 @@ func TestUseURL(t *testing.T) {
 		t.Fatal(string(u.Env.Bytes()))
 	}
 }
+
+// The FalkorDB Browser button: 8443 serves port 3001 on Todd's tailnet.
+func TestURLForAServedPort(t *testing.T) {
+	ts := detect(t, toddFunnel)
+	if got := ts.URLFor(3001); got != "https://mac.tail1.ts.net:8443" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ts.URLFor(8000); got != "https://mac.tail1.ts.net" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ts.URLFor(6379); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}

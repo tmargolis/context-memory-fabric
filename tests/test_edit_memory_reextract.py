@@ -202,7 +202,7 @@ class TestEditMemoryReextract(unittest.IsolatedAsyncioTestCase):
         """The default registry path used to resolve under server/ and never
         exist, so sync was skipped. Tests get a temp path via conftest."""
         reg = mg.default_import_registry_path()
-        self.assertNotEqual(reg.resolve(), (Path(mg._REPO_ROOT) / "imports/state/import_registry.json").resolve())
+        self.assertNotEqual(reg.resolve(), (mg.imports_dir() / "state" / "import_registry.json").resolve())
         reg.write_text(json.dumps({"records": {"fp1": {
             "episode_name": self.name_a, "text": "test value is ALPHA", "reference_time": NOW}}}))
         await self._edit(_FakeGraphiti(self.driver), new_reference_time="2026-09-17")

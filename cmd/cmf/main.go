@@ -1,4 +1,4 @@
-// Command cmf is CMF Setup's engine and CLI (docs/setup-simplification-plan.md,
+// Command cmf is CMF management's engine and CLI (docs/setup-simplification-plan.md,
 // Phase 3). The GUI (item 3.6) will drive the same packages.
 package main
 
@@ -29,7 +29,7 @@ var commands = map[string]command{
 	"clients":     {"each AI app's CMF entry: list, set / remove <app>, fix duplicates", runClients},
 	"install":     {"set up a fresh install in ~/.cmf (Standard mode); Features → Apply starts it", runInstall},
 	"migrate":     {"move a repo-based install (host or preview stack) into ~/.cmf: plan, apply, restore <stamp>", runMigrate},
-	"ui":          {"open CMF Setup in the browser (local only; --no-open prints the address)", runUI},
+	"ui":          {"open CMF management in the browser (local only; --no-open prints the address)", runUI},
 	"bridge":      {"relay an AI app's stdio MCP to the CMF server (what Claude Desktop's entry runs)", runBridge},
 	"remote":      {"remote access for connectors: status, enable tailscale, use <url>, disable", runRemote},
 	"capture":     {"how each AI app is captured, estimates, prompt budget; hook install / remove; agent block", runCapture},
@@ -48,7 +48,7 @@ func usage(out io.Writer) {
 	for _, name := range names {
 		fmt.Fprintf(out, "  %-12s %s\n", name, commands[name].summary)
 	}
-	fmt.Fprintln(out, "\nWith no command, cmf opens CMF Setup in your browser (same as `cmf ui`).")
+	fmt.Fprintln(out, "\nWith no command, cmf opens CMF management in your browser (same as `cmf ui`).")
 	fmt.Fprintln(out, "CMF_HOME picks the install folder (default ~/.cmf).")
 }
 

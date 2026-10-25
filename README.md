@@ -46,30 +46,9 @@ episodic       factual       mutation /       durable          context        pr
 
 ## Quickstart
 
-**[docs/QUICKSTART.md](docs/QUICKSTART.md)**: install Docker Desktop, download CMF Setup, pick your features, Apply, and ask Claude to "Run the CMF self-test". No clone, no config files.
+**[docs/QUICKSTART.md](docs/QUICKSTART.md)**: install Docker Desktop, download Context Memory Fabric management, pick your features, Apply, and ask Claude to "Run the CMF self-test". No clone, no config files.
 
-### From a checkout (Docker Compose preview)
-
-Until the first CMF Setup release is published, or to try CMF from source, use the self-contained Compose preview, which includes a pre-configured FalkorDB instance and a fictional starter knowledge wiki:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/tmargolis/context-memory-fabric.git
-cd context-memory-fabric
-
-# 2. Copy the configuration template
-cp .env.example .env
-
-# 3. Add your Gemini API key to .env
-# GEMINI_API_KEY=AIzaSy...
-
-# 4. Start the stack
-docker compose -f docker-compose.preview.yml up -d
-```
-
-Your CMF MCP server is now running at `http://localhost:8000/mcp`.
-
-For client connection instructions (Claude Desktop, Cursor) and how to check that memories are being saved, see the **[Installation & Setup Guide](docs/SETUP.md)**. To run CMF from source instead, see [Developer setup](docs/DEVELOPER-SETUP.md); don't install both.
+For client connection instructions (Claude Desktop, Cursor) and how to check that memories are being saved, see the **[Installation & Setup Guide](docs/SETUP.md)**. To work on CMF itself, see [Developer setup](docs/DEVELOPER-SETUP.md).
 
 ---
 

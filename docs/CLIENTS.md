@@ -1,7 +1,7 @@
 # Client Integration & Harness Guide
 
 > [!TIP]
-> **CMF Setup writes these entries for you:** Features → AI apps, or `cmf clients set <app>` ([QUICKSTART.md](QUICKSTART.md)). It keeps one entry per app, backs the file up, and checks it in Status. The sections below are the manual reference, for setups without the app.
+> **Context Memory Fabric management writes these entries for you:** Features → AI apps, or `cmf clients set <app>` ([QUICKSTART.md](QUICKSTART.md)). It keeps one entry per app, backs the file up, and checks it in Status. The sections below are the manual reference, for setups without the app.
 
 This guide describes how to connect **Context Memory Fabric** to AI clients, desktop harnesses, and developer tools via the Model Context Protocol (MCP).
 
@@ -97,7 +97,7 @@ If neither `CMF_MCP_ISSUER_URL` nor `CMF_MCP_AUTH_TOKEN` is set, the server logs
 
 ### Recommended: `cmf clients set claude-desktop`
 
-CMF Setup writes the entry for you (Features → AI apps, or `cmf clients set claude-desktop`). The entry runs `cmf bridge`, which relays Claude Desktop's stdio to the running server, reads the port and token from `~/.cmf/.env`, and needs no Node.js:
+Context Memory Fabric management writes the entry for you (Features → AI apps, or `cmf clients set claude-desktop`). The entry runs `cmf bridge`, which relays Claude Desktop's stdio to the running server, reads the port and token from `~/.cmf/.env`, and needs no Node.js:
 
 ```json
 {
@@ -114,7 +114,7 @@ If `cmf` was started from somewhere temporary (a download that hasn't been moved
 
 ### Alternative: `mcp-remote` to the running server
 
-Point Claude Desktop at the one running server (the [Docker preview](SETUP.md#quickstart-docker-compose-preview-recommended), or a host server started per §0) through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. It needs Node.js 18 or later.
+Point Claude Desktop at the one running server (the `~/.cmf` stack from the [Quickstart](QUICKSTART.md), or a host server started per §0) through the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. It needs Node.js 18 or later.
 
 1. Open `claude_desktop_config.json` (Settings → Developer → Edit Config; macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`).
 2. Add **one** `context-memory-fabric` entry under `"mcpServers"`, and remove any older CMF entry:

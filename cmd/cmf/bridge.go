@@ -143,7 +143,7 @@ func (b *bridge) send(ctx context.Context, msg []byte, m rpcMessage) {
 	resp, err := b.client.Do(req)
 	if err != nil {
 		b.logf("%v", err)
-		b.fail(m.ID, fmt.Sprintf("The CMF server isn't answering at %s. Run `cmf status` (or open CMF Setup) to see why.", b.url))
+		b.fail(m.ID, fmt.Sprintf("The CMF server isn't answering at %s. Run `cmf status` (or open CMF management) to see why.", b.url))
 		return
 	}
 	defer resp.Body.Close()

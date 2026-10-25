@@ -1,4 +1,4 @@
-CMF Setup {{VERSION}}: one program that installs, checks and repairs Context Memory Fabric. The server image `ghcr.io/tmargolis/context-memory-fabric:{{VERSION}}` is published with it.
+Context Memory Fabric management {{VERSION}}: one program that installs, checks and repairs Context Memory Fabric. The server image `ghcr.io/tmargolis/context-memory-fabric:{{VERSION}}` is published with it.
 
 ## Download
 
@@ -8,7 +8,7 @@ CMF Setup {{VERSION}}: one program that installs, checks and repairs Context Mem
 | Windows | `cmf-windows.exe` |
 | Linux | `cmf-linux-amd64` or `cmf-linux-arm64` |
 
-You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) running. Open the file and CMF Setup opens in your browser; `cmf help` lists the commands.
+You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) running. Open the file and Context Memory Fabric management opens in your browser; `cmf help` lists the commands.
 
 ## Opening an unsigned download
 

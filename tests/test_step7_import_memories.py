@@ -430,6 +430,10 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             "close_review_run",  # 2026-10-18
             # Manual review merge (2026-10-09)
             "merge_episodes",
+            # Health and knowledge checks
+            "memory_status",
+            "inspect_knowledge_document",
+            "cmf_selftest",  # setup simplification: write, recall, delete in a scratch graph
         }
         self.assertEqual(set(tool_dict.keys()), expected_tools)
 

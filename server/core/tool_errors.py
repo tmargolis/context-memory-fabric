@@ -130,9 +130,8 @@ def _falkordb_unreachable() -> ClassifiedError:
         FALKORDB_UNREACHABLE,
         f"CMF can't reach its database (FalkorDB at {where}, graph '{graph}'). "
         "Check that Docker is running and the FalkorDB container is up (`docker ps`). "
-        "In the Docker preview FalkorDB runs inside the stack; a CMF server running on your "
-        "computer instead needs FALKORDB_PORT=6380 to reach the preview's database "
-        "(docs/SETUP.md, 'Pick ONE way to run CMF').",
+        "In the CMF stack FalkorDB runs as the cmf-falkordb container; `cmf status` checks it "
+        "and `cmf doctor --fix` restarts what it can (docs/SETUP.md, 'Pick ONE way to run CMF').",
     )
 
 
@@ -179,8 +178,8 @@ def classify(exc: BaseException, config=None) -> Optional[ClassifiedError]:
             return ClassifiedError(
                 MISSING_KEY,
                 f"{e} Leave unused keys empty and set CMF_LLM_PROVIDER / CMF_EMBED_PROVIDER to providers "
-                "you have keys for. In the Docker preview, recreate the container after editing .env "
-                "(`docker compose -f docker-compose.preview.yml up -d`).",
+                "you have keys for. Change them in CMF management (Features → LLM for extraction, Embeddings), which "
+                "restarts the server for you.",
             )
 
         sdk = _sdk(e)
@@ -218,7 +217,7 @@ def classify(exc: BaseException, config=None) -> Optional[ClassifiedError]:
             return ClassifiedError(
                 PROVIDER_AUTH,
                 f"{provider} rejected CMF's API key. {fix}: it must be a real API key with no "
-                "placeholder text. In the Docker preview, recreate the container after editing .env.",
+                "placeholder text. Change it in CMF management (Features → Provider keys), which restarts the server for you.",
             )
 
         if (status == 404 or name == "NotFoundError" or any(m in text for m in _MODEL_NOT_FOUND_MARKERS)) and (

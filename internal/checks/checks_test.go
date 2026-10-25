@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
 	"github.com/tmargolis/context-memory-fabric/internal/probe"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
@@ -282,5 +283,32 @@ func TestNotInstalledOffersInstall(t *testing.T) {
 	r := byID(Evaluate(f))["mode"]
 	if r.Level != Fail || !strings.Contains(r.Detail, "isn't installed") || r.Fix == nil || r.Fix.Steps[0].Show != "/Applications/cmf install --yes" {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// Every row has a description and somewhere to go, and each Features target
+// exists (a feature id from the manifest, or a group the page renders).
+func TestEveryRowHasAboutAndATarget(t *testing.T) {
+	m, err := features.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{"group:apps": true}
+	for _, g := range m.Groups {
+		ids["group:"+g] = true
+	}
+	for _, f := range m.Features {
+		ids[f.ID] = true
+	}
+	for _, r := range Evaluate(healthy()) {
+		if r.About == "" {
+			t.Errorf("%s has no description", r.ID)
+		}
+		if r.Feature != "" && !ids[r.Feature] {
+			t.Errorf("%s links to %q, which the Features page doesn't have", r.ID, r.Feature)
+		}
+		if r.Feature == "" && r.Doc == "" && r.ID != "selftest" {
+			t.Errorf("%s has nowhere to link", r.ID)
+		}
 	}
 }

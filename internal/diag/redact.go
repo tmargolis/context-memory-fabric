@@ -82,9 +82,13 @@ func (r *Redactor) Line(s string) string {
 	return s
 }
 
-// errorLine matches the lines worth sending: Python logging levels, tracebacks
-// and uncaught exceptions. WARNING lines are left out.
-var errorLine = regexp.MustCompile(`\b(ERROR|CRITICAL|FATAL)\b|Traceback \(most recent call last\)|^\S*\s*\|?\s*[\w.]+(Error|Exception): `)
+// errorLine matches the lines worth sending (and the log viewer marks):
+// Python logging levels, tracebacks, exceptions anywhere in the line, HTTP
+// error statuses from a provider, and "X failed for/to/…" messages such as
+// the poller's per-cycle "errors" list, and Node-style "[error]" tags (the
+// FalkorDB Browser). WARNING lines and counters like
+// `"failed": 0` are left out.
+var errorLine = regexp.MustCompile(`\b(ERROR|CRITICAL|FATAL)\b|Traceback \(most recent call last\)|\b[\w.]*(Error|Exception): |\bError code: [45]\d\d\b|\b[Ff]ailed (for|to|with|while|on)\b|\bfailed: |\[(error|fatal)\]`)
 
 // ErrorLines returns the last n error lines of compose log output, redacted.
 func (r *Redactor) ErrorLines(logs string, n int) []string {

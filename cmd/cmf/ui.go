@@ -22,8 +22,10 @@ import (
 
 	"github.com/tmargolis/context-memory-fabric/internal/checks"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
+	"github.com/tmargolis/context-memory-fabric/internal/diag"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
+	"github.com/tmargolis/context-memory-fabric/internal/remote"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
 )
 
@@ -53,7 +55,7 @@ var openBrowser = func(url string) error {
 	return run.Exec{}.Run(context.Background(), run.Cmd{Name: "xdg-open", Args: []string{url}}).Err
 }
 
-// uiServer is CMF Setup's local web UI (item 3.6): the same engine as the
+// uiServer is CMF management's local web UI (item 3.6): the same engine as the
 // CLI, reachable only from this machine and only with the URL's token.
 type uiServer struct {
 	token string
@@ -91,7 +93,7 @@ func runUI(args []string, out io.Writer) error {
 	s := &uiServer{token: newToken(), host: ln.Addr().String(), lastSeen: time.Now(), done: make(chan struct{})}
 	srv := &http.Server{Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
 	url := fmt.Sprintf("http://%s/?t=%s", s.host, s.token)
-	fmt.Fprintln(out, "CMF Setup is running at:")
+	fmt.Fprintln(out, "CMF management is running at:")
 	fmt.Fprintln(out, "  "+url)
 	fmt.Fprintln(out, "It stops when you close the tab, after 30 idle minutes, or with Ctrl-C.")
 	if !noOpen {
@@ -110,7 +112,7 @@ func runUI(args []string, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
-	fmt.Fprintln(out, "CMF Setup stopped.")
+	fmt.Fprintln(out, "CMF management stopped.")
 	return nil
 }
 
@@ -182,7 +184,7 @@ func (s *uiServer) guard(next http.Handler) http.Handler {
 		}
 		c, err := r.Cookie(tokenCookie)
 		if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) != 1 {
-			http.Error(w, "open CMF Setup from the address cmf printed (it carries a one-time token)", http.StatusUnauthorized)
+			http.Error(w, "open CMF management from the address cmf printed (it carries a one-time token)", http.StatusUnauthorized)
 			return
 		}
 		s.mu.Lock()
@@ -296,7 +298,7 @@ func (s *uiServer) stream(h func(*http.Request, io.Writer) (string, error)) http
 	}
 }
 
-func (s *uiServer) status(*http.Request) (any, error) {
+func (s *uiServer) status(r *http.Request) (any, error) {
 	facts, err := collect(context.Background())
 	if err != nil {
 		return nil, err
@@ -313,8 +315,14 @@ func (s *uiServer) status(*http.Request) (any, error) {
 	if facts.Health != nil {
 		graph = facts.Health.Graph
 	}
+	// The address you use for the Browser: Tailscale Serve's https one when
+	// it publishes the Browser's port, this computer's otherwise.
+	browserURL := fmt.Sprintf("http://127.0.0.1:%d", browser)
+	if served := remote.ServedURL(r.Context(), runner, findProgram, browser); served != "" {
+		browserURL = served
+	}
 	return map[string]any{"overall": checks.Worst(results), "checked_at": facts.At, "checks": results,
-		"graph": graph, "nodes": facts.Nodes, "browser_url": fmt.Sprintf("http://127.0.0.1:%d", browser), "version": version}, nil
+		"graph": graph, "nodes": facts.Nodes, "browser_url": browserURL, "version": version}, nil
 }
 
 func (s *uiServer) features(*http.Request) (any, error) {
@@ -441,7 +449,15 @@ func (s *uiServer) logs(r *http.Request) (any, error) {
 	if res.Err != nil {
 		return nil, fmt.Errorf("docker compose logs: %s", firstLine(res.Output(), res.Err))
 	}
-	return map[string]string{"text": res.Stdout}, nil
+	// Which lines are errors, by the rule diagnostics uses, so the viewer
+	// marks and filters exactly what a report would carry.
+	errLines := []int{}
+	for i, line := range strings.Split(res.Stdout, "\n") {
+		if diag.IsError(line) {
+			errLines = append(errLines, i)
+		}
+	}
+	return map[string]any{"text": res.Stdout, "errors": errLines}, nil
 }
 
 func (s *uiServer) diagnostics(r *http.Request) (any, error) {

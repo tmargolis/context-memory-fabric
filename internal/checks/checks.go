@@ -1,12 +1,13 @@
 // Package checks turns probe.Facts into the Status rows of plan section 3.3:
 // each green / yellow / red with a one-line explanation and, where cmf can
-// do it, a Fix. Rows whose server or app support hasn't landed yet show as
-// "n/a" with the item that brings them.
+// do it, a Fix. Rows the server can't answer yet (an older server) show as
+// "n/a".
 package checks
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -39,9 +40,58 @@ type Fix struct {
 type Result struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
+	About  string `json:"about,omitempty"` // what the row checks and the options, in plain words
 	Level  Level  `json:"level"`
 	Detail string `json:"detail"`
 	Fix    *Fix   `json:"fix,omitempty"`
+	// Where the row's setting is changed: a feature id or "group:<id>" on the
+	// Features page, or Doc for things set outside the app.
+	Feature string `json:"feature,omitempty"`
+	Doc     string `json:"doc,omitempty"`
+}
+
+const docs = "https://github.com/tmargolis/context-memory-fabric/blob/main/docs/"
+
+// guide is each row's description and where it is changed. Features follow
+// the manifest's "checks" lists.
+var guide = map[string]struct{ About, Feature, Doc string }{
+	"mode": {About: "Standard runs the published CMF server image; Developer builds it from a source checkout. Either way CMF keeps its settings, compose file and backups in one home folder. Changed with `cmf mode`, not here.",
+		Doc: docs + "SETUP.md#install-modes-and-the-cmf-home"},
+	"docker": {About: "CMF runs in Docker, so Docker Desktop (or OrbStack or Colima on a Mac) has to be running.",
+		Doc: docs + "QUICKSTART.md#1-install-docker-desktop"},
+	"stack": {About: "The containers CMF needs: the memory server, its FalkorDB graph database, and the capture poller when capture is on.",
+		Feature: "core"},
+	"port": {About: "AI apps reach CMF on this computer's port 8000, so only one CMF server can listen there.",
+		Feature: "core"},
+	"launchd": {About: "Older installs ran CMF as macOS background jobs. The stack does their work now, so they should be off; jobs CMF didn't create are only listed.",
+		Doc: docs + "SETUP.md#install-modes-and-the-cmf-home"},
+	"containers": {About: "Containers from an older CMF install (the Docker preview) shouldn't run beside this one. Stopped ones keep their data; `cmf migrate` moves it over.",
+		Doc: docs + "SETUP.md#install-modes-and-the-cmf-home"},
+	"host-server": {About: "A CMF server started by hand outside Docker would compete with the stack for port 8000.",
+		Doc: docs + "SETUP.md#install-modes-and-the-cmf-home"},
+	"graph": {About: "Where your memories are stored. A new install has none until the first memory is written.",
+		Feature: "core"},
+	"providers": {About: "The models CMF calls: an LLM that extracts memories (backups take over on rate limits), an embedding model for search, and the model background capture uses.",
+		Feature: "llm"},
+	"embedding": {About: "Every vector in a graph has to be the same width, so the embedding model can't change once the graph has memories.",
+		Feature: "embeddings"},
+	"knowledge": {About: "Notes CMF searches alongside your memories: a Markdown folder, Notion, the demo wiki, or none.",
+		Feature: "group:knowledge"},
+	"capture": {About: "The poller reads your AI apps' transcripts in the background and queues what's worth keeping for review.",
+		Feature: "capture"},
+	"clients": {About: "Each AI app needs one CMF entry in its own config. Duplicates or a stale address make it connect twice or not at all. Apps that use a claude.ai connector don't need one.",
+		Feature: "group:apps"},
+	"apps-seen": {About: "Apps that called CMF in the last day. One that's set up but not seen usually needs a restart and a new conversation.",
+		Feature: "group:apps"},
+	"selftest": {About: "Writes a test memory to a scratch graph, finds it again and deletes the graph. Your own memories aren't touched."},
+}
+
+// tilde shortens a path under the user's home to ~/...
+func tilde(path string) string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" && (path == h || strings.HasPrefix(path, h+"/")) {
+		return "~" + strings.TrimPrefix(path, h)
+	}
+	return path
 }
 
 func step(note string, cmd run.Cmd) Step {
@@ -63,6 +113,10 @@ func Evaluate(f probe.Facts) []Result {
 	results = append(results, checkStack(f), checkPort(f), checkLaunchd(f), checkStrays(f), checkHostMCP(f),
 		checkGraph(f), checkProviders(f), checkEmbedding(f), checkKnowledge(f), checkCapture(f),
 		checkClients(f), checkAppsSeen(f), checkSelfTest(f))
+	for i := range results {
+		g := guide[results[i].ID]
+		results[i].About, results[i].Feature, results[i].Doc = g.About, g.Feature, g.Doc
+	}
 	return results
 }
 
@@ -82,9 +136,9 @@ func checkMode(f probe.Facts) Result {
 		return r
 	}
 	m := f.Mode.Mode
-	r.Detail = fmt.Sprintf("%s, in %s", m.Mode, f.Home)
+	r.Detail = fmt.Sprintf("standard · published server image · settings in %s", tilde(f.Home))
 	if m.Mode == mode.Developer {
-		r.Detail = fmt.Sprintf("developer (builds from %s), in %s", m.Repo, f.Home)
+		r.Detail = fmt.Sprintf("developer · server built from %s · settings in %s", tilde(m.Repo), tilde(f.Home))
 	}
 	if !f.Mode.Consistent() {
 		r.Level = Warn

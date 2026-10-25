@@ -213,7 +213,7 @@ def port_problem(host: str, port: int) -> Optional[str]:
 
     taken = (
         f"Another process is already on port {port}, so this CMF server can't start. "
-        "Run `cmf status` (or open CMF Setup) to see which one it is."
+        "Run `cmf status` (or open CMF management) to see which one it is."
     )
     # Something answering counts even when a bind would succeed: on macOS,
     # SO_REUSEADDR lets 127.0.0.1:port bind next to a listener on 0.0.0.0:port.

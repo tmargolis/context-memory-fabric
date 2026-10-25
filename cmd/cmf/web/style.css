@@ -71,6 +71,7 @@ button.small { padding: 3px 10px; font-size: 13px; }
 .summary.fail { border-left: 4px solid var(--fail); }
 .summary.warn { border-left: 4px solid var(--warn); }
 .summary.ok { border-left: 4px solid var(--ok); }
+.checked-at { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 10px; }
 .checks { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .checks li { display: grid; grid-template-columns: 14px 1fr auto; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: start; }
 .checks li:first-child { border-top: 0; }
@@ -78,12 +79,26 @@ button.small { padding: 3px 10px; font-size: 13px; }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.fail { background: var(--fail); }
-.check-title { font-weight: 600; }
-.check-detail { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.check-title { font-weight: 600; color: var(--ink); display: inline-block; }
+a.check-title { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.check-about code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
+a.check-title:hover, a.check-title:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.check-about { color: var(--muted); font-size: 14px; margin-top: 2px; }
+/* The system's answer, set apart from the prose above it. */
+.check-detail {
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--code); border-radius: 6px; padding: 4px 8px; margin-top: 6px;
+  display: inline-block; max-width: 100%; overflow-wrap: anywhere;
+}
 
-.group { margin: 24px 0; }
+.group { margin: 24px 0; scroll-margin-top: 72px; }
 .group > h3 { text-transform: capitalize; margin-bottom: 8px; color: var(--muted); font-size: 13px; letter-spacing: .04em; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; scroll-margin-top: 72px; }
+/* Where a Status link landed. */
+.flash { animation: flash 1.8s ease-out; }
+@keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.group.flash { animation: none; }
+.group.flash > h3 { color: var(--accent); }
 .card.changed { border-color: var(--accent); }
 .card-head { display: flex; gap: 12px; align-items: flex-start; }
 .card-head .text { flex: 1; }
@@ -135,3 +150,8 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
   .checks li { grid-template-columns: 14px 1fr; }
   .checks li .fix { grid-column: 2; }
 }
+
+/* Log viewer: one block per line, errors on red. */
+.log .line { display: block; min-height: 1.5em; }
+.log .line.err { background: color-mix(in srgb, var(--fail) 18%, transparent); box-shadow: inset 3px 0 0 var(--fail); }
+.log .line.err + .line.err { margin-top: 3px; }

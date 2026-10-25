@@ -11,7 +11,7 @@ A clear and concise description of the setup problem or unexpected retrieval beh
 
 ## Environment Details
 - **OS / Platform:** (e.g., macOS Sonoma, Ubuntu 24.04, Windows WSL2)
-- **Deployment Mode:** (Docker Compose preview / Local source `uv run`)
+- **Deployment Mode:** (Standard / Developer, as `cmf mode` shows it)
 - **Connected MCP Client:** (e.g., Claude Desktop, Cursor, other)
 - **Model / Provider:** (e.g., Gemini 3.8 Flash, local vLLM/LM Studio)
 - **FalkorDB Status:** (e.g., running via Docker Compose)

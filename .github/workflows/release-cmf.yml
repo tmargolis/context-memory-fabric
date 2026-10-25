@@ -1,4 +1,4 @@
-# Build the cmf binary (CMF Setup: the app and its CLI) for every platform
+# Build the cmf binary (CMF management: the app and its CLI) for every platform
 # and attach it to the GitHub Release for a v<version> tag (setup plan 3.7).
 # The same tag publishes the server image (release-image.yml), so a cmf
 # release and the image it pins (CMF_VERSION) always come together.

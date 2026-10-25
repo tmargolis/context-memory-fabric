@@ -249,7 +249,7 @@ def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:
 def _llm_providers() -> tuple[str, ...]:
     """CMF_LLM_PROVIDERS (ordered, comma-separated), else CMF_LLM_PROVIDER alone.
 
-    The list wins when both are set; CMF Setup writes both, with
+    The list wins when both are set; CMF management writes both, with
     CMF_LLM_PROVIDER as the list's first entry, so older readers of the
     single variable see the same primary.
     """

@@ -219,5 +219,5 @@ def test_port_guard_taken(listen_on):
         problem = startup_check.port_problem("127.0.0.1", port)
     assert problem == (
         f"Another process is already on port {port}, so this CMF server can't start. "
-        "Run `cmf status` (or open CMF Setup) to see which one it is."
+        "Run `cmf status` (or open CMF management) to see which one it is."
     )

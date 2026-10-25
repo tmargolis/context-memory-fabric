@@ -3,13 +3,13 @@
 Get Context Memory Fabric (CMF) running and connected to your AI apps in about ten minutes, without cloning anything or editing config files.
 
 > [!NOTE]
-> This uses the CMF Setup app from the [releases page](https://github.com/tmargolis/context-memory-fabric/releases). Until the first release is published, install from a checkout instead: [Developer setup](DEVELOPER-SETUP.md).
+> This uses the Context Memory Fabric management app from the [releases page](https://github.com/tmargolis/context-memory-fabric/releases). Until the first release is published, install from a checkout instead: [Developer setup](DEVELOPER-SETUP.md).
 
 ## 1. Install Docker Desktop
 
 CMF runs in Docker. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it. (On a Mac, OrbStack or Colima work too.)
 
-## 2. Download and open CMF Setup
+## 2. Download and open Context Memory Fabric management
 
 From the [latest release](https://github.com/tmargolis/context-memory-fabric/releases/latest), download the file for your computer:
 
@@ -26,7 +26,7 @@ The preview isn't signed, so the first time your computer asks before opening it
 - **Mac:** right-click (or Control-click) the file → **Open** → **Open**. If there's no Open button, try once, then System Settings → Privacy & Security → **Open Anyway**.
 - **Windows:** "Windows protected your PC" → **More info** → **Run anyway**.
 
-CMF Setup opens in your browser. It runs only on your computer and closes when you close the tab.
+Context Memory Fabric management opens in your browser. It runs only on your computer and closes when you close the tab.
 
 ## 3. Install and choose your features
 
@@ -53,11 +53,11 @@ From now on CMF works in both directions: your apps read from it and, at natural
 
 ## If something isn't right
 
-- Open CMF Setup again (double-click the file). **Status** names each problem in one line, and most have a **Fix** button.
+- Open Context Memory Fabric management again (double-click the file). **Status** names each problem in one line, and most have a **Fix** button.
 - **Copy diagnostics** builds a report with keys, names and memory text removed. You see it before it's copied, and can send it to whoever helps you.
 
 ## More
 
 - ChatGPT, Gemini or claude.ai connectors need CMF on a public HTTPS address: see `cmf remote` in [Developer setup](DEVELOPER-SETUP.md) and the Remote section of the [setup guide](SETUP.md).
-- Everything CMF Setup does is also a command: run `cmf help`.
+- Everything Context Memory Fabric management does is also a command: run `cmf help`.
 - The full reference is the [setup guide](SETUP.md).

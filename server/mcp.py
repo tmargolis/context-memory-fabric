@@ -155,7 +155,7 @@ if _oauth_issuer_url and _oauth_password:
 # Initialize MCP Server with instructions
 app = MCPServer(
     name="context-memory-fabric",
-    version="0.1.0",
+    version="0.1.1",
     instructions=SERVER_INSTRUCTIONS,
     auth_server_provider=oauth_provider,
     auth=_auth_settings,
@@ -163,7 +163,7 @@ app = MCPServer(
 
 @app.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> JSONResponse:
-    """Server status for CMF Setup and for humans (curl http://127.0.0.1:8000/health).
+    """Server status for CMF management and for humans (curl http://127.0.0.1:8000/health).
 
     Network transports only. A request that came through a proxy or tunnel gets
     only status and version; see server.core.status.

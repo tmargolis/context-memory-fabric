@@ -1,4 +1,4 @@
-// Package capture is CMF Setup's capture wiring (docs/setup-simplification-
+// Package capture is CMF management's capture wiring (docs/setup-simplification-
 // plan.md, item 3.11 and section 3.9): the Stop-hook nudge that asks an AI
 // app to call capture_session at checkpoints, its installers, the
 // per-source report (hook / poller / server instructions), volume-based

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -135,6 +136,32 @@ func inspectTailscale(ctx context.Context, r run.Runner, t *Tool, port int) {
 	default:
 		t.Detail = "connected; Funnel can publish CMF at https://" + t.Host
 	}
+}
+
+// URLFor is the https address Tailscale Serve (tailnet) or Funnel (public)
+// gives a local port, lowest HTTPS port first; "" if it serves none.
+func (t Tool) URLFor(port int) string {
+	var ports []int
+	for https, proxy := range t.Taken {
+		if proxiesTo(proxy, port) {
+			ports = append(ports, https)
+		}
+	}
+	if len(ports) == 0 || t.Host == "" {
+		return ""
+	}
+	slices.Sort(ports)
+	return publicURL(t.Host, ports[0])
+}
+
+// ServedURL is URLFor on this machine's Tailscale, "" without one.
+func ServedURL(ctx context.Context, r run.Runner, find Finder, port int) string {
+	for _, t := range Detect(ctx, r, find, port) {
+		if t.Kind == Tailscale && t.Running {
+			return t.URLFor(port)
+		}
+	}
+	return ""
 }
 
 func proxiesTo(proxy string, port int) bool {

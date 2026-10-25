@@ -1,4 +1,4 @@
-// CMF Setup page: Status, Features, Review changes (plan section 3.3).
+// CMF management page: Status, Features, Review changes (plan section 3.3).
 // Everything shown comes from the cmf engine's API; text is always set with
 // textContent, never parsed as HTML.
 "use strict";
@@ -68,19 +68,46 @@ function openDialog(title, body, tools = [], foot = []) {
 
 // --- tabs -----------------------------------------------------------------------------------
 
-function show(tab) {
+// Each tab is a history entry (#status, #features, #review), so the browser's
+// Back button returns to the previous tab where it was scrolled to. Status
+// keeps its last results; it re-checks on load, after a change, and on
+// "Check again".
+const tabs = ["status", "features", "review"];
+const scrollY = {}; // tab -> where it was scrolled to
+let current = null;
+history.scrollRestoration = "manual"; // the panels share one page, so restore per tab here
+
+function show(tab, { push = true } = {}) {
+  if (!tabs.includes(tab) || (tab === "review" && !pending)) tab = "status";
+  if (current) scrollY[current] = window.scrollY;
+  if (push && tab !== current) history.pushState({ tab }, "", "#" + tab);
+  current = tab;
   for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
   for (const p of document.querySelectorAll(".panel")) p.hidden = p.id !== tab;
-  if (tab === "status") loadStatus();
-  if (tab === "features" && !features) loadFeatures();
+  if (tab === "status" && !statusShown) loadStatus();
+  if (tab === "features" && !features) featuresLoading = loadFeatures();
+  const y = scrollY[tab] || 0;
+  requestAnimationFrame(() => window.scrollTo(0, y));
 }
 for (const b of document.querySelectorAll(".tabs button")) b.addEventListener("click", () => show(b.dataset.tab));
+window.addEventListener("popstate", (ev) => show((ev.state && ev.state.tab) || location.hash.slice(1), { push: false }));
 
 // --- status ---------------------------------------------------------------------------------
 
 const levelWords = { ok: "All checks pass.", warn: "Working, with warnings below.", fail: "Something needs fixing." };
 
+let statusShown = false; // Status has results on screen
+
+// "10:42:07", with the date too when it isn't today.
+function checkedAt(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return "";
+  const time = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return t.toDateString() === new Date().toDateString() ? time : t.toLocaleDateString() + " " + time;
+}
+
 async function loadStatus() {
+  statusShown = true;
   $("summary").textContent = "Checking this install…";
   $("summary").className = "summary";
   let s;
@@ -88,20 +115,54 @@ async function loadStatus() {
     s = await api("/api/status");
   } catch (e) {
     $("summary").textContent = "Couldn't check: " + e.message;
+    statusShown = false;
     return;
   }
-  $("summary").textContent = levelWords[s.overall] || s.overall;
+  const when = checkedAt(s.checked_at);
+  $("summary").replaceChildren(levelWords[s.overall] || s.overall,
+    when ? el("span", { class: "checked-at", title: s.checked_at }, "checked " + when) : null);
   $("summary").classList.add(s.overall);
   $("meta").textContent = `cmf ${s.version}` + (s.graph ? ` · graph ${s.graph}` + (s.nodes >= 0 ? `, ${s.nodes} nodes` : "") : "");
   $("browser-link").href = s.browser_url;
-  $("browser-link").title = s.graph ? `Pick graph “${s.graph}” in the browser` : "";
+  $("browser-link").title = s.browser_url + (s.graph ? ` · pick graph “${s.graph}” there` : "");
   $("checks").replaceChildren(...s.checks.map((c) => el("li", {},
     el("span", { class: "dot " + (c.level === "n/a" ? "na" : c.level), title: c.level }),
-    el("div", {}, el("div", { class: "check-title" }, c.title), el("div", { class: "check-detail" }, c.detail)),
+    el("div", {}, checkTitle(c),
+      c.about ? el("div", { class: "check-about" }, ...withCode(c.about)) : null,
+      el("div", { class: "check-detail" }, c.detail)),
     c.fix && c.level !== "ok"
       ? el("button", { class: "small fix", title: c.fix.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c) }, "Fix: " + c.fix.label)
       : el("span"),
   )));
+}
+
+// Text with `backticks` as code spans (still text nodes, never HTML).
+function withCode(text) {
+  return text.split("`").map((part, i) => (i % 2 ? el("code", {}, part) : part));
+}
+
+// A row's title links to where its setting is changed: a card or group on
+// Features, or the setup guide for things set outside the app.
+function checkTitle(c) {
+  if (c.feature) {
+    return el("a", { class: "check-title", href: "#features", title: "Change this in Features",
+      onclick: (ev) => { ev.preventDefault(); goToFeature(c.feature); } }, c.title);
+  }
+  if (c.doc && /^https:\/\//.test(c.doc)) {
+    return el("a", { class: "check-title", href: c.doc, target: "_blank", rel: "noopener", title: "Opens the setup guide" }, c.title, " ↗");
+  }
+  return el("div", { class: "check-title" }, c.title);
+}
+
+async function goToFeature(target) {
+  show("features");
+  await featuresLoading;
+  const node = $(target.startsWith("group:") ? "group-" + target.slice(6) : "feature-" + target);
+  if (!node) return;
+  node.scrollIntoView({ behavior: "smooth", block: "start" });
+  node.classList.remove("flash");
+  void node.offsetWidth; // restart the highlight
+  node.classList.add("flash");
 }
 
 async function runFix(c) {
@@ -135,9 +196,13 @@ $("logs-open").addEventListener("click", () => {
   const load = async () => {
     $("dialog-body").textContent = "Loading…";
     try {
-      const { text } = await api(`/api/logs?tail=400&service=${encodeURIComponent(service.value)}`);
-      const lines = text.split("\n");
-      $("dialog-body").textContent = (errorsOnly.checked ? lines.filter((l) => /\b(ERROR|CRITICAL|FATAL)\b|Traceback|Error: |Exception: /.test(l)) : lines).join("\n");
+      // The server marks error lines (the rule diagnostics uses); they're
+      // shown in red, or alone with "errors only".
+      const { text, errors = [] } = await api(`/api/logs?tail=400&service=${encodeURIComponent(service.value)}`);
+      const bad = new Set(errors);
+      const lines = text.split("\n").map((l, i) => ({ l, err: bad.has(i) })).filter((x) => !errorsOnly.checked || x.err);
+      $("dialog-body").replaceChildren(...(lines.length ? lines.map((x) => el("span", { class: "line" + (x.err ? " err" : "") }, x.l))
+        : [errorsOnly.checked ? "No error lines in the last 400." : "No log lines."]));
       $("dialog-body").scrollTop = $("dialog-body").scrollHeight;
     } catch (e) {
       $("dialog-body").textContent = e.message;
@@ -152,6 +217,7 @@ $("logs-open").addEventListener("click", () => {
 // --- features -------------------------------------------------------------------------------
 
 let features = null; // the machine's state as loaded
+let featuresLoading = null; // the load in progress, if any
 let edits = {};      // feature id -> {enabled?, <input id>: value}
 let clientEdits = {}; // app id -> bool
 
@@ -223,7 +289,7 @@ function featureCard(f) {
   else control = el("label", { class: "switch", title: on ? "On" : "Off" },
     el("input", { type: "checkbox", checked: on, "aria-label": f.label, onchange: (ev) => edit(f.id, "enabled", ev.target.checked) }), el("span"));
   const showInputs = (on || f.always_on) && f.inputs && f.inputs.length;
-  return el("div", { class: "card" + (changed ? " changed" : "") },
+  return el("div", { class: "card" + (changed ? " changed" : ""), id: "feature-" + f.id },
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, f.label), el("div", { class: "card-desc" }, f.description)),
       control),
@@ -236,7 +302,7 @@ function clientCard(c) {
   const healthy = has && c.entries.filter((e) => e.cmf).length === 1 && c.entries.find((e) => e.cmf).correct;
   const want = c.id in clientEdits ? clientEdits[c.id] : has;
   const state = !c.installed ? "not installed" : c.error ? "can't read its config" : !has ? "no CMF entry" : healthy ? "connected" : "needs fixing (duplicates or a stale entry)";
-  return el("div", { class: "card" + (c.id in clientEdits ? " changed" : "") },
+  return el("div", { class: "card" + (c.id in clientEdits ? " changed" : ""), id: "client-" + c.id },
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, c.label), el("div", { class: "card-desc" }, state + (c.exists ? " · " + c.path : ""))),
       el("label", { class: "switch" },
@@ -269,7 +335,7 @@ function renderFeatures() {
   const groups = [...features.groups.map((g) => [g, features.features.filter((f) => f.group === g).map(featureCard)]),
     ["apps", features.clients.map(clientCard)]];
   $("groups").replaceChildren(...groups.filter(([, cards]) => cards.length).map(([g, cards]) =>
-    el("div", { class: "group" }, el("h3", {}, groupNames[g] || g), ...cards)));
+    el("div", { class: "group", id: "group-" + g }, el("h3", {}, groupNames[g] || g), ...cards)));
   const req = request();
   const n = Object.keys(req.features || {}).length + Object.keys(req.clients || {}).length;
   $("dirty-note").textContent = n ? `${n} change${n > 1 ? "s" : ""} not applied yet.` : "No changes yet.";
@@ -293,7 +359,8 @@ async function restore(stamp) {
   if (!confirm(`Put back the files from backup ${stamp}? The current ones are backed up first, so this can be undone too.`)) return;
   await stream(`/api/restore/${encodeURIComponent(stamp)}`, null, "Restoring " + stamp);
   features = null;
-  loadFeatures();
+  featuresLoading = loadFeatures();
+  statusShown = false;
 }
 
 // --- review ---------------------------------------------------------------------------------
@@ -332,6 +399,8 @@ $("apply-btn").addEventListener("click", async () => {
   if (result.ok) {
     $("review-tab").hidden = true;
     features = null;
+    pending = null;
+    statusShown = false; // re-check what changed
     show("status");
   } else {
     $("apply-btn").disabled = false;
@@ -346,4 +415,5 @@ $("apply-btn").addEventListener("click", async () => {
 fetch("/api/alive", { credentials: "same-origin" }).catch(() => {});
 window.addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
 
-loadStatus();
+history.replaceState({ tab: "status" }, "", "#status");
+show("status", { push: false });

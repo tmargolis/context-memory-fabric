@@ -64,7 +64,7 @@ func TestUITokenHostAndOrigin(t *testing.T) {
 	if w := call(h, "GET", "/?t=wrong", "", noCookie); w.Code != http.StatusUnauthorized {
 		t.Fatal("wrong opening token", w.Code)
 	}
-	if w := call(h, "GET", "/", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), "<title>CMF Setup</title>") || !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+	if w := call(h, "GET", "/", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), "<title>Context Memory Fabric management</title>") || !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatal(w.Code, w.Body.String()[:80])
 	}
 	if w := call(h, "GET", "/app.js", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), "textContent") {
@@ -124,13 +124,17 @@ func TestUIApplyStreamsAndLocks(t *testing.T) {
 
 func TestUIDiagnosticsAndLogs(t *testing.T) {
 	_, h, fake := uiFixture(t)
-	fake.Answers["docker compose*"] = run.Result{Stdout: "cmf-server | ERROR boom\n"}
+	fake.Answers["docker compose*"] = run.Result{Stdout: "cmf-server | ERROR boom\ncmf-poller |   \"failed\": 0,\n"}
 	w := call(h, "GET", "/api/diagnostics", "", nil)
 	var d struct{ Report string }
 	if json.Unmarshal(w.Body.Bytes(), &d); !strings.HasPrefix(d.Report, "CMF diagnostics") {
 		t.Fatal(w.Body.String())
 	}
 	w = call(h, "GET", "/api/logs?service=cmf-server&tail=50", "", nil)
+	var logs struct{ Errors []int }
+	if json.Unmarshal(w.Body.Bytes(), &logs); len(logs.Errors) != 1 || logs.Errors[0] != 0 {
+		t.Fatalf("error lines %v in %s", logs.Errors, w.Body.String())
+	}
 	if !strings.Contains(w.Body.String(), "ERROR boom") || !fake.Ran("docker compose --project-directory "+os.Getenv("CMF_HOME")+" logs --no-color --tail 50 cmf-server") {
 		t.Fatal(w.Body.String())
 	}
@@ -193,7 +197,7 @@ func TestNoArgsOpensUI(t *testing.T) {
 	}
 	select {
 	case code := <-done:
-		if code != 0 || !strings.Contains(out.String(), "CMF Setup stopped.") {
+		if code != 0 || !strings.Contains(out.String(), "CMF management stopped.") {
 			t.Fatal(code, out.String())
 		}
 	case <-time.After(5 * time.Second):

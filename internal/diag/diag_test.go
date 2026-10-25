@@ -119,3 +119,28 @@ func TestLineKeepsApostrophesAndURLs(t *testing.T) {
 		}
 	}
 }
+
+func TestIsErrorCatchesPollerSummaries(t *testing.T) {
+	for _, line := range []string{
+		`cmf-poller  |         "Consolidation window failed for 01a12929-76cd: Error code: 400 - {'error': 'n_keep: 14963>= n_ctx: 8192'}",`,
+		`cmf-poller  |   "error": "openai.BadRequestError: Error code: 400"`,
+		`cmf-server  | extraction failed: timeout`,
+		`cmf-server  | could not connect: Failed to resolve falkordb`,
+		"cmf-falkordb  | \x1b[31m[auth][error]\x1b[0m CredentialsSignin: Read more at https://errors.authjs.dev",
+	} {
+		if !IsError(line) {
+			t.Errorf("missed %s", line)
+		}
+	}
+	for _, line := range []string{
+		`cmf-poller  |       "failed": 0,`,
+		`cmf-poller  |       "errors": [],`,
+		`cmf-poller  |       "consolidation_runs": 8,`,
+		`cmf-server  | 2026-10-24 12:00:01 WARNING slow embed`,
+		`cmf-server  | 3 failed, 12 passed`,
+	} {
+		if IsError(line) {
+			t.Errorf("flagged %s", line)
+		}
+	}
+}
