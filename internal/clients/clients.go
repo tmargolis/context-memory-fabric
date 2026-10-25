@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/tmargolis/context-memory-fabric/internal/jsonedit"
 )
 
 // Name is the entry name CMF writes (Codex's TOML table name can't have dashes).
@@ -287,21 +289,18 @@ func parseEntries(f Format, data []byte, t Target) ([]Entry, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil
 	}
-	root, err := parseObject(data)
+	root, err := jsonedit.Parse(data)
 	if err != nil {
 		return nil, err
 	}
-	raw, ok := root.get(serversKey(f))
-	if !ok {
-		return nil, nil
-	}
-	servers, err := parseObject(raw)
+	servers, err := root.Child(serversKey(f))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", serversKey(f), err)
 	}
 	var out []Entry
-	for _, name := range servers.keys {
-		fields, args := entryFields(servers.vals[name])
+	for _, name := range servers.Keys() {
+		raw, _ := servers.Get(name)
+		fields, args := entryFields(raw)
 		out = append(out, classify(name, fields, args, t))
 	}
 	return out, nil

@@ -126,3 +126,19 @@ func TestMigrateNothingToDo(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 }
+
+func TestHookStopPrintsJSONAndNeverFails(t *testing.T) {
+	fakeMachine(t, true)
+	t.Setenv("CMF_NUDGE_MIN_TURNS", "1")
+	t.Cleanup(func() { hookStdin = os.Stdin })
+	var out, errOut bytes.Buffer
+	hookStdin = strings.NewReader(`{"session_id":"s1"}`)
+	if code := runCLI([]string{"hook", "stop", "--harness", "claude_code"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"decision":"block"`) {
+		t.Fatalf("code %d %q", code, out.String())
+	}
+	out.Reset()
+	hookStdin = strings.NewReader(`garbage`)
+	if code := runCLI([]string{"hook", "stop", "--harness", "antigravity"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"decision":"stop"`) {
+		t.Fatalf("code %d %q", code, out.String())
+	}
+}

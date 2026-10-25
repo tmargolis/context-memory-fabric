@@ -10,83 +10,8 @@ import (
 	"strings"
 
 	"github.com/tmargolis/context-memory-fabric/internal/home"
+	"github.com/tmargolis/context-memory-fabric/internal/jsonedit"
 )
-
-// object is a JSON object that keeps its key order, so rewriting one key of
-// ~/.claude.json leaves the rest of the file as the app wrote it.
-type object struct {
-	keys []string
-	vals map[string]json.RawMessage
-}
-
-func parseObject(data []byte) (*object, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	if d, ok := tok.(json.Delim); !ok || d != '{' {
-		return nil, fmt.Errorf("not a JSON object")
-	}
-	o := &object{vals: map[string]json.RawMessage{}}
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		key := tok.(string)
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			return nil, err
-		}
-		if _, dup := o.vals[key]; !dup {
-			o.keys = append(o.keys, key)
-		}
-		o.vals[key] = raw
-	}
-	if _, err := dec.Token(); err != nil {
-		return nil, err
-	}
-	return o, nil
-}
-
-func (o *object) get(k string) (json.RawMessage, bool) { v, ok := o.vals[k]; return v, ok }
-
-func (o *object) set(k string, v json.RawMessage) {
-	if _, ok := o.vals[k]; !ok {
-		o.keys = append(o.keys, k)
-	}
-	o.vals[k] = v
-}
-
-func (o *object) remove(k string) {
-	if _, ok := o.vals[k]; !ok {
-		return
-	}
-	delete(o.vals, k)
-	for i, key := range o.keys {
-		if key == k {
-			o.keys = append(o.keys[:i], o.keys[i+1:]...)
-			break
-		}
-	}
-}
-
-func (o *object) marshal() json.RawMessage {
-	var b bytes.Buffer
-	b.WriteByte('{')
-	for i, k := range o.keys {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		name, _ := json.Marshal(k)
-		b.Write(name)
-		b.WriteByte(':')
-		b.Write(o.vals[k])
-	}
-	b.WriteByte('}')
-	return b.Bytes()
-}
 
 func entryFields(raw json.RawMessage) (map[string]string, []string) {
 	var m map[string]any
@@ -253,37 +178,26 @@ func nameFor(a App) string {
 }
 
 func jsonRewrite(a App, old []byte, remove []string, add bool, t Target) ([]byte, error) {
-	root := &object{vals: map[string]json.RawMessage{}}
-	if len(bytes.TrimSpace(old)) > 0 {
-		var err error
-		if root, err = parseObject(old); err != nil {
-			return nil, err
-		}
-	}
-	key := serversKey(a.Format)
-	servers := &object{vals: map[string]json.RawMessage{}}
-	if raw, ok := root.get(key); ok {
-		var err error
-		if servers, err = parseObject(raw); err != nil {
-			return nil, err
-		}
-	}
-	for _, name := range remove {
-		servers.remove(name)
-	}
-	if add {
-		servers.set(Name, entry(a.Style, t))
-	}
 	if len(remove) == 0 && !add {
 		return old, nil
 	}
-	root.set(key, servers.marshal())
-	var out bytes.Buffer
-	if err := json.Indent(&out, root.marshal(), "", "  "); err != nil {
+	root, err := jsonedit.Parse(old)
+	if err != nil {
 		return nil, err
 	}
-	out.WriteByte('\n')
-	return out.Bytes(), nil
+	key := serversKey(a.Format)
+	servers, err := root.Child(key)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range remove {
+		servers.Remove(name)
+	}
+	if add {
+		servers.Set(Name, entry(a.Style, t))
+	}
+	root.Set(key, servers.Raw())
+	return root.File()
 }
 
 // --- Codex config.toml ------------------------------------------------------------

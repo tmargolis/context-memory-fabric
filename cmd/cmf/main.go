@@ -31,6 +31,8 @@ var commands = map[string]command{
 	"ui":          {"open CMF Setup in the browser (local only; --no-open prints the address)", runUI},
 	"bridge":      {"relay an AI app's stdio MCP to the CMF server (what Claude Desktop's entry runs)", runBridge},
 	"remote":      {"remote access for connectors: status, enable tailscale, use <url>, disable", runRemote},
+	"capture":     {"how each AI app is captured, estimates, prompt budget; hook install / remove; agent block", runCapture},
+	"hook":        {"the Stop hook body AI apps run (cmf hook stop --harness <app>)", runHook},
 	"version":     {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 
