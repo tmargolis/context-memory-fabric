@@ -20,6 +20,9 @@ import (
 //	              "llm": {"providers": ["anthropic", "local"]}}}
 type Request struct {
 	Features map[string]map[string]json.RawMessage `json:"features"`
+	// Clients turns each AI app's CMF entry on or off (item 3.4), by app id
+	// (`cmf clients` lists them). Written by the cmd layer, not the manifest.
+	Clients map[string]bool `json:"clients,omitempty"`
 }
 
 func ParseRequest(data []byte) (*Request, error) {
@@ -29,8 +32,8 @@ func ParseRequest(data []byte) (*Request, error) {
 	if err := dec.Decode(&r); err != nil {
 		return nil, fmt.Errorf("feature file: %w", err)
 	}
-	if len(r.Features) == 0 {
-		return nil, fmt.Errorf(`feature file: nothing to change (expected {"features": {...}})`)
+	if len(r.Features) == 0 && len(r.Clients) == 0 {
+		return nil, fmt.Errorf(`feature file: nothing to change (expected {"features": {...}} and/or {"clients": {...}})`)
 	}
 	return &r, nil
 }

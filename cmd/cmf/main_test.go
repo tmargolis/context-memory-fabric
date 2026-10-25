@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/probe"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
 )
@@ -62,11 +63,16 @@ func fakeMachine(t *testing.T, dockerUp bool) *run.Fake {
 		fake.Answers["docker version --format {{.Server.Version}}"] = run.Result{Err: errors.New("exit status 1"), Stderr: "Cannot connect to the Docker daemon"}
 	}
 	runner, goos = fake, "darwin"
+	appHome := t.TempDir() // AI app configs live here, never in the real home folder
+	clientEnv = func() clients.Env { return clients.Env{Home: appHome, OS: "darwin"} }
 	getHealth = func(context.Context, string) ([]byte, error) {
 		return []byte(`{"status":"ok","graph":"g","falkordb":{"reachable":true,"graph_exists":true},"clients_seen":[{"harness":"codex","last_seen":"2026-10-24T12:00:00Z"}]}`), nil
 	}
 	now = func() time.Time { return time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { runner, getHealth, goos, now = run.Exec{}, probe.HTTPGet, runtime.GOOS, time.Now })
+	t.Cleanup(func() {
+		runner, getHealth, goos, now = run.Exec{}, probe.HTTPGet, runtime.GOOS, time.Now
+		clientEnv = defaultClientEnv
+	})
 	return fake
 }
 

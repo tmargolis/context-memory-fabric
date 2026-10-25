@@ -438,8 +438,49 @@ func checkCapture(f probe.Facts) Result {
 	return r
 }
 
-func checkClients(probe.Facts) Result {
-	return Result{ID: "clients", Title: "Each AI app has exactly one CMF entry", Level: NA, Detail: "client config checks come with item 3.4"}
+func checkClients(f probe.Facts) Result {
+	r := Result{ID: "clients", Title: "Each AI app has exactly one CMF entry"}
+	if f.Clients == nil {
+		r.Level, r.Detail = NA, "not checked"
+		return r
+	}
+	var bad, good, unset []string
+	for _, s := range f.Clients {
+		cmf := s.CMF()
+		switch {
+		case s.Err != "":
+			bad = append(bad, s.Label+": "+s.Err)
+		case !s.Installed:
+		case len(cmf) == 0:
+			unset = append(unset, s.ID)
+		case s.Healthy():
+			good = append(good, s.Label)
+		case len(cmf) > 1:
+			bad = append(bad, fmt.Sprintf("%s has %d CMF entries", s.Label, len(cmf)))
+		default:
+			bad = append(bad, fmt.Sprintf("%s's CMF entry %q doesn't reach this install", s.Label, cmf[0].Name))
+		}
+	}
+	tail := ""
+	if len(unset) > 0 {
+		tail = "; no entry: " + strings.Join(unset, ", ") + " (`cmf clients set <app>` adds one; apps using a claude.ai connector don't need one)"
+	}
+	switch {
+	case len(bad) > 0:
+		r.Level, r.Detail = Fail, strings.Join(bad, "; ")+tail
+		self := f.Self
+		if self == "" {
+			self = "cmf"
+		}
+		r.Fix = &Fix{Label: "Keep one working CMF entry per app", Steps: []Step{
+			step("rewrite the affected apps' configs (backups kept)", run.Cmd{Name: self, Args: []string{"clients", "fix", "--yes"}}),
+		}}
+	case len(good) > 0:
+		r.Level, r.Detail = OK, "connected: "+strings.Join(good, ", ")+tail
+	default:
+		r.Level, r.Detail = OK, "no app has a local CMF entry"+tail
+	}
+	return r
 }
 
 func checkAppsSeen(f probe.Facts) Result {

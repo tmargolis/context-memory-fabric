@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tmargolis/context-memory-fabric/internal/apply"
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
@@ -150,6 +151,18 @@ func runApply(args []string, out io.Writer) error {
 	}
 
 	plan := m.Plan(env, req, pctx)
+	// AI app entries (item 3.4) reach the server the new .env describes.
+	for id := range req.Clients {
+		if _, ok := clients.Find(id); !ok {
+			plan.Errors = append(plan.Errors, fmt.Sprintf("unknown AI app %q under \"clients\" (one of %s)", id, strings.Join(clients.IDs(), ", ")))
+		}
+	}
+	var writes []apply.ClientWrite
+	if plan.OK() && len(req.Clients) > 0 {
+		if writes, err = planClientWrites(req.Clients, clientTarget(plan.Env), clientEnv()); err != nil {
+			plan.Errors = append(plan.Errors, err.Error())
+		}
+	}
 	for _, w := range plan.Warnings {
 		fmt.Fprintln(out, "Note:", w)
 	}
@@ -160,7 +173,7 @@ func runApply(args []string, out io.Writer) error {
 		}
 		return errors.New("nothing was changed")
 	}
-	if plan.Empty() {
+	if plan.Empty() && len(writes) == 0 {
 		fmt.Fprintln(out, "Nothing to change: the machine already matches the feature file.")
 		return nil
 	}
@@ -169,14 +182,17 @@ func runApply(args []string, out io.Writer) error {
 	if summary != "" {
 		fmt.Fprintln(out, "  "+summary)
 	}
-	fmt.Fprintf(out, "  Write %s (backup kept):\n", h.EnvFile())
-	for _, c := range plan.Changes {
-		fmt.Fprintln(out, "    -", c)
+	printClientWrites(out, writes)
+	if !plan.Empty() {
+		fmt.Fprintf(out, "  Write %s (backup kept):\n", h.EnvFile())
+		for _, c := range plan.Changes {
+			fmt.Fprintln(out, "    -", c)
+		}
+		for _, svc := range plan.Stop {
+			fmt.Fprintf(out, "  Stop the %s container\n", svc)
+		}
+		fmt.Fprintln(out, "  Recreate the containers whose settings changed (docker compose up -d), then wait for the server")
 	}
-	for _, svc := range plan.Stop {
-		fmt.Fprintf(out, "  Stop the %s container\n", svc)
-	}
-	fmt.Fprintln(out, "  Recreate the containers whose settings changed (docker compose up -d), then wait for the server")
 	for _, n := range plan.Notes {
 		fmt.Fprintln(out, "  Cost: "+n)
 	}
@@ -184,17 +200,18 @@ func runApply(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Dry run: nothing was changed.")
 		return nil
 	}
-	if !facts.Docker.Responding {
+	if !plan.Empty() && !facts.Docker.Responding {
 		return errors.New("Docker isn't answering, so the change can't be checked; run `cmf doctor` first")
 	}
 	if !yes && !confirm(out, "Apply?") {
 		return errors.New("cancelled; nothing was changed")
 	}
 	fmt.Fprintln(out, "Applying:")
-	backup, err := executor(h, m, facts.Port, out).Apply(ctx, plan, summary)
+	backup, err := executor(h, m, facts.Port, out).Apply(ctx, plan, summary, writes...)
 	if err != nil {
 		return err
 	}
+	afterNotes(out, writes)
 	fmt.Fprintf(out, "Done. Undo with: cmf restore %s\n", backup.Stamp)
 	return nil
 }

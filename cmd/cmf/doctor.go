@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -30,8 +31,11 @@ func collect(ctx context.Context) (probe.Facts, error) {
 	if err != nil {
 		return probe.Facts{}, err
 	}
-	p := probe.Prober{Home: h, Runner: runner, Get: getHealth, OS: goos, Now: now}
-	return p.Collect(ctx), nil
+	cenv := clientEnv()
+	p := probe.Prober{Home: h, Runner: runner, Get: getHealth, OS: goos, Now: now, ClientEnv: &cenv}
+	f := p.Collect(ctx)
+	f.Self, _ = os.Executable()
+	return f, nil
 }
 
 var marks = map[checks.Level]string{checks.OK: "ok  ", checks.Warn: "WARN", checks.Fail: "FAIL", checks.NA: "n/a "}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
 	"github.com/tmargolis/context-memory-fabric/internal/run"
@@ -149,6 +150,8 @@ type Facts struct {
 	HealthErr string
 	Nodes     int // -1 when unknown
 	NodesErr  string
+	Clients   []clients.State // each AI app's CMF entries; nil when not checked
+	Self      string          // this cmf binary, for fixes that run cmf itself
 }
 
 // Service returns the stack's container for a compose service, if any.
@@ -212,11 +215,13 @@ type Prober struct {
 	Get    HealthGetter
 	OS     string // runtime.GOOS, injectable
 	Now    func() time.Time
+	// ClientEnv locates the AI apps' config files; nil skips that check.
+	ClientEnv *clients.Env
 }
 
 // envKeys are the .env values checks read. FALKORDB_PASSWORD is used for the
 // node count and never leaves the probe.
-var envKeys = []string{"COMPOSE_PROFILES", "CMF_MCP_PORT", "FALKORDB_USER", "FALKORDB_PASSWORD", "CMF_REPO"}
+var envKeys = []string{"COMPOSE_PROFILES", "CMF_MCP_PORT", "FALKORDB_USER", "FALKORDB_PASSWORD", "CMF_REPO", "CMF_MCP_ISSUER_URL"}
 
 func (p Prober) Collect(ctx context.Context) Facts {
 	f := Facts{At: p.Now(), OS: p.OS, Home: p.Home.Dir, Env: map[string]string{}, Port: 8000, Nodes: -1}
@@ -229,6 +234,10 @@ func (p Prober) Collect(ctx context.Context) Facts {
 	}
 	if port, err := strconv.Atoi(f.Env["CMF_MCP_PORT"]); err == nil && port > 0 {
 		f.Port = port
+	}
+	if p.ClientEnv != nil {
+		t := clients.Target{Port: f.Port, PublicURL: f.Env["CMF_MCP_ISSUER_URL"]}
+		f.Clients = clients.InspectAll(*p.ClientEnv, t)
 	}
 	if state, err := mode.Load(p.Home); err != nil {
 		f.ModeErr = err.Error()

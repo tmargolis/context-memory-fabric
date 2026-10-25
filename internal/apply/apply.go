@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 	"github.com/tmargolis/context-memory-fabric/internal/probe"
@@ -88,24 +90,52 @@ func (e Executor) bringUp(ctx context.Context, stop []string) error {
 // Apply writes the plan's .env and brings the stack in line. It returns the
 // backup that `cmf restore` takes. On failure it restores that backup and
 // says so in the error.
-func (e Executor) Apply(ctx context.Context, plan *features.Plan, summary string) (*home.Backup, error) {
+func (e Executor) Apply(ctx context.Context, plan *features.Plan, summary string, writes ...ClientWrite) (*home.Backup, error) {
 	backup, err := e.Home.NewBackup(e.Now())
 	if err != nil {
 		return nil, err
 	}
 	backup.SaveNote("cmf apply: " + summary)
+	// Client configs first: each is backed up into the same set, so a later
+	// failure restores them along with .env.
+	for _, w := range writes {
+		e.Log("  - write " + w.Change.Path + " (backup kept)")
+		if err := w.Change.Write(backup, w.Target, w.Env, w.Want); err != nil {
+			return backup, e.rollbackFiles(backup, err)
+		}
+	}
+	if plan.Empty() {
+		return backup, nil
+	}
 	e.Log("  - back up " + e.Home.EnvFile() + " to " + backup.Dir())
 	if err := backup.Save(e.Home.EnvFile()); err != nil {
-		return backup, fmt.Errorf("backing up .env: %w", err)
+		return backup, e.rollbackFiles(backup, fmt.Errorf("backing up .env: %w", err))
 	}
 	e.Log("  - write " + e.Home.EnvFile())
 	if err := plan.Env.Write(e.Home.EnvFile()); err != nil {
-		return backup, fmt.Errorf("writing .env: %w", err)
+		return backup, e.rollbackFiles(backup, fmt.Errorf("writing .env: %w", err))
 	}
 	if err := e.bringUp(ctx, plan.Stop); err != nil {
 		return backup, e.rollback(ctx, backup, err)
 	}
 	return backup, nil
+}
+
+// ClientWrite is one AI app config rewrite that rides along with an Apply.
+type ClientWrite struct {
+	Change *clients.Change
+	Target clients.Target
+	Env    clients.Env
+	Want   bool
+}
+
+// rollbackFiles puts the backed-up files back when the stack wasn't touched yet.
+func (e Executor) rollbackFiles(backup *home.Backup, cause error) error {
+	e.Log("Failed: " + cause.Error())
+	if _, err := e.Home.Restore(backup.Stamp, false, e.Now()); err != nil {
+		return fmt.Errorf("%w; restoring %s also failed: %v (restore it by hand from %s)", cause, backup.Stamp, err, backup.Dir())
+	}
+	return fmt.Errorf("%w; the files written so far were put back", cause)
 }
 
 func (e Executor) rollback(ctx context.Context, backup *home.Backup, cause error) error {
@@ -124,10 +154,24 @@ func (e Executor) rollback(ctx context.Context, backup *home.Backup, cause error
 // restore can be undone) and brings the stack in line.
 func (e Executor) Restore(ctx context.Context, stamp string) (*home.Backup, error) {
 	before, _ := home.ReadEnv(e.Home.EnvFile())
+	info, err := e.Home.Backup(stamp)
+	if err != nil {
+		return nil, err
+	}
 	e.Log("  - back up the current files, then put back the ones from " + stamp)
 	undo, err := e.Home.Restore(stamp, true, e.Now())
 	if err != nil {
 		return undo, err
+	}
+	// A backup of AI app configs alone (cmf clients) leaves the stack as it is.
+	stack := false
+	for _, f := range info.Files {
+		if rel, err := filepath.Rel(e.Home.Dir, f); err == nil && !strings.HasPrefix(rel, "..") {
+			stack = true
+		}
+	}
+	if !stack {
+		return undo, nil
 	}
 	after, _ := home.ReadEnv(e.Home.EnvFile())
 	return undo, e.bringUp(ctx, e.Manifest.Stops(before, after))
