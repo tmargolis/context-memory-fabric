@@ -78,12 +78,41 @@ type Health struct {
 	KnowledgeSources []string          `json:"knowledge_sources"`
 	BackgroundWrites []BackgroundWrite `json:"background_writes"`
 	ClientsSeen      []ClientSeen      `json:"clients_seen"`
+	// Item 1.1; absent from servers that predate it.
+	ConfigCheck   *ConfigCheck   `json:"config_check"`
+	Embedding     *Embedding     `json:"embedding"`
+	ProviderTests []ProviderTest `json:"provider_tests"` // only with ?check=providers
 }
 
+// BackgroundWrite is one recent remember's outcome. The episode name and
+// error message are left out: they can carry memory text.
 type BackgroundWrite struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
-	At     string `json:"at"`
+	Status     string `json:"status"`
+	ErrorKind  string `json:"error_kind"`
+	QueuedAt   string `json:"queued_at"`
+	FinishedAt string `json:"finished_at"`
+}
+
+// ConfigCheck is the server's startup config check (item 1.1).
+type ConfigCheck struct {
+	Problems []string `json:"problems"`
+	Warnings []string `json:"warnings"`
+}
+
+// Embedding is the configured vector width and the width of the vectors
+// already in the graph (Graph nil: none yet).
+type Embedding struct {
+	Configured int    `json:"configured"`
+	Graph      *int   `json:"graph"`
+	Error      string `json:"error"`
+}
+
+// ProviderTest is one live call to a provider's model list.
+type ProviderTest struct {
+	Role     string `json:"role"`
+	Provider string `json:"provider"`
+	OK       bool   `json:"ok"`
+	Detail   string `json:"detail"`
 }
 
 type ClientSeen struct {
@@ -146,7 +175,7 @@ func (f Facts) HasProfile(name string) bool {
 type HealthGetter func(ctx context.Context, url string) ([]byte, error)
 
 func HTTPGet(ctx context.Context, url string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -378,7 +407,8 @@ func (p Prober) hostMCP(ctx context.Context) []Process {
 }
 
 func (p Prober) health(ctx context.Context, f *Facts) {
-	body, err := p.Get(ctx, fmt.Sprintf("http://127.0.0.1:%d/health", f.Port))
+	// check=providers adds the live provider tests; older servers ignore it.
+	body, err := p.Get(ctx, fmt.Sprintf("http://127.0.0.1:%d/health?check=providers", f.Port))
 	if err != nil {
 		f.HealthErr = err.Error()
 		return

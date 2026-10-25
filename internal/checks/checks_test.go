@@ -169,9 +169,9 @@ func TestHealthMissingOffersServerRestart(t *testing.T) {
 
 func TestFailedBackgroundWritesWarn(t *testing.T) {
 	f := healthy()
-	f.Health.BackgroundWrites = []probe.BackgroundWrite{{Status: "committed"}, {Status: "failed", Reason: "embedding width mismatch"}}
+	f.Health.BackgroundWrites = []probe.BackgroundWrite{{Status: "failed", ErrorKind: "embedding_mismatch"}, {Status: "committed"}, {Status: "failed", ErrorKind: "provider_quota"}}
 	r := byID(Evaluate(f))["capture"]
-	if r.Level != Warn || !strings.Contains(r.Detail, "embedding width mismatch") {
+	if r.Level != Warn || !strings.Contains(r.Detail, "2 of the last 3 background writes failed, latest: embedding_mismatch") {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -200,5 +200,60 @@ func TestApplyFixStopsAtFirstFailure(t *testing.T) {
 	err := ApplyFix(context.Background(), fake, fix, func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "boom") || fake.Ran("c") {
 		t.Fatalf("%v %+v", err, fake.Calls)
+	}
+}
+
+func TestProviderRow(t *testing.T) {
+	f := healthy()
+	if r := byID(Evaluate(f))["providers"]; r.Level != NA || !strings.Contains(r.Detail, "predates") {
+		t.Fatalf("old server: %+v", r)
+	}
+	f.Health.ProviderTests = []probe.ProviderTest{
+		{Role: "LLM", Provider: "local", OK: true, Detail: "answers"},
+		{Role: "embeddings", Provider: "local", OK: true, Detail: "answers"},
+	}
+	if r := byID(Evaluate(f))["providers"]; r.Level != OK || r.Detail != "LLM local, embeddings local answer" {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.ConfigCheck = &probe.ConfigCheck{Warnings: []string{"capture key missing"}}
+	if r := byID(Evaluate(f))["providers"]; r.Level != Warn || r.Detail != "capture key missing" {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.ProviderTests[1] = probe.ProviderTest{Role: "embeddings", Provider: "openai", Detail: "openai rejected the API key (OPENAI_API_KEY)"}
+	if r := byID(Evaluate(f))["providers"]; r.Level != Fail || r.Detail != "embeddings openai: openai rejected the API key (OPENAI_API_KEY)" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestEmbeddingRow(t *testing.T) {
+	f := healthy()
+	f.Health.Graph = "g"
+	if r := byID(Evaluate(f))["embedding"]; r.Level != NA {
+		t.Fatalf("old server: %+v", r)
+	}
+	w := 768
+	f.Health.Embedding = &probe.Embedding{Configured: 768}
+	if r := byID(Evaluate(f))["embedding"]; r.Level != OK || !strings.Contains(r.Detail, "no vectors yet") {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.Embedding.Graph = &w
+	if r := byID(Evaluate(f))["embedding"]; r.Level != OK {
+		t.Fatalf("%+v", r)
+	}
+	f.Health.Embedding.Configured = 1024
+	if r := byID(Evaluate(f))["embedding"]; r.Level != Fail || !strings.Contains(r.Detail, `EMBEDDING_DIM is 1024 but graph "g" holds 768-wide vectors`) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestRestartingServerPointsAtLogs(t *testing.T) {
+	f := healthy()
+	for i := range f.Stack {
+		if f.Stack[i].Service == "cmf-server" {
+			f.Stack[i].State = "restarting"
+		}
+	}
+	if r := byID(Evaluate(f))["stack"]; r.Level != Fail || !strings.Contains(r.Detail, "cmf logs cmf-server --errors") {
+		t.Fatalf("%+v", r)
 	}
 }

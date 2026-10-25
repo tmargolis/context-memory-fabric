@@ -86,7 +86,8 @@ func TestErrorLines(t *testing.T) {
 func TestReportCarriesNoSecrets(t *testing.T) {
 	h := &probe.Health{Status: "ok", Version: "0.9", Runtime: "docker", Graph: "mem-fabric-local",
 		KnowledgeSources: []string{"notion"},
-		BackgroundWrites: []probe.BackgroundWrite{{Status: "failed", Reason: `quota for AIzaSyD-not-a-real-key-123456789 on "a long memory about the user's family"`}},
+		BackgroundWrites: []probe.BackgroundWrite{{Status: "failed", ErrorKind: "provider_quota", FinishedAt: "2026-10-24T12:00:00Z"}},
+		ConfigCheck:      &probe.ConfigCheck{Warnings: []string{"key AIzaSyD-not-a-real-key-123456789 looks odd"}},
 		ClientsSeen:      []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC)}}}
 	f := probe.Facts{OS: "darwin", Health: h, Nodes: 6769, Docker: probe.Docker{Installed: true, Responding: true, Version: "29.7.2"}}
 	report := Build(Input{At: time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC), Version: "dev", Arch: "arm64", Facts: f,
@@ -98,7 +99,7 @@ func TestReportCarriesNoSecrets(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"graph mem-fabric-local (6769 nodes", "COMPOSE_PROFILES=spark,capture", "GEMINI_API_KEY (set)",
-		"EMPTY_ONE (empty)", "[ok] Docker installed and running", "last 4 error lines", "client seen: claude_desktop", "[text removed]"} {
+		"EMPTY_ONE (empty)", "[ok] Docker installed and running", "last 4 error lines", "client seen: claude_desktop", "background write 2026-10-24T12:00:00Z failed provider_quota", "config warning: key [redacted] looks odd"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report lacks %q:\n%s", want, report)
 		}

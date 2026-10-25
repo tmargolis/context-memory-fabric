@@ -169,6 +169,10 @@ func checkStack(f probe.Facts) Result {
 	case len(missing) > 0:
 		r.Level = Fail
 		r.Detail = "not running: " + strings.Join(missing, ", ")
+		if c := f.Service("cmf-server"); c != nil && (c.State == "restarting" || c.State == "exited") {
+			// Usually the startup config check (item 1.1) refusing to serve.
+			r.Detail += "; cmf-server keeps stopping, and `cmf logs cmf-server --errors` says why"
+		}
 		r.Fix = &Fix{Label: "Start the stack", Steps: []Step{step("docker compose up -d in "+f.Home, compose(f, "up", "-d"))}}
 	case len(unhealthy) > 0:
 		r.Level = Fail
@@ -324,18 +328,59 @@ func checkGraph(f probe.Facts) Result {
 }
 
 func checkProviders(f probe.Facts) Result {
-	r := Result{ID: "providers", Title: "Model providers answer", Level: NA, Detail: "a live provider test comes with item 1.1"}
-	if f.Health != nil {
-		p := f.Health.Providers
-		r.Detail = fmt.Sprintf("LLM %s, embeddings %s, capture %s; %s", p.LLM, p.Embeddings, p.CaptureLLM, r.Detail)
+	r := Result{ID: "providers", Title: "Model providers answer"}
+	if r, missing := healthMissing(r, f); missing {
+		r.Fix = nil
+		return r
+	}
+	h := f.Health
+	if h.ProviderTests == nil {
+		p := h.Providers
+		r.Level, r.Detail = NA, fmt.Sprintf("LLM %s, embeddings %s, capture %s; this server predates the live provider test (item 1.1)", p.LLM, p.Embeddings, p.CaptureLLM)
+		return r
+	}
+	var bad, good []string
+	for _, t := range h.ProviderTests {
+		s := fmt.Sprintf("%s %s: %s", t.Role, t.Provider, t.Detail)
+		if t.OK {
+			good = append(good, fmt.Sprintf("%s %s", t.Role, t.Provider))
+		} else {
+			bad = append(bad, s)
+		}
+	}
+	var warnings []string
+	if h.ConfigCheck != nil {
+		warnings = h.ConfigCheck.Warnings
+	}
+	switch {
+	case len(bad) > 0:
+		r.Level, r.Detail = Fail, strings.Join(bad, "; ")
+	case len(warnings) > 0:
+		r.Level, r.Detail = Warn, strings.Join(warnings, "; ")
+	default:
+		r.Level, r.Detail = OK, strings.Join(good, ", ")+" answer"
 	}
 	return r
 }
 
 func checkEmbedding(f probe.Facts) Result {
-	r := Result{ID: "embedding", Title: "Embedding width matches the graph", Level: NA, Detail: "compared against the graph's index with item 1.1"}
-	if f.Health != nil && f.Health.Providers.EmbeddingDim > 0 {
-		r.Detail = fmt.Sprintf("configured width %d; %s", f.Health.Providers.EmbeddingDim, r.Detail)
+	r := Result{ID: "embedding", Title: "Embedding width matches the graph"}
+	if r, missing := healthMissing(r, f); missing {
+		r.Fix = nil
+		return r
+	}
+	e := f.Health.Embedding
+	switch {
+	case e == nil:
+		r.Level, r.Detail = NA, fmt.Sprintf("configured width %d; this server predates the graph comparison (item 1.1)", f.Health.Providers.EmbeddingDim)
+	case e.Error != "":
+		r.Level, r.Detail = Warn, fmt.Sprintf("configured width %d; couldn't read the graph's: %s", e.Configured, e.Error)
+	case e.Graph == nil:
+		r.Level, r.Detail = OK, fmt.Sprintf("the graph has no vectors yet; new ones will be %d wide", e.Configured)
+	case *e.Graph == e.Configured:
+		r.Level, r.Detail = OK, fmt.Sprintf("%d, the same as the graph's vectors", e.Configured)
+	default:
+		r.Level, r.Detail = Fail, fmt.Sprintf("EMBEDDING_DIM is %d but graph %q holds %d-wide vectors; set it back to %d with the embedder that made them, or use a new graph", e.Configured, f.Health.Graph, *e.Graph, *e.Graph)
 	}
 	return r
 }
@@ -380,9 +425,13 @@ func checkCapture(f probe.Facts) Result {
 		}
 	}
 	if len(failed) > 0 {
-		last := failed[len(failed)-1]
+		latest := failed[0] // /health lists them newest first
+		kind := latest.ErrorKind
+		if kind == "" {
+			kind = "no reason recorded"
+		}
 		r.Level = Warn
-		r.Detail = fmt.Sprintf("%s; %d of the last %d background writes failed, latest: %s", r.Detail, len(failed), len(f.Health.BackgroundWrites), last.Reason)
+		r.Detail = fmt.Sprintf("%s; %d of the last %d background writes failed, latest: %s", r.Detail, len(failed), len(f.Health.BackgroundWrites), kind)
 	} else if n := len(f.Health.BackgroundWrites); n > 0 {
 		r.Detail += fmt.Sprintf("; last %d background writes committed", n)
 	}

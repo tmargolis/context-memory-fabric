@@ -70,7 +70,22 @@ func Build(in Input) string {
 		line("  providers: LLM %s, embeddings %s (%d dims), capture %s", orDash(h.Providers.LLM), orDash(h.Providers.Embeddings), h.Providers.EmbeddingDim, orDash(h.Providers.CaptureLLM))
 		line("  knowledge sources: %s", orDash(strings.Join(h.KnowledgeSources, ", ")))
 		for _, w := range h.BackgroundWrites {
-			line("  background write %s %s %s", w.At, w.Status, w.Reason)
+			at := w.FinishedAt
+			if at == "" {
+				at = w.QueuedAt
+			}
+			line("  background write %s %s %s", at, w.Status, w.ErrorKind)
+		}
+		if c := h.ConfigCheck; c != nil {
+			for _, p := range c.Problems {
+				line("  config problem: %s", p)
+			}
+			for _, w := range c.Warnings {
+				line("  config warning: %s", w)
+			}
+		}
+		for _, t := range h.ProviderTests {
+			line("  provider test %s %s ok=%t: %s", t.Role, t.Provider, t.OK, t.Detail)
 		}
 		for _, c := range h.ClientsSeen {
 			line("  client seen: %s, last %s", c.Harness, c.LastSeen.UTC().Format(time.RFC3339))

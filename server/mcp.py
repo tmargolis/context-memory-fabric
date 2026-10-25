@@ -170,7 +170,8 @@ async def health(request: Request) -> JSONResponse:
     """
     if server_status.is_proxied(request.headers):
         return JSONResponse(server_status.minimal())
-    return JSONResponse(await asyncio.to_thread(server_status.snapshot))
+    tests = request.query_params.get("check") == "providers"
+    return JSONResponse(await asyncio.to_thread(server_status.snapshot, tests))
 
 
 # MS4a MCP-boundary capture: journal a source event for every tool call this
@@ -2077,6 +2078,12 @@ def main():
     # live GRAPH.CONFIG SET, silently puts TIMEOUT back at 1000 ms; say so
     # here rather than in a stream of "Query timed out" recalls.
     log_query_timeout_check()
+    # Item 1.1: one plain sentence per configuration problem, then exit,
+    # instead of serving tools that will fail on first use.
+    from server.core.startup_check import run_startup_check
+
+    if not run_startup_check():
+        sys.exit(2)
 
     if args.transport in ("sse", "streamable-http"):
         import uvicorn

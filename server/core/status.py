@@ -80,8 +80,25 @@ def clients_seen(journal_path: Optional[Path] = None, now: Optional[datetime] = 
     ]
 
 
-def snapshot() -> dict[str, Any]:
-    """Everything /health reports. Never raises for an unreachable dependency."""
+def embedding_status(configured: int, graph: str, graph_exists: Optional[bool]) -> dict[str, Any]:
+    """The configured width and the width of the graph's stored vectors (None: none yet)."""
+    out: dict[str, Any] = {"configured": configured, "graph": None}
+    if not graph_exists:
+        return out
+    try:
+        from server.core.startup_check import graph_embedding_dim
+
+        out["graph"] = graph_embedding_dim(graph)
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def snapshot(provider_tests: bool = False) -> dict[str, Any]:
+    """Everything /health reports. Never raises for an unreachable dependency.
+
+    provider_tests adds a live call to each provider's model list (item 1.1).
+    """
     from server.core.config import capture_llm_provider_from_env, load_config
     from server.memory_writes import get_default_write_log
     from server.providers.memory_graphiti import resolve_target_database
@@ -102,13 +119,16 @@ def snapshot() -> dict[str, Any]:
         writes = get_default_write_log().recent(5)
     except sqlite3.Error:
         writes = []
-    return {
+    from server.core import startup_check
+
+    fdb = falkordb_status(graph)
+    snap = {
         "status": "ok",
         "version": version(),
         "runtime": runtime(),
         "started_at": STARTED_AT,
         "graph": graph,
-        "falkordb": falkordb_status(graph),
+        "falkordb": fdb,
         "providers": {
             "llm": config.llm_provider,
             "embeddings": config.embed_provider,
@@ -121,7 +141,12 @@ def snapshot() -> dict[str, Any]:
             for w in writes
         ],
         "clients_seen": clients_seen(),
+        "config_check": startup_check.LAST_RESULT.as_dict() if startup_check.LAST_RESULT else None,
+        "embedding": embedding_status(config.embedding_dim, graph, fdb.get("graph_exists")),
     }
+    if provider_tests:
+        snap["provider_tests"] = startup_check.provider_tests()
+    return snap
 
 
 # Headers a reverse proxy or tunnel adds. /health gives its full snapshot only
