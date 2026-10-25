@@ -111,3 +111,18 @@ func TestApplyWithClientsOnly(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestMigrateNothingToDo(t *testing.T) {
+	fake := fakeMachine(t, true)
+	fake.Answers["docker info"] = run.Result{}
+	userHome = func() (string, error) { return clientEnv().Home, nil }
+	t.Cleanup(func() { userHome = os.UserHomeDir })
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"migrate"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "Nothing to migrate") ||
+		!strings.Contains(out.String(), "No repo-based CMF install found") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if code := runCLI([]string{"migrate", "restore"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "needs the stamp") {
+		t.Fatal(errOut.String())
+	}
+}

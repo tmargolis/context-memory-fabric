@@ -15,7 +15,8 @@ import (
 type BackupInfo struct {
 	Stamp string
 	// Kind is "cmf" (made by the cmf CLI: home/ and external/ trees),
-	// "consolidate" (made by scripts/consolidate_install.py) or "unknown".
+	// "migrate" (made by cmf migrate), "consolidate" (made by
+	// scripts/consolidate_install.py) or "unknown".
 	Kind  string
 	Files []string // paths a cmf restore would put back (or remove)
 	Note  string   // backups/<stamp>/NOTE, when the change left one
@@ -64,6 +65,8 @@ func (h Home) Backup(stamp string) (BackupInfo, error) {
 	switch {
 	case len(files) > 0:
 		info.Kind, info.Files = "cmf", files
+	case Exists(filepath.Join(dir, "migrate.json")):
+		info.Kind = "migrate"
 	case Exists(filepath.Join(dir, "facts.json")) || Exists(filepath.Join(dir, "falkordb-dump.rdb")) || Exists(filepath.Join(dir, "repo.env")) || Exists(filepath.Join(dir, "compose.yml")):
 		info.Kind = "consolidate"
 	}
@@ -115,6 +118,8 @@ func (h Home) Restore(stamp string, undo bool, now time.Time) (*Backup, error) {
 		return nil, err
 	}
 	switch info.Kind {
+	case "migrate":
+		return nil, fmt.Errorf("backup %s was made by `cmf migrate`; undo it with `cmf migrate restore %s`", stamp, stamp)
 	case "consolidate":
 		return nil, fmt.Errorf("backup %s was made by scripts/consolidate_install.py; undo it with `python scripts/consolidate_install.py restore %s`", stamp, stamp)
 	case "unknown":
