@@ -44,9 +44,13 @@ episodic       factual       mutation /       durable          context        pr
 
 ---
 
-## Quickstart (Docker Compose Preview)
+## Quickstart
 
-The fastest way to experience CMF is using the self-contained Compose preview, which includes a pre-configured FalkorDB instance and a fictional starter knowledge wiki:
+**[docs/QUICKSTART.md](docs/QUICKSTART.md)**: install Docker Desktop, download CMF Setup, pick your features, Apply, and ask Claude to "Run the CMF self-test". No clone, no config files.
+
+### From a checkout (Docker Compose preview)
+
+Until the first CMF Setup release is published, or to try CMF from source, use the self-contained Compose preview, which includes a pre-configured FalkorDB instance and a fictional starter knowledge wiki:
 
 ```bash
 # 1. Clone repository
