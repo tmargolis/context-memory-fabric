@@ -161,3 +161,18 @@ func TestLocalVolumes(t *testing.T) {
 		t.Fatalf("got\n%s", got)
 	}
 }
+
+func TestPinImage(t *testing.T) {
+	h := home.Home{Dir: t.TempDir()}
+	if c, _ := PinImage(h, nil, "dev"); len(c) != 0 {
+		t.Fatal("a dev build pins nothing")
+	}
+	c, err := PinImage(h, nil, "v0.2.0")
+	if err != nil || len(c) != 1 || !strings.Contains(string(c[0].Data), "CMF_VERSION=0.2.0") {
+		t.Fatalf("%v %+v", err, c)
+	}
+	os.WriteFile(h.EnvFile(), []byte("CMF_VERSION=0.2.0\n"), 0o600)
+	if c, _ := PinImage(h, nil, "0.2.0"); len(c) != 0 {
+		t.Fatal("already pinned")
+	}
+}

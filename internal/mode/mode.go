@@ -175,6 +175,28 @@ func Plan(h home.Home, m Mode) ([]Change, error) {
 	return changes, nil
 }
 
+// PinImage adds to changes, for standard mode, the CMF_VERSION that makes the
+// stack run the server image released with this cmf (instead of latest).
+// A development build ("dev" or "") pins nothing.
+func PinImage(h home.Home, changes []Change, version string) ([]Change, error) {
+	version = strings.TrimPrefix(version, "v")
+	if version == "" || version == "dev" {
+		return changes, nil
+	}
+	env, err := home.ReadEnv(h.EnvFile())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if env == nil {
+		env = &home.Env{}
+	}
+	if env.Get("CMF_VERSION") == version {
+		return changes, nil
+	}
+	env.Set("CMF_VERSION", version)
+	return append(changes, Change{Path: h.EnvFile(), Note: "set CMF_VERSION=" + version + " (the server image released with this cmf)", Data: env.Bytes(), Perm: 0o600}), nil
+}
+
 // Apply backs up every file in changes, then writes them. It returns the
 // backup so the caller can name it for `cmf restore`.
 func Apply(h home.Home, changes []Change, now time.Time) (*home.Backup, error) {

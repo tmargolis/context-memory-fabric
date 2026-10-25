@@ -76,6 +76,11 @@ func setMode(h home.Home, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if target.Mode == mode.Standard {
+		if changes, err = mode.PinImage(h, changes, version); err != nil {
+			return err
+		}
+	}
 	if len(changes) == 0 {
 		fmt.Fprintln(out, "Nothing to change.")
 		return nil
