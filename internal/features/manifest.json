@@ -74,10 +74,10 @@
       "id": "demo-wiki",
       "group": "knowledge",
       "label": "Demo wiki (fictional demo data)",
-      "description": "The starter wiki that ships with CMF, to try search on. Needs Developer mode until packaging ships it (step L).",
+      "description": "A small fictional wiki that ships with CMF, to try search on. Replace it with your own notes when you're ready.",
       "enabled_when": {"all": [{"list_has": {"key": "CMF_KNOWLEDGE_PROVIDERS", "item": "wiki", "default": "wiki"}},
                                {"env_suffix": {"key": "LLM_WIKI_PATH", "suffix": "starter-wiki"}}]},
-      "on_enable": {"set": {"LLM_WIKI_PATH": "{{repo}}/starter-wiki"}, "list_add": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}},
+      "on_enable": {"set": {"LLM_WIKI_PATH": "{{starter_wiki}}"}, "list_add": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}},
       "on_disable": {"unset": ["LLM_WIKI_PATH"], "list_remove": {"CMF_KNOWLEDGE_PROVIDERS": "wiki"}}
     },
     {

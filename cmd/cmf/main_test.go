@@ -214,3 +214,19 @@ func TestApplyReportsEveryProblem(t *testing.T) {
 		t.Fatalf("code %d\n%s", code, out.String())
 	}
 }
+
+func TestWriteStarterWikiKeepsEditedNotes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "starter-wiki")
+	edited := filepath.Join(dir, "README.md")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(edited, []byte("mine"), 0o644)
+	if err := writeStarterWiki(dir); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(edited); string(data) != "mine" {
+		t.Fatalf("overwrote an existing note: %q", data)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "projects", "Project-Aether.md")); err != nil || len(data) == 0 {
+		t.Fatalf("demo note missing: %v", err)
+	}
+}

@@ -206,7 +206,7 @@ func TestApplyFixStopsAtFirstFailure(t *testing.T) {
 
 func TestProviderRow(t *testing.T) {
 	f := healthy()
-	if r := byID(Evaluate(f))["providers"]; r.Level != NA || !strings.Contains(r.Detail, "predates") {
+	if r := byID(Evaluate(f))["providers"]; r.Level != NA || !strings.Contains(r.Detail, "older than") {
 		t.Fatalf("old server: %+v", r)
 	}
 	f.Health.ProviderTests = []probe.ProviderTest{

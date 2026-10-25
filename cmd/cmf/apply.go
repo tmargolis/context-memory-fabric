@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	contextmemoryfabric "github.com/tmargolis/context-memory-fabric"
 	"github.com/tmargolis/context-memory-fabric/internal/apply"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/features"
@@ -199,7 +202,7 @@ func planRequest(ctx context.Context, req *features.Request) (*requestPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	pctx := features.Context{Nodes: facts.Nodes}
+	pctx := features.Context{Nodes: facts.Nodes, Home: h.Dir}
 	if state, err := mode.Load(h); err == nil && state.Mode.Mode == mode.Developer {
 		pctx.Repo = state.Mode.Repo
 	}
@@ -231,6 +234,9 @@ func (rp *requestPlan) Review() []string {
 	if s := strings.TrimRight(b.String(), "\n"); s != "" {
 		lines = append(lines, strings.Split(s, "\n")...)
 	}
+	if rp.Plan.StarterWiki != "" {
+		lines = append(lines, fmt.Sprintf("  Write the demo wiki's notes into %s (notes already there are kept)", rp.Plan.StarterWiki))
+	}
 	if !rp.Plan.Empty() {
 		lines = append(lines, fmt.Sprintf("  Write %s (backup kept):", rp.Home.EnvFile()))
 		for _, c := range rp.Plan.Changes {
@@ -256,12 +262,40 @@ func (rp *requestPlan) Ready() error {
 }
 
 func (rp *requestPlan) Apply(ctx context.Context, out io.Writer) (*home.Backup, error) {
+	if rp.Plan.StarterWiki != "" {
+		if err := writeStarterWiki(rp.Plan.StarterWiki); err != nil {
+			return nil, fmt.Errorf("writing the demo wiki: %w", err)
+		}
+	}
 	backup, err := executor(rp.Home, rp.Manifest, rp.Facts.Port, out).Apply(ctx, rp.Plan, describe(rp.Plan), rp.Writes...)
 	if err != nil {
 		return backup, err
 	}
 	afterNotes(out, rp.Writes)
 	return backup, nil
+}
+
+// writeStarterWiki writes the demo wiki carried in the binary into dir,
+// keeping any note already there (the user may have edited it).
+func writeStarterWiki(dir string) error {
+	root, err := fs.Sub(contextmemoryfabric.StarterWiki, "starter-wiki")
+	if err != nil {
+		return err
+	}
+	return fs.WalkDir(root, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		dst := filepath.Join(dir, filepath.FromSlash(path))
+		if _, err := os.Stat(dst); err == nil {
+			return nil
+		}
+		data, err := fs.ReadFile(root, path)
+		if err != nil {
+			return err
+		}
+		return home.WriteFile(dst, data, 0o644)
+	})
 }
 
 func describe(p *features.Plan) string {

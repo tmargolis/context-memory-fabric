@@ -211,8 +211,16 @@ func TestDemoWikiAndOwnSourcesAreExclusive(t *testing.T) {
 	if !p.OK() || p.Env.Get("LLM_WIKI_PATH") != "/src/cmf/starter-wiki" || p.Env.Get("CMF_KNOWLEDGE_PROVIDERS") != "wiki" || p.Env.Has("CMF_NOTION_TOKEN") {
 		t.Fatalf("%v %q %q", p.Errors, p.Env.Get("LLM_WIKI_PATH"), p.Env.Get("CMF_KNOWLEDGE_PROVIDERS"))
 	}
+	if p.StarterWiki != "" {
+		t.Fatalf("Developer mode uses the checkout's wiki, got %q to write", p.StarterWiki)
+	}
+	// Standard mode: the binary writes its copy into the CMF home.
+	p = plan(t, toddEnv, `{"features": {"demo-wiki": {"enabled": true}, "notion": {"enabled": false}}}`, Context{Home: "/h/.cmf"})
+	if !p.OK() || p.Env.Get("LLM_WIKI_PATH") != "/h/.cmf/starter-wiki" || p.StarterWiki != "/h/.cmf/starter-wiki" || !manifest(t).Enabled(p.Env, "demo-wiki") {
+		t.Fatalf("%v %q %q", p.Errors, p.Env.Get("LLM_WIKI_PATH"), p.StarterWiki)
+	}
 	p = plan(t, toddEnv, `{"features": {"demo-wiki": {"enabled": true}, "notion": {"enabled": false}}}`, Context{})
-	if !hasError(p, "needs Developer mode") {
+	if !hasError(p, "can't tell where CMF is installed") {
 		t.Fatal(p.Errors)
 	}
 }

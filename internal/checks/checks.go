@@ -345,7 +345,7 @@ func checkProviders(f probe.Facts) Result {
 	h := f.Health
 	if h.ProviderTests == nil {
 		p := h.Providers
-		r.Level, r.Detail = NA, fmt.Sprintf("LLM %s, embeddings %s, capture %s; this server predates the live provider test (item 1.1)", p.LLM, p.Embeddings, p.CaptureLLM)
+		r.Level, r.Detail = NA, fmt.Sprintf("LLM %s, embeddings %s, capture %s; this server is older than the live provider test; update it to see whether each one answers", p.LLM, p.Embeddings, p.CaptureLLM)
 		return r
 	}
 	var bad, good []string
@@ -381,7 +381,7 @@ func checkEmbedding(f probe.Facts) Result {
 	e := f.Health.Embedding
 	switch {
 	case e == nil:
-		r.Level, r.Detail = NA, fmt.Sprintf("configured width %d; this server predates the graph comparison (item 1.1)", f.Health.Providers.EmbeddingDim)
+		r.Level, r.Detail = NA, fmt.Sprintf("configured width %d; this server is older than the graph comparison; update it to check the graph's width", f.Health.Providers.EmbeddingDim)
 	case e.Error != "":
 		r.Level, r.Detail = Warn, fmt.Sprintf("configured width %d; couldn't read the graph's: %s", e.Configured, e.Error)
 	case e.Graph == nil:
@@ -404,7 +404,7 @@ func checkKnowledge(f probe.Facts) Result {
 		r.Level, r.Detail = OK, "none (memory only)"
 		return r
 	}
-	r.Level, r.Detail = OK, strings.Join(f.Health.KnowledgeSources, ", ")+" (reachability checks come with item 3.3's second pass)"
+	r.Level, r.Detail = OK, strings.Join(f.Health.KnowledgeSources, ", ")+" (configured; CMF doesn't test that it can reach them yet)"
 	return r
 }
 

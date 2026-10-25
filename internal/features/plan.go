@@ -41,6 +41,7 @@ func ParseRequest(data []byte) (*Request, error) {
 // Context is what the rules need besides .env.
 type Context struct {
 	Repo  string // developer mode's checkout, "" in standard mode
+	Home  string // the CMF home (~/.cmf)
 	Nodes int    // graph node count, -1 when unknown
 }
 
@@ -82,6 +83,9 @@ type Plan struct {
 	Notes    []string  `json:"notes"`    // cost notes and other things to know
 	Warnings []string  `json:"warnings"` // rule problems that were already there
 	Errors   []string  `json:"errors"`
+	// StarterWiki is where Apply writes the demo wiki before the stack
+	// starts ("" = nothing to write; Developer mode uses the checkout's).
+	StarterWiki string `json:"starter_wiki,omitempty"`
 }
 
 func (p *Plan) OK() bool                { return len(p.Errors) == 0 }
@@ -310,12 +314,19 @@ func setInput(env *home.Env, in *Input, values []string) {
 func (m *Manifest) write(p *Plan, f *Feature, w *Writes, ctx Context) {
 	for _, key := range sortedKeys(w.Set) {
 		value := w.Set[key]
-		if strings.Contains(value, "{{repo}}") {
-			if ctx.Repo == "" {
-				p.fail("%s needs Developer mode (a CMF checkout) until packaging ships it", f.Label)
+		if strings.Contains(value, "{{starter_wiki}}") {
+			dir := ""
+			switch {
+			case ctx.Repo != "":
+				dir = filepath.Join(ctx.Repo, "starter-wiki")
+			case ctx.Home != "":
+				dir = filepath.Join(ctx.Home, "starter-wiki")
+				p.StarterWiki = dir
+			default:
+				p.fail("%s: can't tell where CMF is installed", f.Label)
 				continue
 			}
-			value = strings.ReplaceAll(value, "{{repo}}", ctx.Repo)
+			value = strings.ReplaceAll(value, "{{starter_wiki}}", dir)
 		}
 		p.Env.Set(key, value)
 	}
