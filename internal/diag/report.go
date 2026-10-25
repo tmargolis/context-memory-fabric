@@ -67,7 +67,11 @@ func Build(in Input) string {
 		}
 		line("  version %s, runtime %s, status %s", orDash(h.Version), orDash(h.Runtime), orDash(h.Status))
 		line("  graph %s (%s nodes; FalkorDB reachable %t, graph exists %t)", orDash(h.Graph), nodes, h.FalkorDB.Reachable, h.FalkorDB.GraphExists)
-		line("  providers: LLM %s, embeddings %s (%d dims), capture %s", orDash(h.Providers.LLM), orDash(h.Providers.Embeddings), h.Providers.EmbeddingDim, orDash(h.Providers.CaptureLLM))
+		llm := h.Providers.LLM
+		if len(h.Providers.LLMChain) > 1 {
+			llm = strings.Join(h.Providers.LLMChain, " → ")
+		}
+		line("  providers: LLM %s, embeddings %s (%d dims), capture %s", orDash(llm), orDash(h.Providers.Embeddings), h.Providers.EmbeddingDim, orDash(h.Providers.CaptureLLM))
 		line("  knowledge sources: %s", orDash(strings.Join(h.KnowledgeSources, ", ")))
 		for _, w := range h.BackgroundWrites {
 			at := w.FinishedAt

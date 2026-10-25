@@ -131,6 +131,7 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         "falkordb": fdb,
         "providers": {
             "llm": config.llm_provider,
+            "llm_chain": list(config.llm_providers),
             "embeddings": config.embed_provider,
             "capture_llm": capture_provider,
             "embedding_dim": config.embedding_dim,

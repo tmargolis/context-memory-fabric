@@ -34,8 +34,9 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.gemini_client import GeminiClient
 from graphiti_core.nodes import EpisodeType
 
-from server.core.config import ANTHROPIC_PROVIDER, GEMINI_PROVIDER, OPENAI_PROVIDER, CMFConfig, load_config
+from server.core.config import ANTHROPIC_PROVIDER, GEMINI_PROVIDER, LOCAL_PROVIDER, OPENAI_PROVIDER, CMFConfig, load_config
 from server.core.rate_limiter import (
+    DEFAULT_MODEL_CHAIN,
     GeminiQuotaExhaustedError,
     classify_transient_error as _classify_transient_error,
     get_default_rate_limiter,
@@ -196,8 +197,55 @@ def _require_key(value: Optional[str], env_var: str, provider: str) -> str:
     return value
 
 
-def _build_llm_client(config: CMFConfig, resolved_model: str):
-    """LLM client for entity/fact extraction, per CMF_LLM_PROVIDER."""
+def provider_default_model(config: CMFConfig, provider: str) -> str:
+    """The extraction model a provider uses when it isn't the rate limiter's pick:
+    each provider's own setting, or the first of the Gemini chain."""
+    if provider == LOCAL_PROVIDER:
+        return config.local_llm_model
+    if provider == ANTHROPIC_PROVIDER:
+        return config.anthropic_model
+    if provider == OPENAI_PROVIDER:
+        return config.openai_model
+    chain = [m.strip() for m in os.getenv("CMF_GEMINI_MODEL_CHAIN", "").split(",") if m.strip()]
+    return chain[0] if chain else DEFAULT_MODEL_CHAIN[0]
+
+
+def _build_llm_client(config: CMFConfig, resolved_model: str, skip_primary: bool = False):
+    """LLM client for entity/fact extraction, per CMF_LLM_PROVIDERS (item 1.8).
+
+    One provider: that provider's client, exactly as before. Several: a
+    FailoverLLMClient over them in order. The first uses `resolved_model`
+    (the rate limiter's pick); the rest use their own default model. A
+    fallback with no key is skipped with a warning; a primary with none
+    raises, as before. skip_primary drops the first provider (a Gemini
+    primary whose free-tier ledger has no headroom).
+    """
+    import dataclasses
+
+    providers = list(config.llm_providers)
+    if len(providers) == 1 and not skip_primary:
+        return _build_single_llm_client(config, resolved_model)
+    from server.providers.failover_llm import FailoverLLMClient
+
+    clients = []
+    for i, provider in enumerate(providers):
+        if skip_primary and i == 0:
+            continue
+        pconfig = dataclasses.replace(config, llm_provider=provider)
+        model = resolved_model if i == 0 else provider_default_model(pconfig, provider)
+        try:
+            clients.append((provider, _build_single_llm_client(pconfig, model)))
+        except RuntimeError as e:
+            if i == 0:
+                raise
+            logger.warning(f"LLM fallback {provider} skipped: {e}")
+    if not clients:
+        raise RuntimeError(f"No usable LLM provider in CMF_LLM_PROVIDERS ({', '.join(providers)}); add their keys to .env.")
+    return clients[0][1] if len(clients) == 1 else FailoverLLMClient(clients)
+
+
+def _build_single_llm_client(config: CMFConfig, resolved_model: str):
+    """LLM client for entity/fact extraction, per config.llm_provider."""
     if config.llm_provider == ANTHROPIC_PROVIDER:
         from server.providers.anthropic_client import StructuredAnthropicClient
 
@@ -334,7 +382,7 @@ def resolve_llm_model(config: Optional[CMFConfig] = None, model: Optional[str] =
     return get_default_rate_limiter().chain[0]
 
 
-def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None, skip_primary: bool = False) -> Graphiti:
     """Instantiate a Graphiti client configured with FalkorDB and the configured providers.
 
     `model` selects the LLM used for entity/fact extraction and reranking.
@@ -361,11 +409,20 @@ def create_graphiti(graph_name: Optional[str] = None, model: Optional[str] = Non
     # server/providers/falkor_driver.py); it is otherwise a plain FalkorDriver.
     driver = CMFFalkorDriver(**falkordb_connection_params(), database=target_database)
 
+    # The reranker follows the provider that leads the LLM chain for this
+    # instance (the second one when the first is skipped).
+    rerank_config, rerank_model = config, resolved_model
+    if skip_primary and len(config.llm_providers) > 1:
+        import dataclasses
+
+        rerank_config = dataclasses.replace(config, llm_provider=config.llm_providers[1])
+        rerank_model = provider_default_model(rerank_config, config.llm_providers[1])
+
     return Graphiti(
         graph_driver=driver,
-        llm_client=_build_llm_client(config, resolved_model),
+        llm_client=_build_llm_client(config, resolved_model, skip_primary=skip_primary),
         embedder=_build_embedder(config),
-        cross_encoder=_build_cross_encoder(config, resolved_model),
+        cross_encoder=_build_cross_encoder(rerank_config, rerank_model),
     )
 
 
@@ -392,7 +449,7 @@ async def assert_embedding_width(graphiti: Graphiti, expected: Optional[int] = N
     return actual
 
 
-def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) -> Graphiti:
+def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None, skip_primary: bool = False) -> Graphiti:
     """Retrieve or initialize the Graphiti instance for the active event loop, target graph database, and model.
 
     `model` defaults to the rate limiter's first chain preference when
@@ -411,10 +468,12 @@ def get_graphiti(graph_name: Optional[str] = None, model: Optional[str] = None) 
 
     target_database = resolve_target_database(graph_name)
     resolved_model = model or get_default_rate_limiter().chain[0]
-    cache_key = (current_loop_id, target_database, resolved_model)
+    cache_key = (current_loop_id, target_database, resolved_model, skip_primary)
 
     if cache_key not in _GRAPHITI_INSTANCES:
-        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(graph_name=target_database, model=resolved_model)
+        _GRAPHITI_INSTANCES[cache_key] = create_graphiti(
+            graph_name=target_database, model=resolved_model, skip_primary=skip_primary
+        )
 
     return _GRAPHITI_INSTANCES[cache_key]
 
@@ -430,7 +489,19 @@ def get_graphiti_for_operation(graph_name: Optional[str] = None) -> tuple[Graphi
     operation rather than having partially spent quota on a call that then
     also failed.
     """
-    chosen_model = get_default_rate_limiter().reserve()
+    limiter = get_default_rate_limiter()
+    try:
+        chosen_model = limiter.reserve()
+    except GeminiQuotaExhaustedError:
+        # Ranked providers (item 1.8): with a fallback listed, a Gemini primary
+        # that has no free-tier headroom is skipped instead of failing the call.
+        config = load_config()
+        if len(config.llm_providers) < 2:
+            raise
+        fallback = config.llm_providers[1]
+        logger.warning(f"Gemini's free-tier limit is used up; this call goes to {fallback}.")
+        graphiti = get_graphiti(graph_name=graph_name, model=limiter.chain[0], skip_primary=True)
+        return graphiti, provider_default_model(config, fallback)
     return get_graphiti(graph_name=graph_name, model=chosen_model), chosen_model
 
 

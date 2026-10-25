@@ -70,10 +70,11 @@ type Health struct {
 		Error       string `json:"error"`
 	} `json:"falkordb"`
 	Providers struct {
-		LLM          string `json:"llm"`
-		Embeddings   string `json:"embeddings"`
-		CaptureLLM   string `json:"capture_llm"`
-		EmbeddingDim int    `json:"embedding_dim"`
+		LLM          string   `json:"llm"`
+		LLMChain     []string `json:"llm_chain"` // ranked providers (item 1.8); absent from older servers
+		Embeddings   string   `json:"embeddings"`
+		CaptureLLM   string   `json:"capture_llm"`
+		EmbeddingDim int      `json:"embedding_dim"`
 	} `json:"providers"`
 	KnowledgeSources []string          `json:"knowledge_sources"`
 	BackgroundWrites []BackgroundWrite `json:"background_writes"`

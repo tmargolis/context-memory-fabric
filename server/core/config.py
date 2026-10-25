@@ -138,6 +138,14 @@ class CMFConfig:
     # None = the model's own default effort (high on claude-sonnet-5-5).
     anthropic_effort: Optional[str] = None
 
+    # Ranked LLM providers (setup item 1.8): CMF_LLM_PROVIDERS, in order;
+    # llm_provider is its first entry. Empty means just llm_provider.
+    llm_provider_chain: tuple[str, ...] = ()
+
+    @property
+    def llm_providers(self) -> tuple[str, ...]:
+        return self.llm_provider_chain or (self.llm_provider,)
+
     @property
     def llm_is_local(self) -> bool:
         return self.llm_provider == LOCAL_PROVIDER
@@ -236,6 +244,33 @@ def _provider(env_var: str, default: str = GEMINI_PROVIDER) -> str:
             f"Valid values are {', '.join(VALID_PROVIDERS)}."
         )
     return value
+
+
+def _llm_providers() -> tuple[str, ...]:
+    """CMF_LLM_PROVIDERS (ordered, comma-separated), else CMF_LLM_PROVIDER alone.
+
+    The list wins when both are set; CMF Setup writes both, with
+    CMF_LLM_PROVIDER as the list's first entry, so older readers of the
+    single variable see the same primary.
+    """
+    raw = os.getenv("CMF_LLM_PROVIDERS")
+    if raw is None or not raw.strip():
+        return (_provider("CMF_LLM_PROVIDER"),)
+    out: list[str] = []
+    for item in raw.split(","):
+        value = item.strip().lower()
+        if not value:
+            continue
+        if value not in VALID_PROVIDERS:
+            raise ValueError(
+                f"CMF_LLM_PROVIDERS={raw!r}: {item.strip()!r} is not a recognised provider. "
+                f"Valid values are {', '.join(VALID_PROVIDERS)}."
+            )
+        if value not in out:
+            out.append(value)
+    if not out:
+        return (_provider("CMF_LLM_PROVIDER"),)
+    return tuple(out)
 
 
 def default_reviewer() -> str:
@@ -354,6 +389,7 @@ def load_config() -> CMFConfig:
     load_env()
     local_base_url = container_reachable_url(os.getenv("CMF_LOCAL_BASE_URL", DEFAULT_LOCAL_BASE_URL))
     local_api_key = os.getenv("CMF_LOCAL_API_KEY", DEFAULT_LOCAL_API_KEY)
+    llm_providers = _llm_providers()
     return CMFConfig(
         llm_wiki_path=os.getenv("LLM_WIKI_PATH"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
@@ -363,7 +399,8 @@ def load_config() -> CMFConfig:
         falkordb_username=os.getenv("FALKORDB_USER") or os.getenv("FALKORDB_USERNAME") or None,
         falkordb_database=os.getenv("FALKORDB_DATABASE"),
         cmf_state_dir=_resolve_state_dir(),
-        llm_provider=_provider("CMF_LLM_PROVIDER"),
+        llm_provider=llm_providers[0],
+        llm_provider_chain=llm_providers,
         embed_provider=_embed_provider(),
         local_base_url=local_base_url,
         local_api_key=local_api_key,

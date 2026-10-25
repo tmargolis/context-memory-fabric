@@ -139,6 +139,9 @@ def check(
     for role, provider in (("LLM", config.llm_provider), ("embeddings", config.embed_provider)):
         if problem := _key_problem(role, provider, config):
             result.problems.append(problem)
+    for provider in config.llm_providers[1:]:  # ranked fallbacks (item 1.8)
+        if problem := _key_problem("LLM fallback", provider, config):
+            result.warnings.append(problem + " That fallback is skipped until it's set.")
     try:
         capture_provider = capture_llm_provider_from_env()
         if problem := _key_problem("background capture", capture_provider, config):
@@ -317,7 +320,8 @@ def provider_tests(get: Optional[Callable[..., Any]] = None) -> list[dict[str, A
         config = load_config()
     except ValueError as e:
         return [{"role": "config", "provider": "", "ok": False, "detail": str(e)}]
-    roles = [("LLM", config.llm_provider), ("embeddings", config.embed_provider)]
+    roles = [("LLM", config.llm_provider)] + [("LLM fallback", p) for p in config.llm_providers[1:]]
+    roles.append(("embeddings", config.embed_provider))
     try:
         roles.append(("background capture", capture_llm_provider_from_env()))
     except ValueError as e:
