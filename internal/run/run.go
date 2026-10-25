@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,6 +30,8 @@ type Cmd struct {
 	Env     []string // extra KEY=value pairs, on top of this process's environment
 	Dir     string
 	Timeout time.Duration
+	Stdin   string    // fed to the program's standard input
+	Stream  io.Writer // when set, output goes here as it comes, and only ctx ends the program
 }
 
 func (c Cmd) String() string {
@@ -62,8 +65,11 @@ func (Exec) Run(ctx context.Context, c Cmd) Result {
 	if timeout == 0 {
 		timeout = DefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	if c.Stream == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	path, err := exec.LookPath(c.Name)
 	if err != nil {
 		return Result{Err: fmt.Errorf("%w: %s", ErrNotFound, c.Name)}
@@ -73,8 +79,14 @@ func (Exec) Run(ctx context.Context, c Cmd) Result {
 	if len(c.Env) > 0 {
 		cmd.Env = append(os.Environ(), c.Env...)
 	}
+	if c.Stdin != "" {
+		cmd.Stdin = strings.NewReader(c.Stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if c.Stream != nil {
+		cmd.Stdout, cmd.Stderr = c.Stream, c.Stream
+	}
 	// Don't wait on grandchildren that keep the pipes open after a kill.
 	cmd.WaitDelay = 2 * time.Second
 	err = cmd.Run()

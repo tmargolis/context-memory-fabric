@@ -241,7 +241,7 @@ The app's Status screen is only as good as what the server reports, so this come
 
 | Item | What | Status |
 |---|---|---|
-| 3.1 Engine + CLI | Go module with the operations both front-ends use: read current state, run checks, plan changes, apply with backups, restore. CLI: `cmf status`, `cmf doctor [--json]`, `cmf apply <feature-file>`, `cmf restore`, `cmf logs`, `cmf diagnostics`. | 🔶 In progress: `status`, `doctor` (d90ea98), `features`, `apply`, `restore` (e3e6db0) done; `logs` / `diagnostics` next (step D) |
+| 3.1 Engine + CLI | Go module with the operations both front-ends use: read current state, run checks, plan changes, apply with backups, restore. CLI: `cmf status`, `cmf doctor [--json]`, `cmf apply <feature-file>`, `cmf restore`, `cmf logs`, `cmf diagnostics`. | ✅ Done: `status`, `doctor` (d90ea98), `features`, `apply`, `restore` (e3e6db0), `logs`, `diagnostics` (step D) |
 | 3.2 Feature manifest | The feature list from 3.4 as data: inputs, rules (e.g. Anthropic LLM requires a non-Anthropic embedder), what each writes, its checks. Unit-tested rule validation. | ✅ Done (e3e6db0): `internal/features/manifest.json`; Google Drive, M365 and client-app rows come with later steps |
 | 3.3 Status checks + Fixes | Everything in 3.3's Status list, each with its Fix action, using `/health` (1.5) and the self-test (1.7). | 🔶 Rows the server supports today are done (d90ea98), green on Todd's Mac. Provider test and embedding width come with 1.1 (step E), self-test with 1.7 (step G), client entries with 3.4 (step I) |
 | 3.4 Client config writers | Claude Desktop, Claude Code / Code tab, Codex, Cursor, Antigravity / VS Code: merge one CMF entry, remove duplicates, back up, and verify by reading the file back. Hook + agent-instructions installers. | Not started (step I) |
@@ -263,14 +263,14 @@ The app's Status screen is only as good as what the server reports, so this come
 
 ### Build steps
 
-The order of §6, one letter per step. Commits go on `setup-simplification`; each step ends with Todd's review before the next starts. Steps E onward are planned, not yet detailed.
+The order of §6, one letter per step. Commits go on `setup-simplification`; since 2026-10-24 the steps run one after another, with a commit after each, stopping only for decisions that are Todd's; nothing is pushed until he asks. Steps E onward are planned, not yet detailed.
 
 The engine and CLI are a Go module at the repo root (`cmd/cmf`, `internal/…`), with the compose files embedded from `deploy/docker`; every external command goes through a fake-able runner with a timeout.
 
 - [x] **A. Skeleton, `~/.cmf` home, install modes (3.9):** `.env` edits line by line (owner-only), dated backups, `mode.json`, `cmf mode [set]`, which keeps the install's own volume block in `compose.override.yml`. (a49d4c8)
 - [x] **B. Probe, `cmf status`, `cmf doctor [--json] [--fix[=<check>]]` (3.1, 3.3):** Docker (including a hung daemon), stack containers, port owner, leftover launchd jobs and containers, host `server.mcp`, `/health`, graph node count. Fixes start or restart Docker Desktop, `compose up` / force-recreate, disable replaced launchd jobs (plists stay), stop old containers (not removed), restart `cmf-server`. (d90ea98) Tried on Todd's Mac 2026-10-24: `--fix=docker` restarted a hung Docker and the stack came back with 6769 nodes; the fix now waits for Docker and `/health` before checking again.
 - [x] **C. Feature manifest (3.2), `cmf features`, `cmf apply <feature-file>`, `cmf restore [<stamp>]` (3.1):** embedded JSON manifest (models, knowledge, capture); rules forbid_value, exactly_one, conflicts, requires_any, needs_key, locked_when_graph_has_data, all reported at once; apply reviews, backs up, writes `.env` and `COMPOSE_PROFILES`, stops what it turned off, `compose up -d`, waits for `/health`, and restores on failure; restore is itself undoable. Client-config steps wait for step I. (e3e6db0)
-- [ ] **D. `cmf logs`, `cmf diagnostics` (3.1):** recent container logs; a redacted report (versions, checks, last 50 ERROR lines; no keys, tokens or memory content), shown before copying.
+- [x] **D. `cmf logs`, `cmf diagnostics` (3.1):** `cmf logs` shows the stack's logs as they are (`--tail`, `-f`, `--errors`); `cmf diagnostics` builds a redacted report (versions, checks, `/health`, which settings are set, last 50 error lines) with keys, tokens, non-allowlisted setting values, emails, the home path and long quoted text removed; shown first, then `--copy` (asks) or `--out`. Checked on Todd's Mac: none of 26 hidden `.env` values appear in the report. `cmf logs` not yet run live (Docker was down).
 - [ ] **E. Startup config check (1.1):** plus the provider-test and embedding-width Status rows (3.3).
 - [ ] **F. Port guard (1.6).**
 - [ ] **G. Self-test (1.7):** plus the self-test Status row (3.3).

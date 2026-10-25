@@ -85,8 +85,9 @@ func (p *Plan) OK() bool                { return len(p.Errors) == 0 }
 func (p *Plan) Empty() bool             { return len(p.Changes) == 0 && len(p.Stop) == 0 }
 func (p *Plan) fail(f string, a ...any) { p.Errors = append(p.Errors, fmt.Sprintf(f, a...)) }
 
-// secretKey: keys whose values never appear in a plan or log.
-func (m *Manifest) secretKey(key string) bool {
+// SecretKey reports .env keys whose values never appear in a plan, log or
+// diagnostics report.
+func (m *Manifest) SecretKey(key string) bool {
 	for _, f := range m.Features {
 		for _, in := range f.Inputs {
 			if in.Env == key && in.Type == TypeSecret {
@@ -393,7 +394,7 @@ func (m *Manifest) diff(old, new *home.Env) []Change {
 		if o == n && old.Has(k) == new.Has(k) {
 			continue
 		}
-		changes = append(changes, Change{Key: k, Old: o, New: n, Removed: !new.Has(k), Secret: m.secretKey(k)})
+		changes = append(changes, Change{Key: k, Old: o, New: n, Removed: !new.Has(k), Secret: m.SecretKey(k)})
 	}
 	return changes
 }

@@ -17,13 +17,15 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"mode":     {"show or switch the install mode (standard / developer)", runMode},
-	"status":   {"check this CMF install (one line per check)", runStatus},
-	"doctor":   {"the checks with their fixes; --fix runs them, --json for scripts", runDoctor},
-	"features": {"list the features and their current settings (--json)", runFeatures},
-	"apply":    {"apply a feature file: review, back up, write, recreate, verify", runApply},
-	"restore":  {"list backups, or put one back (cmf restore <stamp>)", runRestore},
-	"version":  {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
+	"mode":        {"show or switch the install mode (standard / developer)", runMode},
+	"status":      {"check this CMF install (one line per check)", runStatus},
+	"doctor":      {"the checks with their fixes; --fix runs them, --json for scripts", runDoctor},
+	"features":    {"list the features and their current settings (--json)", runFeatures},
+	"apply":       {"apply a feature file: review, back up, write, recreate, verify", runApply},
+	"restore":     {"list backups, or put one back (cmf restore <stamp>)", runRestore},
+	"logs":        {"recent logs of the stack (service names, --tail N, -f, --errors)", runLogs},
+	"diagnostics": {"a redacted report to send for help; shown first, then --copy or --out", runDiagnostics},
+	"version":     {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 
 func usage(out io.Writer) {
