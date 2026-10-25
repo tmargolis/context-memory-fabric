@@ -63,6 +63,7 @@ type uiServer struct {
 	busy     bool // one fix / apply / restore at a time
 	lastSeen time.Time
 	byeAt    time.Time
+	alive    int // open /api/alive connections: one per open tab
 	done     chan struct{}
 	stopOnce sync.Once
 }
@@ -126,7 +127,7 @@ func (s *uiServer) watch() {
 		}
 		s.mu.Lock()
 		now, busy := time.Now(), s.busy
-		closed := !s.byeAt.IsZero() && now.Sub(s.byeAt) > uiCloseGrace && s.lastSeen.Before(s.byeAt.Add(time.Second))
+		closed := s.alive == 0 && !s.byeAt.IsZero() && now.Sub(s.byeAt) > uiCloseGrace && s.lastSeen.Before(s.byeAt.Add(time.Second))
 		idle := now.Sub(s.lastSeen) > uiIdleLimit
 		s.mu.Unlock()
 		if !busy && (closed || idle) {
@@ -153,6 +154,7 @@ func (s *uiServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/backups", s.api(s.backups))
 	mux.HandleFunc("POST /api/restore/{stamp}", s.stream(s.restore))
 	mux.HandleFunc("POST /api/bye", s.bye)
+	mux.HandleFunc("GET /api/alive", s.aliveHandler)
 	return s.guard(mux)
 }
 
@@ -210,6 +212,30 @@ func (s *uiServer) bye(w http.ResponseWriter, r *http.Request) {
 	s.byeAt = time.Now()
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// aliveHandler holds one request open per tab. When the last one drops (the
+// tab closed, or the browser quit without a "bye"), the close grace starts.
+func (s *uiServer) aliveHandler(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.alive++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.alive--; s.alive == 0 {
+			s.byeAt = time.Now()
+		}
+		s.mu.Unlock()
+	}()
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	select {
+	case <-r.Context().Done():
+	case <-s.done:
+	}
 }
 
 func (s *uiServer) api(h func(*http.Request) (any, error)) http.HandlerFunc {

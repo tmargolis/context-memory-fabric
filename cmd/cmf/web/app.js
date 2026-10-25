@@ -340,7 +340,10 @@ $("apply-btn").addEventListener("click", async () => {
 
 // --- lifetime -------------------------------------------------------------------------------
 
-// The server stops when this tab closes, or after 30 minutes without a request.
+// The server stops when this tab closes, or after 30 minutes without a
+// request. The open /api/alive request is how it knows the tab is still
+// there, even if the browser quits without sending the "bye".
+fetch("/api/alive", { credentials: "same-origin" }).catch(() => {});
 window.addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
 
 loadStatus();

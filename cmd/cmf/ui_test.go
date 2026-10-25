@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -197,5 +198,37 @@ func TestNoArgsOpensUI(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("UI didn't stop")
+	}
+}
+
+func TestUIStopsWhenTabConnectionDrops(t *testing.T) {
+	s, h, _ := uiFixture(t)
+	uiCloseGrace, uiTick = 20*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { uiCloseGrace, uiTick = 15*time.Second, time.Second })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = "127.0.0.1:5555"
+		h.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	go s.watch()
+	req, _ := http.NewRequest("GET", srv.URL+"/api/alive", nil)
+	req.AddCookie(&http.Cookie{Name: tokenCookie, Value: "tok123"})
+	ctx, cancel := context.WithCancel(context.Background())
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case <-s.done:
+		t.Fatal("stopped while the tab was open")
+	default:
+	}
+	cancel() // the tab closes without a "bye"
+	resp.Body.Close()
+	select {
+	case <-s.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("didn't stop after the tab's connection dropped")
 	}
 }
