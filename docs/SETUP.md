@@ -7,10 +7,11 @@ Context Memory Fabric is released as an experimental, single-user, self-hosted d
 > [!IMPORTANT]
 > **Pick ONE way to run CMF, and install only that one.**
 >
-> - **Docker preview (this page, recommended):** everything runs in Docker. Do **not** also run `uv sync`, `deploy/pollers/macos/install.sh` (with or without `--mcp-server`) or `python -m server.mcp` on your computer.
+> - **CMF Setup (recommended):** [QUICKSTART.md](QUICKSTART.md). One program installs CMF into `~/.cmf`, writes your AI apps' entries, checks everything and fixes what it can. Nothing to clone or edit.
+> - **Docker preview (this page, no app):** everything runs in Docker from a checkout. Do **not** also run `uv sync`, `deploy/pollers/macos/install.sh` (with or without `--mcp-server`) or `python -m server.mcp` on your computer.
 > - **Developer mode (from source):** [DEVELOPER-SETUP.md](DEVELOPER-SETUP.md). For working on CMF itself.
 >
-> The two read different config, use different FalkorDB ports (6380 vs 6379) and graph names, and both claim port 8000. Mixing them gives "connection refused" errors and two servers fighting over one port. Background capture (the transcript pollers and capture hooks) currently needs Developer mode; a Docker version is planned.
+> They read different config, use different FalkorDB ports (6380 vs 6379) and graph names, and all claim port 8000. Mixing them gives "connection refused" errors and two servers fighting over one port. An install made from this page moves into CMF Setup's `~/.cmf` with `cmf migrate`, memories included.
 
 ---
 
@@ -160,7 +161,11 @@ Automatic capture of your coding sessions ([Background Capture](#background-capt
 
 ## Connecting Your MCP Client
 
-### Claude Desktop (Chat tab)
+**With CMF Setup**, turn the app on under Features → AI apps (or run `cmf clients set claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode` or `antigravity`). It writes one entry into the app's own config (backup kept, duplicates removed, read back to check), and Status confirms each app has exactly one working entry. Claude Desktop's entry runs `cmf bridge`, so Node.js isn't needed.
+
+The steps below are the manual way, for setups without the app.
+
+### Advanced / no app: Claude Desktop (Chat tab)
 
 Claude Desktop reaches the preview through a small bridge, [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which needs **Node.js** (`node --version` should print v18 or later; install from [nodejs.org](https://nodejs.org) if not).
 
@@ -183,11 +188,11 @@ Claude Desktop reaches the preview through a small bridge, [`mcp-remote`](https:
 
 Why not **Settings → Connectors → Add custom connector**? Connectors run from Anthropic's cloud and reject `localhost` ("enter a public URL"). They work only with a public HTTPS address and OAuth; see [CLIENTS.md §4](CLIENTS.md#4-multi-agent--remote-harnesses-chatgpt-gemini-spark-etc).
 
-### Claude Desktop (Code tab)
+### Advanced / no app: Claude Desktop (Code tab)
 
 On the first tester's machine, the Code tab used the same `claude_desktop_config.json` entry above after a restart and a new session. This is still being confirmed. To check, ask a new Code-tab session to list its CMF tools.
 
-### Cursor / Generic MCP Clients
+### Advanced / no app: Cursor / Generic MCP Clients
 
 Clients that accept a URL (Cursor: Settings → MCP → Add) take `http://127.0.0.1:8000/mcp` directly. Clients that only start a command can use the same `npx -y mcp-remote http://127.0.0.1:8000/mcp` as Claude Desktop.
 
@@ -197,7 +202,13 @@ More clients (Antigravity, Codex, ChatGPT, Gemini): [CLIENTS.md](CLIENTS.md).
 
 ## Background Capture
 
-CMF can capture your coding sessions automatically, with Stop-hook **capture checkpoints** (the agent saves what was decided) and **transcript pollers** (CMF reads Claude Code, Codex, Cowork and Antigravity transcripts). Both currently install on your computer with Python, so they need [Developer mode](DEVELOPER-SETUP.md#background-capture). Running them in the Docker preview is planned.
+CMF can capture your coding sessions automatically, with Stop-hook **capture checkpoints** (the agent saves what was decided) and the **transcript poller** (CMF reads Claude Code, Codex, Cowork and Antigravity transcripts).
+
+With CMF Setup both run without Python on your computer: the poller is the stack's `cmf-poller` container (on by default; the Capture feature turns it off), and `cmf capture hook install claude_code codex antigravity` adds the checkpoint hooks, which run `cmf hook stop`. `cmf capture` shows how each app is captured, what it costs, and how much prompt context CMF adds per session. The Docker preview on this page has no poller; there, capture needs [Developer mode](DEVELOPER-SETUP.md#background-capture).
+
+## Remote access (ChatGPT, Gemini, claude.ai connectors)
+
+Connectors run in their vendor's cloud, so they reach CMF only through a public HTTPS address, and only with OAuth on. `cmf remote` shows where you stand; `cmf remote enable tailscale` turns OAuth on and publishes only CMF's port with Tailscale Funnel; `cmf remote use https://<address>` does the OAuth part for a tunnel you run yourself (a named Cloudflare Tunnel, ngrok). `cmf remote disable` undoes only what it added. Then add a connector with `https://<address>/mcp`; its consent page asks for `CMF_MCP_OAUTH_PASSWORD` from `~/.cmf/.env`.
 
 With the preview alone, memories come from what your AI apps save through CMF's tools (`remember`, `capture_session`) as you work.
 

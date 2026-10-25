@@ -1,5 +1,8 @@
 # Client Integration & Harness Guide
 
+> [!TIP]
+> **CMF Setup writes these entries for you:** Features → AI apps, or `cmf clients set <app>` ([QUICKSTART.md](QUICKSTART.md)). It keeps one entry per app, backs the file up, and checks it in Status. The sections below are the manual reference, for setups without the app.
+
 This guide describes how to connect **Context Memory Fabric** to AI clients, desktop harnesses, and developer tools via the Model Context Protocol (MCP).
 
 ---
