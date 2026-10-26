@@ -508,8 +508,9 @@ func TestInstructionsOnAppRows(t *testing.T) {
 	f.Instructions["codex"] = capture.InstructionsFile{App: "codex", Path: "/u/.codex/AGENTS.md", Exists: true, State: "partial", Missing: []string{"capture_session"}}
 	f.Health.LiveCaptures["claude_cowork"] = probe.LiveCapture{Count: 2, Last: at.Add(-time.Hour)}
 	r = byID(Evaluate(f))
-	if c := r["app-codex"]; c.Level != Warn || !strings.HasPrefix(c.Detail, "its instructions in /u/.codex/AGENTS.md don't name capture_session") {
-		t.Fatalf("%+v", c)
+	if c := r["app-codex"]; c.Level != Warn || !strings.HasPrefix(c.Detail, "its instructions in /u/.codex/AGENTS.md don't name capture_session") ||
+		c.Fix == nil || !strings.HasSuffix(c.Fix.Steps[0].Show, "instructions add codex --yes") {
+		t.Fatalf("%+v %+v", c, c.Fix)
 	}
 	if c := r["app-claude-desktop"]; !strings.Contains(c.Detail, "working: 2 captures in the last 7 days") {
 		t.Fatalf("%+v", c)

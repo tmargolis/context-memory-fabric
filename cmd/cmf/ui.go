@@ -158,6 +158,7 @@ func (s *uiServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics", s.api(s.diagnostics))
 	mux.HandleFunc("GET /api/backups", s.api(s.backups))
 	mux.HandleFunc("POST /api/restore/{stamp}", s.stream(s.restore))
+	mux.HandleFunc("POST /api/instructions/{app}", s.stream(s.addInstructions))
 	mux.HandleFunc("POST /api/bye", s.bye)
 	mux.HandleFunc("GET /api/alive", s.aliveHandler)
 	return s.guard(mux)
@@ -544,6 +545,12 @@ func (s *uiServer) backups(*http.Request) (any, error) {
 		return nil, err
 	}
 	return list, nil
+}
+
+// addInstructions writes CMF's instruction block into an app's file (the
+// Features cards' Add button), the same as `cmf instructions add <app>`.
+func (s *uiServer) addInstructions(r *http.Request, out io.Writer) (string, error) {
+	return "", runInstructions([]string{"add", r.PathValue("app"), "--yes"}, out)
 }
 
 func (s *uiServer) restore(r *http.Request, out io.Writer) (string, error) {

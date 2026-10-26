@@ -141,7 +141,10 @@ The path from nothing to reviewed and recalled memory, with your own keys and no
    - **Claude (Chat, Cowork, claude.ai):** Settings → Account → Instructions for Claude. One place covers every Claude app signed in to the account.
    - **Claude Code and the Code tab:** `~/.claude/CLAUDE.md` (or a project's `CLAUDE.md`).
    - **Codex:** Settings → Personalization → Codex instructions (it edits `~/.codex/AGENTS.md`).
-   - **Cursor:** Settings → Rules → User Rules. **Antigravity:** its global rules.
+   - **Antigravity:** the file `~/.gemini/config/AGENTS.md`, its global rules. Antigravity has no editor for global rules (its Customizations page lists plugins and MCP servers, and Settings shows only project rules), so use the card's **Add** button, which writes the block there.
+   - **Cursor:** Settings → Rules → User Rules.
+
+   For Claude Code, Codex and Antigravity the card's **Add to …** button (or `cmf instructions add <app>`) writes the block into that file for you, between `<!-- cmf:begin -->` and `<!-- cmf:end -->` markers, with a backup.
 
    Status checks them where it can: for Claude Code and Codex it reads the file and says whether it has CMF's current block (or which tools an older one leaves out); Claude's account instructions can't be read from your computer, so the Claude Desktop row shows whether Chat and Cowork have been capturing instead.
 

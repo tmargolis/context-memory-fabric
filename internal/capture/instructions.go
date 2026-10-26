@@ -37,7 +37,15 @@ func instructionFiles(userHome string, getenv func(string) string) map[string]st
 	return map[string]string{
 		"claude-code": filepath.Join(userHome, ".claude", "CLAUDE.md"),
 		"codex":       filepath.Join(codexHome, "AGENTS.md"),
+		// Antigravity's global customization root; it has no editor for
+		// global rules, only this file (or rules/*.md beside it).
+		"antigravity": filepath.Join(userHome, ".gemini", "config", "AGENTS.md"),
 	}
+}
+
+// InstructionsPath is app's instructions file, "" for apps without one.
+func InstructionsPath(app, userHome string, getenv func(string) string) string {
+	return instructionFiles(userHome, getenv)[app]
 }
 
 // CheckInstructions reads each app's instructions file.

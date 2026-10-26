@@ -35,7 +35,7 @@ func HookFile(harness, userHome string) string {
 type Hooks struct {
 	Harness string `json:"harness"`
 	Path    string `json:"path"`
-	Nudge   string `json:"nudge,omitempty"` // "plugin", "cmf" (this binary), "python" or ""
+	Nudge   string `json:"nudge,omitempty"`  // "plugin", "cmf" (this binary), "python" or ""
 	Binary  string `json:"binary,omitempty"` // the program a "cmf" nudge runs
 	Worker  bool   `json:"worker,omitempty"`
 	Err     string `json:"error,omitempty"`

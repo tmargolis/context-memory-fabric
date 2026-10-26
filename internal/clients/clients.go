@@ -113,8 +113,8 @@ var Apps = []App{
 		marker:    func(e Env) string { return filepath.Join(e.configDir(), "Code", "User") }},
 	{ID: "antigravity", Label: "Antigravity", Format: JSONMCPServers, Style: Bridge,
 		AfterNote: "Restart Antigravity.",
-		path:      func(e Env) string { return filepath.Join(e.Home, ".gemini", "antigravity", "mcp_config.json") },
-		marker:    func(e Env) string { return filepath.Join(e.Home, ".gemini", "antigravity") }},
+		path:      antigravityConfig,
+		marker:    func(e Env) string { return filepath.Join(e.Home, ".gemini") }},
 }
 
 func Find(id string) (App, bool) {
@@ -234,6 +234,27 @@ var cmfName = regexp.MustCompile(`(?i)context[-_ ]?memory|mem(ory)?[-_ ]?fabric|
 // classify describes one parsed entry. fields are its top-level string
 // values (command, url, serverUrl), args its argument list, token the bearer
 // token its Authorization header carries ("" for none).
+// antigravityConfig: Antigravity keeps its settings in ~/.gemini/config/
+// (mcp_config.json, hooks.json, AGENTS.md) since its 2026 standalone app;
+// earlier versions used ~/.gemini/antigravity/mcp_config.json, which CMF
+// kept writing after the move (found 2026-10-26: the live entry, on the
+// public address with a stale OAuth client, was never seen).
+func antigravityConfig(e Env) string {
+	if _, err := os.Stat(filepath.Join(e.Home, ".gemini", "config")); err == nil {
+		return filepath.Join(e.Home, ".gemini", "config", "mcp_config.json")
+	}
+	return filepath.Join(e.Home, ".gemini", "antigravity", "mcp_config.json")
+}
+
+// isCmfProgram: the cmf binary under its own name or a release download's
+// (cmf-macos-universal, cmf-linux-amd64, cmf-windows.exe). Matching only
+// "cmf" rejected the bridge entry cmf had just written when it ran as
+// cmf-macos-universal (found 2026-10-26, Antigravity).
+func isCmfProgram(command string) bool {
+	base := strings.TrimSuffix(filepath.Base(command), ".exe")
+	return base == "cmf" || strings.HasPrefix(base, "cmf-")
+}
+
 func classify(name string, fields map[string]string, args []string, token string, t Target) Entry {
 	e := Entry{Name: name, Kind: "other"}
 	for _, k := range []string{"url", "serverUrl", "httpUrl"} {
@@ -242,7 +263,7 @@ func classify(name string, fields map[string]string, args []string, token string
 		}
 	}
 	joined := strings.Join(args, " ")
-	if base := strings.TrimSuffix(filepath.Base(fields["command"]), ".exe"); base == "cmf" && len(args) > 0 && args[0] == "bridge" {
+	if isCmfProgram(fields["command"]) && len(args) > 0 && args[0] == "bridge" {
 		// cmf bridge reads the port from ~/.cmf/.env, so it reaches this
 		// install for as long as the binary is where the entry says.
 		e.Kind, e.URL = "cmf-bridge", t.LocalURL()

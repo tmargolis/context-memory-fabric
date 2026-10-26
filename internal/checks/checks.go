@@ -817,6 +817,7 @@ func checkApps(f probe.Facts) []Result {
 			r.Level = OK
 			if instrProblem != "" && hookProblem == "" {
 				r.Level, r.Detail = Warn, instrProblem+"\n"+r.Detail
+				r.Fix = addInstructionsFix(f, a.Client)
 			}
 			if hookProblem != "" {
 				// Connected, but its checkpoints run an old cmf or plugin (v0.1.5).
@@ -834,6 +835,9 @@ func checkApps(f probe.Facts) []Result {
 			}
 		} else {
 			r.Detail = "not connected\n" + r.Detail
+			if instrProblem != "" {
+				r.Action = addInstructionsFix(f, a.Client)
+			}
 		}
 		out = append(out, r)
 	}
@@ -863,6 +867,22 @@ func instructionsLine(f probe.Facts, client string, harnesses []string) (line, p
 		return "in your claude.ai account (CMF can't read them); no captures from Chat or Cowork in the last 7 days, so check Settings → Account → Instructions for Claude and Cowork's cmf-capture plugin", ""
 	}
 	return "", ""
+}
+
+// addInstructionsFix writes CMF's instruction block into the app's file.
+func addInstructionsFix(f probe.Facts, client string) *Fix {
+	file, ok := f.Instructions[client]
+	if !ok {
+		return nil
+	}
+	self := f.Self
+	if self == "" {
+		self = "cmf"
+	}
+	return &Fix{Label: "Add CMF's instructions", Steps: []Step{
+		step("write CMF's instruction block into "+tilde(file.Path)+" (between cmf:begin/end markers, backup kept)",
+			run.Cmd{Name: self, Args: []string{"instructions", "add", client, "--yes"}}),
+	}}
 }
 
 // liveCaptures totals the capture_session items the harnesses staged in the last 7 days.

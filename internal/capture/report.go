@@ -282,6 +282,12 @@ type Block struct {
 
 // PlanBlock puts the fenced block in path (replacing a fenced one in place), or removes it.
 func PlanBlock(path string, remove bool) (*Block, error) {
+	return PlanBlockText(path, BlockText, remove)
+}
+
+// PlanBlockText is PlanBlock with the block's text given: `cmf instructions
+// add` writes CMF's full instruction block (v0.1.8).
+func PlanBlockText(path, blockText string, remove bool) (*Block, error) {
 	b := &Block{Path: path}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -305,7 +311,7 @@ func PlanBlock(path string, remove bool) (*Block, error) {
 			b.Duplicates = append(b.Duplicates, fmt.Sprintf("line %d: %s", i+1, strings.TrimSpace(line)))
 		}
 	}
-	block := BlockBegin + "\n" + BlockText + "\n" + BlockEnd
+	block := BlockBegin + "\n" + blockText + "\n" + BlockEnd
 	switch {
 	case remove && fenced:
 		b.New = []byte(strings.TrimRight(before, "\n") + "\n" + strings.TrimLeft(after, "\n"))

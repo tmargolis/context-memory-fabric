@@ -345,4 +345,37 @@ func TestBridgeEntry(t *testing.T) {
 	if !strings.Contains(strings.Join(c.Summary, "; "), "runs a cmf bridge that isn't there any more") {
 		t.Fatal(c.Summary)
 	}
+
+	// A release download keeps its name (cmf-macos-universal): its own
+	// bridge entry must read back as one.
+	dl := filepath.Join(env.Home, "Dev", "dist", "cmf-macos-universal")
+	os.MkdirAll(filepath.Dir(dl), 0o755)
+	os.WriteFile(dl, []byte("#!/bin/sh\n"), 0o755)
+	dt := Target{Port: 8000, Bridge: dl, Token: "secret-token"}
+	os.WriteFile(a.Path(env), []byte(`{"mcpServers": {}}`), 0o644)
+	c, _ = Plan(Inspect(a, env, dt), dt, true)
+	if err := c.Write(b, dt, env, true); err != nil {
+		t.Fatal(err)
+	}
+	if s := Inspect(a, env, dt); !s.Healthy() || s.CMF()[0].Kind != "cmf-bridge" {
+		t.Fatalf("%+v", s.Entries)
+	}
+}
+
+func TestAntigravityConfigMovedToGeminiConfig(t *testing.T) {
+	env, _ := setup(t)
+	a := app("antigravity")
+	if got := a.Path(env); got != filepath.Join(env.Home, ".gemini", "antigravity", "mcp_config.json") {
+		t.Fatal("older install:", got)
+	}
+	os.MkdirAll(filepath.Join(env.Home, ".gemini", "config"), 0o700)
+	if got := a.Path(env); got != filepath.Join(env.Home, ".gemini", "config", "mcp_config.json") {
+		t.Fatal("current app:", got)
+	}
+	// The entry found there on Todd's Mac: the public address, OAuth.
+	write(t, a.Path(env), `{"mcpServers": {"context-memory-fabric": {"serverUrl": "https://cmf.example.ts.net/mcp"}}}`)
+	s := Inspect(a, env, target)
+	if s.Healthy() || !strings.Contains(s.CMF()[0].Problem, "public address") {
+		t.Fatalf("%+v", s.Entries)
+	}
 }

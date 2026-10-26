@@ -328,7 +328,7 @@ const instructionsWhere = {
   "connector": "Claude (Chat, Cowork, claude.ai): Settings → Account → Instructions for Claude. One place covers every Claude app signed in to the account.",
   "claude-code": "Claude Code and the Code tab: your global ~/.claude/CLAUDE.md (or a project's CLAUDE.md).",
   "codex": "Codex: Settings → Personalization → Codex instructions (it edits ~/.codex/AGENTS.md).",
-  "antigravity": "Antigravity: its global rules (Customizations → Rules).",
+  "antigravity": "Antigravity: its global rules file ~/.gemini/config/AGENTS.md (Antigravity has no editor for global rules; Add writes it for you).",
   "cursor": "Cursor: Settings → Rules → User Rules.",
   "vscode": "VS Code: Copilot's custom instructions (settings, or .github/copilot-instructions.md).",
 };
@@ -353,8 +353,13 @@ function instructionsState(id) {
   if (file) {
     const where = file.path.replace(/^\/Users\/[^/]+/, "~");
     if (file.state === "current") return el("span", {}, statusIcon("ok"), " CMF's instructions are in " + where + ". ");
-    if (file.state === "partial") return el("span", { class: "cost" }, statusIcon("warn"), " " + where + " has an older or trimmed CMF block (missing: " + file.missing.join(", ") + "). ");
-    return el("span", { class: "cost" }, statusIcon("warn"), " No CMF instructions in " + where + " yet. ");
+    const add = el("button", { class: "small", onclick: async () => {
+      if (!confirm(`Add CMF's instructions to ${where}?\n\nThis runs:\n  $ cmf instructions add ${id} --yes\n\nA backup is kept.`)) return;
+      await stream(`/api/instructions/${encodeURIComponent(id)}`, null, "Add CMF's instructions");
+      loadFeatures();
+    } }, "Add to " + where);
+    if (file.state === "partial") return el("span", { class: "cost" }, statusIcon("warn"), " " + where + " has an older or trimmed CMF block (missing: " + file.missing.join(", ") + "). ", add, " ");
+    return el("span", { class: "cost" }, statusIcon("warn"), " No CMF instructions in " + where + " yet. ", add, " ");
   }
   if (id === "connector") {
     const live = features.live_captures || {};

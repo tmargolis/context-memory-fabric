@@ -229,3 +229,21 @@ func TestWriteStarterWikiKeepsEditedNotes(t *testing.T) {
 		t.Fatalf("demo note missing: %v", err)
 	}
 }
+
+func TestInstructionsAdd(t *testing.T) {
+	fakeMachine(t, true)
+	cfg := filepath.Join(clientEnv().Home, ".gemini", "config")
+	os.MkdirAll(cfg, 0o700)
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"instructions", "add", "antigravity", "--yes"}, &out, &errOut); code != 0 {
+		t.Fatal(errOut.String(), out.String())
+	}
+	got, _ := os.ReadFile(filepath.Join(cfg, "AGENTS.md"))
+	if !strings.Contains(string(got), "<!-- cmf:begin -->\nUse my Context Memory Fabric (CMF) connector") || !strings.Contains(string(got), "capture_session") {
+		t.Fatal(string(got))
+	}
+	out.Reset()
+	if code := runCLI([]string{"instructions", "add", "antigravity", "--yes"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "already has CMF's instructions") {
+		t.Fatal(out.String(), errOut.String())
+	}
+}
