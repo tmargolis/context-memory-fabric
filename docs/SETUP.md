@@ -143,6 +143,8 @@ The path from nothing to reviewed and recalled memory, with your own keys and no
    - **Codex:** Settings → Personalization → Codex instructions (it edits `~/.codex/AGENTS.md`).
    - **Cursor:** Settings → Rules → User Rules. **Antigravity:** its global rules.
 
+   Status checks them where it can: for Claude Code and Codex it reads the file and says whether it has CMF's current block (or which tools an older one leaves out); Claude's account instructions can't be read from your computer, so the Claude Desktop row shows whether Chat and Cowork have been capturing instead.
+
    CMF also sends short server instructions to every connected app, but apps follow those unevenly; with the block, an app looks things up in CMF first and knows when to save. You don't have to say "CMF" in your prompts.
 4. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
 

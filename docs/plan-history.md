@@ -1774,6 +1774,8 @@ Diagnosed and fixed 2026-10-26 (v0.1.4, unreleased). The live graph held 18 `cla
 
 **Closed 2026-10-26** in v0.1.4 (the fix). Not done: retagging the 23 existing `misc` episodes (needs a proposed-project table and Todd's approval; reopen as a new item if wanted), and the duplicate `codex-misc-001` name. The hook change reaches sessions once the v0.1.4 `cmf` binary and cmf-capture plugin 0.1.2 are installed.
 
+**Follow-up (2026-10-26, v0.1.7):** the hook change alone didn't fix it. `capture_session` journaled the project with the evidence but never passed it to `record_reasoning_episode` (or to doc proposals as `source_project`), so live captures still staged with project NULL. Fixed in `server/capture/session_capture.py`; captures staged before the fix still carry NULL.
+
 ### B20 — Saves that overflow the local model's context are lost (closed 2026-10-26)
 
 Found 2026-10-25 in the v0.1.4 end-to-end Codex test. Codex's `remember` was queued, then the background write `codex-context-memory-fabric-017` failed: extraction sent `unsloth/qwen3.5-122b-a10b` about 12,100 tokens (`n_keep: 12119 >= n_ctx: 8192`, a 400 `BadRequestError`). The prompt grows with the project's existing memories, so the self-test (one tiny memory) passes while real saves fail. Same limit as [B18](#b18--poller-consolidation-overflows-the-local-models-context), on the direct-save path. Stopgap (Todd, 2026-10-25): reload the Spark model at a 32k context.

@@ -486,3 +486,32 @@ func TestOutdatedHookCmf(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestInstructionsOnAppRows(t *testing.T) {
+	f := healthy()
+	f.Clients = []clients.State{
+		{ID: "codex", Label: "Codex", Path: "/u/.codex/config.toml", Installed: true, Exists: true,
+			Entries: []clients.Entry{{Name: "context_memory_fabric", URL: "http://127.0.0.1:8000/mcp", CMF: true, Correct: true, Kind: "url"}}},
+		{ID: "claude-desktop", Label: "Claude Desktop", Path: "/u/claude_desktop_config.json", Installed: true, Exists: true},
+	}
+	f.Health.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-time.Hour)}}
+	f.Instructions = map[string]capture.InstructionsFile{"codex": {App: "codex", Path: "/u/.codex/AGENTS.md", Exists: true, State: "current"}}
+	f.Health.LiveCaptures = map[string]probe.LiveCapture{"codex": {Count: 3, Last: at.Add(-2 * time.Hour)}}
+	r := byID(Evaluate(f))
+	if c := r["app-codex"]; c.Level != OK || !strings.Contains(c.Detail, "instructions CMF's instructions in /u/.codex/AGENTS.md") ||
+		!strings.Contains(c.Detail, "captures    3 in the last 7 days (latest 2 h ago)") {
+		t.Fatalf("%+v", c)
+	}
+	if c := r["app-claude-desktop"]; !strings.Contains(c.Detail, "no captures from Chat or Cowork in the last 7 days") {
+		t.Fatalf("%+v", c)
+	}
+	f.Instructions["codex"] = capture.InstructionsFile{App: "codex", Path: "/u/.codex/AGENTS.md", Exists: true, State: "partial", Missing: []string{"capture_session"}}
+	f.Health.LiveCaptures["claude_cowork"] = probe.LiveCapture{Count: 2, Last: at.Add(-time.Hour)}
+	r = byID(Evaluate(f))
+	if c := r["app-codex"]; c.Level != Warn || !strings.HasPrefix(c.Detail, "its instructions in /u/.codex/AGENTS.md don't name capture_session") {
+		t.Fatalf("%+v", c)
+	}
+	if c := r["app-claude-desktop"]; !strings.Contains(c.Detail, "working: 2 captures in the last 7 days") {
+		t.Fatalf("%+v", c)
+	}
+}

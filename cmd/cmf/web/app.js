@@ -341,8 +341,28 @@ function instructionsNote(id) {
     catch { ev.target.textContent = "Copy failed: open the doc"; }
   } }, "Copy instructions");
   return el("div", { class: "card-desc note" },
-    el("strong", {}, "Instructions. "), "Paste CMF's instructions so the app looks things up in CMF and saves to it. ", where, " ",
+    el("strong", {}, "Instructions. "), instructionsState(id), "Paste CMF's instructions so the app looks things up in CMF and saves to it. ", where, " ",
     copy, " ", el("a", { href: features.instructions_doc, target: "_blank", rel: "noopener" }, "What it says ↗"));
+}
+
+// What CMF can tell about an app's instructions (v0.1.7): its file's
+// content where it has one; for Claude's account instructions, whether
+// Chat and Cowork have been capturing.
+function instructionsState(id) {
+  const file = (features.instructions_state || {})[id];
+  if (file) {
+    const where = file.path.replace(/^\/Users\/[^/]+/, "~");
+    if (file.state === "current") return el("span", {}, statusIcon("ok"), " CMF's instructions are in " + where + ". ");
+    if (file.state === "partial") return el("span", { class: "cost" }, statusIcon("warn"), " " + where + " has an older or trimmed CMF block (missing: " + file.missing.join(", ") + "). ");
+    return el("span", { class: "cost" }, statusIcon("warn"), " No CMF instructions in " + where + " yet. ");
+  }
+  if (id === "connector") {
+    const live = features.live_captures || {};
+    const n = ["claude_cowork", "claude_desktop"].reduce((t, h) => t + ((live[h] || {}).count || 0), 0);
+    return n > 0 ? el("span", {}, statusIcon("ok"), ` Working: Chat and Cowork captured ${n} item(s) in the last 7 days (CMF can't read account instructions directly). `)
+      : el("span", {}, statusIcon("n/a"), " CMF can't read account instructions; no captures from Chat or Cowork in the last 7 days yet. ");
+  }
+  return null;
 }
 
 // The app's capture: its checkpoint hook (and what it runs), the poller,

@@ -96,6 +96,45 @@ def embedding_status(configured: int, graph: str, graph_exists: Optional[bool]) 
     return out
 
 
+LIVE_CAPTURES_WINDOW = timedelta(days=7)
+
+
+def live_captures(journal_path: Optional[Path] = None, now: Optional[datetime] = None) -> dict[str, dict[str, Any]]:
+    """Items each app staged with `capture_session` in the last 7 days (v0.1.7).
+
+    For apps whose instructions live in an account CMF can't read (Cowork,
+    Chat), this is how Status tells whether they're instructed: a connected
+    app that never captures isn't. Keyed by harness, from the memory_id
+    `cowork_live:<harness>:...`.
+    """
+    from server.journal.store import DEFAULT_JOURNAL_PATH
+
+    path = Path(journal_path) if journal_path is not None else DEFAULT_JOURNAL_PATH
+    if not path.exists():
+        return {}
+    since = ((now or datetime.now(timezone.utc)) - LIVE_CAPTURES_WINDOW).isoformat()
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT memory_id, created_at FROM derived_memories WHERE policy_name = 'cowork_live_v1' AND created_at >= ?",
+                (since,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for memory_id, created_at in rows:
+        parts = memory_id.split(":", 2)
+        if len(parts) < 3 or parts[0] != "cowork_live":
+            continue
+        entry = out.setdefault(parts[1], {"count": 0, "last": created_at})
+        entry["count"] += 1
+        entry["last"] = max(entry["last"], created_at)
+    return out
+
+
 def llm_context(config) -> dict[str, Any]:
     """The extraction model's context, for Status's too-small warning (B20)."""
     from server.providers.context_limit import RECOMMENDED_MIN_TOKENS, context_tokens
@@ -163,6 +202,7 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         "retryable_writes": retryable,
         "llm_context": llm_context(config),
         "clients_seen": clients_seen(),
+        "live_captures": live_captures(),
         "refused_calls": refused.recent(),
         "config_check": startup_check.LAST_RESULT.as_dict() if startup_check.LAST_RESULT else None,
         "embedding": embedding_status(config.embedding_dim, graph, fdb.get("graph_exists")),

@@ -383,6 +383,11 @@ func (s *uiServer) features(r *http.Request) (any, error) {
 	if health != nil {
 		server = health.Version
 	}
+	cenv := clientEnv()
+	var live map[string]probe.LiveCapture
+	if health != nil {
+		live = health.LiveCaptures
+	}
 	states := capture.Report(user, env, now())
 	for i := range states {
 		capture.DescribeHook(&states[i], server, contextmemoryfabric.PluginVersion())
@@ -393,7 +398,10 @@ func (s *uiServer) features(r *http.Request) (any, error) {
 		// cards, and the public address a claude.ai connector would use.
 		"capture": states, "public_url": env.Get("CMF_MCP_ISSUER_URL"),
 		"connector":    connectorSeen(health),
-		"instructions": contextmemoryfabric.AgentInstructions(), "instructions_doc": instructionsURL}, nil
+		"instructions": contextmemoryfabric.AgentInstructions(), "instructions_doc": instructionsURL,
+		// Whether each app's instructions file holds CMF's guidance, and what
+		// each app captured lately (for apps whose instructions CMF can't read).
+		"instructions_state": capture.CheckInstructions(cenv.Home, cenv.Getenv), "live_captures": live}, nil
 }
 
 func readRequest(r *http.Request) (*features.Request, error) {

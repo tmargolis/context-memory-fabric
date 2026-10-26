@@ -223,6 +223,9 @@ def _capture_episode_item(
         supersedes=None,
         conversation_id=event.source.conversation_id,
         harness=event.source.harness,
+        # Without it every live capture staged with project NULL and was
+        # promoted under `misc`, whatever the caller passed (found 2026-10-26).
+        project=project,
     )
 
     return SessionItemResult(
@@ -234,7 +237,7 @@ def _capture_episode_item(
 
 def _capture_doc_item(
     item: dict[str, Any], session: Any = None, wiki_root: Optional[Any] = None, proposals_dir: Optional[Any] = None,
-    source_description: Optional[str] = None,
+    source_description: Optional[str] = None, project: Optional[str] = None,
 ) -> SessionItemResult:
     target_path = (item.get("target_path") or "").strip()
     proposed_content = item.get("proposed_content") or ""
@@ -259,6 +262,7 @@ def _capture_doc_item(
             source_context=item.get("evidence_text"),
             source_conversation_id=identity.resolve_session_id(session) if session is not None else None,
             source_harness=surface_harness(identity.resolve_harness(client_info), source_description)[0] if session is not None else None,
+            source_project=project,
             wiki_root=wiki_root,
             proposals_dir=proposals_dir,
         )
@@ -308,7 +312,7 @@ def capture_session(
                     )
                 elif destination == "doc_proposal":
                     result = _capture_doc_item(item, session=session, wiki_root=wiki_root, proposals_dir=proposals_dir,
-                                               source_description=source_description)
+                                               source_description=source_description, project=project)
                 else:
                     result = SessionItemResult(
                         destination or "(missing)", False, "",

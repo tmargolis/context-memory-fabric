@@ -724,6 +724,11 @@ func checkApps(f probe.Facts) []Result {
 			lines[0] = "connection  the claude.ai connector (its calls show under Claude Desktop)"
 			connected = true
 		}
+		instrProblem := ""
+		if line, problem := instructionsLine(f, a.Client, a.Seen); line != "" {
+			lines = append(lines, "instructions "+line)
+			instrProblem = problem
+		}
 		hookProblem, hookUpdatable := "", false
 		if s, ok := sourceByID[a.Source]; ok {
 			installed = installed || s.Present
@@ -763,6 +768,9 @@ func checkApps(f probe.Facts) []Result {
 				if slices.Contains(a.Seen, c.Harness) && c.LastSeen.After(last) {
 					last = c.LastSeen
 				}
+			}
+			if n, at := liveCaptures(f, a.Seen); n > 0 {
+				lines = append(lines, fmt.Sprintf("captures    %d in the last 7 days (latest %s)", n, ago(f.At.Sub(at))))
 			}
 			if !last.IsZero() {
 				lines = append(lines, "seen        "+ago(f.At.Sub(last)))
@@ -807,6 +815,9 @@ func checkApps(f probe.Facts) []Result {
 		r.Level = NA // installed, not connected
 		if connected {
 			r.Level = OK
+			if instrProblem != "" && hookProblem == "" {
+				r.Level, r.Detail = Warn, instrProblem+"\n"+r.Detail
+			}
 			if hookProblem != "" {
 				// Connected, but its checkpoints run an old cmf or plugin (v0.1.5).
 				r.Level, r.Detail = Warn, hookProblem+"\n"+r.Detail
@@ -827,6 +838,48 @@ func checkApps(f probe.Facts) []Result {
 		out = append(out, r)
 	}
 	return out
+}
+
+// instructionsLine says whether an app's own instructions carry CMF's
+// guidance (v0.1.7): read from its file where there is one (Claude Code,
+// Codex); for Claude's account instructions, which CMF can't read, whether
+// the app has been capturing instead. problem is set when a file lacks it.
+func instructionsLine(f probe.Facts, client string, harnesses []string) (line, problem string) {
+	if file, ok := f.Instructions[client]; ok {
+		where := tilde(file.Path)
+		switch file.State {
+		case "current":
+			return "CMF's instructions in " + where, ""
+		case "partial":
+			return "an older or trimmed CMF block in " + where + " (missing: " + strings.Join(file.Missing, ", ") + ")",
+				"its instructions in " + where + " don't name " + strings.Join(file.Missing, ", ") + "; paste the current block (Features → Copy instructions)"
+		}
+		return "none in " + where, "no CMF instructions in " + where + "; paste them from Features → Copy instructions"
+	}
+	if client == "claude-desktop" {
+		if n, at := liveCaptures(f, harnesses); n > 0 {
+			return fmt.Sprintf("in your claude.ai account (CMF can't read them); working: %d captures in the last 7 days, latest %s", n, ago(f.At.Sub(at))), ""
+		}
+		return "in your claude.ai account (CMF can't read them); no captures from Chat or Cowork in the last 7 days, so check Settings → Account → Instructions for Claude and Cowork's cmf-capture plugin", ""
+	}
+	return "", ""
+}
+
+// liveCaptures totals the capture_session items the harnesses staged in the last 7 days.
+func liveCaptures(f probe.Facts, harnesses []string) (int, time.Time) {
+	if f.Health == nil {
+		return 0, time.Time{}
+	}
+	n, last := 0, time.Time{}
+	for _, h := range harnesses {
+		if c, ok := f.Health.LiveCaptures[h]; ok {
+			n += c.Count
+			if c.Last.After(last) {
+				last = c.Last
+			}
+		}
+	}
+	return n, last
 }
 
 // refusedSince is the latest refusal of a harness match accepts that came

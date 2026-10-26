@@ -84,8 +84,11 @@ type Health struct {
 	RefusedCalls     []RefusedCall     `json:"refused_calls"` // absent from servers before 0.1.4
 	// Saves whose memory is kept for a retry, and the extraction model's
 	// context (B20); both absent from servers before 0.1.4.
-	RetryableWrites []string    `json:"retryable_writes"`
-	LLMContext      *LLMContext `json:"llm_context"`
+	RetryableWrites []string `json:"retryable_writes"`
+	// Items each app staged with capture_session in the last 7 days, by
+	// harness (v0.1.7; absent before).
+	LiveCaptures map[string]LiveCapture `json:"live_captures"`
+	LLMContext   *LLMContext            `json:"llm_context"`
 	// Item 1.1; absent from servers that predate it.
 	ConfigCheck   *ConfigCheck   `json:"config_check"`
 	Embedding     *Embedding     `json:"embedding"`
@@ -108,6 +111,12 @@ type BackgroundWrite struct {
 	ErrorKind  string `json:"error_kind"`
 	QueuedAt   string `json:"queued_at"`
 	FinishedAt string `json:"finished_at"`
+}
+
+// LiveCapture is one app's recent capture_session items.
+type LiveCapture struct {
+	Count int       `json:"count"`
+	Last  time.Time `json:"last"`
 }
 
 // LLMContext is the extraction model's context in tokens: the loaded
@@ -178,7 +187,10 @@ type Facts struct {
 	NodesErr  string
 	Clients   []clients.State       // each AI app's CMF entries; nil when not checked
 	Capture   []capture.SourceState // how each transcript source is captured; nil when not checked
-	Self      string                // this cmf binary, for fixes that run cmf itself
+	// Instructions is each app's instructions file and whether it holds
+	// CMF's guidance (v0.1.7); nil when not checked.
+	Instructions map[string]capture.InstructionsFile
+	Self         string // this cmf binary, for fixes that run cmf itself
 	// CmfVersion is this cmf binary's version, to compare with the server's.
 	CmfVersion string
 	Installed  bool // ~/.cmf has a .env and a compose file
@@ -277,6 +289,7 @@ func (p Prober) Collect(ctx context.Context) Facts {
 		if envErr == nil {
 			f.Capture = capture.Report(p.ClientEnv.Home, env, f.At)
 		}
+		f.Instructions = capture.CheckInstructions(p.ClientEnv.Home, p.ClientEnv.Getenv)
 	}
 	if state, err := mode.Load(p.Home); err != nil {
 		f.ModeErr = err.Error()

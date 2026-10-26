@@ -60,6 +60,7 @@ class TestCaptureSessionEpisodes(unittest.TestCase):
         self.assertEqual(row["policy_name"], "cowork_live_v1")
         self.assertEqual(row["approval_state"], "queued_for_review")
         self.assertEqual(row["reasoning_kind"], "decision")
+        self.assertEqual(row["project"], "atlas")  # was dropped: every live capture promoted under misc
 
     def test_evidence_text_is_journaled_as_a_real_event(self):
         results = capture_session(
