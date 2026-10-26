@@ -99,11 +99,14 @@ const levelWords = { ok: "All checks pass.", warn: "Working, with warnings below
 let statusShown = false; // Status has results on screen
 
 // "10:42:07", with the date too when it isn't today.
+// The date and time a check ran, as Status shows every time:
+// 10/26/26 03:42:38 PM (the same layout as the rows, checks.StampLayout).
 function checkedAt(iso) {
   const t = new Date(iso);
   if (isNaN(t)) return "";
-  const time = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  return t.toDateString() === new Date().toDateString() ? time : t.toLocaleDateString() + " " + time;
+  const p = (n) => String(n).padStart(2, "0");
+  const h = t.getHours() % 12 || 12;
+  return `${p(t.getMonth() + 1)}/${p(t.getDate())}/${p(t.getFullYear() % 100)} ${p(h)}:${p(t.getMinutes())}:${p(t.getSeconds())} ${t.getHours() < 12 ? "AM" : "PM"}`;
 }
 
 async function loadStatus() {
@@ -314,8 +317,24 @@ function featureCard(f) {
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, f.label), el("div", { class: "card-desc" }, f.description)),
       control),
+    modelNote(f.id),
     showInputs ? el("div", { class: "inputs" }, ...f.inputs.map((i) => el("label", {}, i.label, inputControl(f, i)))) : null,
     on && !f.enabled && f.cost_note ? el("div", { class: "cost" }, "Cost: " + f.cost_note) : null);
+}
+
+// The models the running server uses, under the LLM and Embeddings cards
+// (v0.1.9): the provider names alone didn't say which model.
+function modelNote(id) {
+  const m = features.models;
+  if (!m) return null;
+  if (id === "llm" && m.llm && m.llm.length) {
+    return el("div", { class: "card-desc note" }, el("strong", {}, "Running now. "),
+      ...m.llm.flatMap((x, i) => [i ? (i === 1 ? " · falls back to " : ", then ") : "", x.provider + ": ", el("code", {}, x.model || "default")]), ".");
+  }
+  if (id === "embeddings" && m.embeddings) {
+    return el("div", { class: "card-desc note" }, el("strong", {}, "Running now. "), el("code", {}, m.embeddings), ".");
+  }
+  return null;
 }
 
 function captureState(source) {
@@ -381,7 +400,11 @@ function captureNote(st, title) {
       st.hook_updatable ? el("button", { class: "small", onclick: async () => {
         await runFix({ id: "app-" + appForSource[st.id] }, { label: "Update the hook's cmf", steps: [{ command: "cmf capture hook update --yes" }] });
         loadFeatures();
-      } }, "Update") : null));
+      } }, "Update") : null,
+      st.hook_replaceable ? el("button", { class: "small", onclick: async () => {
+        await runFix({ id: "app-" + appForSource[st.id] }, { label: "Replace with the cmf hook", steps: [{ command: `cmf capture hook install ${st.harness} --yes` }] });
+        loadFeatures();
+      } }, "Replace") : null));
   }
   return el("div", { class: "card-desc note" }, el("strong", {}, "Capture. "), ...lines);
 }

@@ -333,6 +333,15 @@ func (s *uiServer) status(r *http.Request) (any, error) {
 // connectorSeen: Claude Desktop called CMF in the last day with no local
 // entry, so a claude.ai connector reaches it (it covers every Claude app
 // signed in to that account).
+// modelsFrom is the models the server runs, for the LLM and Embeddings
+// cards (v0.1.9); nil when the server can't be reached or predates it.
+func modelsFrom(h *probe.Health) map[string]any {
+	if h == nil || (len(h.Providers.LLMModels) == 0 && h.Providers.EmbedModel == "") {
+		return nil
+	}
+	return map[string]any{"llm": h.Providers.LLMModels, "embeddings": h.Providers.EmbedModel}
+}
+
 // instructionsURL is the instruction block's doc, for the Features cards.
 const instructionsURL = "https://github.com/tmargolis/context-memory-fabric/blob/main/docs/INSTRUCTIONS-FOR-AGENTS.md"
 
@@ -402,7 +411,8 @@ func (s *uiServer) features(r *http.Request) (any, error) {
 		"instructions": contextmemoryfabric.AgentInstructions(), "instructions_doc": instructionsURL,
 		// Whether each app's instructions file holds CMF's guidance, and what
 		// each app captured lately (for apps whose instructions CMF can't read).
-		"instructions_state": capture.CheckInstructions(cenv.Home, cenv.Getenv), "live_captures": live}, nil
+		"instructions_state": capture.CheckInstructions(cenv.Home, cenv.Getenv), "live_captures": live,
+		"models": modelsFrom(health)}, nil
 }
 
 func readRequest(r *http.Request) (*features.Request, error) {

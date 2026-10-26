@@ -51,6 +51,8 @@ type SourceState struct {
 	HookLine      string `json:"hook_line,omitempty"`
 	HookProblem   string `json:"hook_problem,omitempty"`
 	HookUpdatable bool   `json:"hook_updatable,omitempty"`
+	// An older Python hook `cmf capture hook install` replaces (v0.1.9).
+	HookReplaceable bool `json:"hook_replaceable,omitempty"`
 }
 
 // PollerSources is the poller's set: COMPOSE_PROFILES must include capture;

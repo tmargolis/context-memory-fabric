@@ -120,7 +120,7 @@ func older(a, b string) bool {
 // hook is, and what's wrong with it, against the server's version and the
 // newest cmf-capture plugin (both may be "" when unknown).
 func DescribeHook(st *SourceState, serverVersion, latestPlugin string) {
-	st.HookLine, st.HookProblem, st.HookUpdatable = "", "", false
+	st.HookLine, st.HookProblem, st.HookUpdatable, st.HookReplaceable = "", "", false, false
 	switch st.Hook {
 	case "cmf":
 		where := st.HookBinary
@@ -147,7 +147,8 @@ func DescribeHook(st *SourceState, serverVersion, latestPlugin string) {
 		}
 	case "python":
 		st.HookLine = "checkpoint hook: the older Python checkpoint hook"
-		st.HookProblem = "replace it with the cmf hook (`cmf capture hook install " + st.Harness + "`)"
+		st.HookProblem = "this hook needs the CMF checkout's Python; replace it with the cmf hook (Replace, or `cmf capture hook install " + st.Harness + "`)"
+		st.HookReplaceable = true
 	default:
 		if st.Present {
 			st.HookLine = "checkpoint hook: none"

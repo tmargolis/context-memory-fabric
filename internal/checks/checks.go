@@ -643,7 +643,7 @@ func checkConnector(f probe.Facts) Result {
 		r.Level, r.Detail = NA, "remote access is on, but no Claude call came through a connector in the last day\naddress     "+addr+"/mcp\nadd it in claude.ai → Settings → Connectors, then start a new conversation"
 		return r
 	}
-	r.Level, r.Detail = OK, "active\naddress     "+addr+"/mcp\nlast call   "+ago(f.At.Sub(last))+"\ncovers      Claude Desktop (Chat, Cowork, Code tab) and Claude Code"
+	r.Level, r.Detail = OK, "active\naddress     "+addr+"/mcp\nlast call   "+stamp(last)+"\ncovers      Claude Desktop (Chat, Cowork, Code tab) and Claude Code"
 	return r
 }
 
@@ -729,7 +729,7 @@ func checkApps(f probe.Facts) []Result {
 			lines = append(lines, "instructions "+line)
 			instrProblem = problem
 		}
-		hookProblem, hookUpdatable := "", false
+		hookProblem, hookUpdatable, hookPython, hookHarness := "", false, false, ""
 		if s, ok := sourceByID[a.Source]; ok {
 			installed = installed || s.Present
 			serverVersion := ""
@@ -738,6 +738,8 @@ func checkApps(f probe.Facts) []Result {
 			}
 			capture.DescribeHook(&s, serverVersion, contextmemoryfabric.PluginVersion())
 			hookProblem, hookUpdatable = s.HookProblem, s.HookUpdatable
+			hookPython = s.Hook == "python"
+			hookHarness = s.Harness
 			hook := hookNames[s.Hook]
 			if hook == "" {
 				hook = "none"
@@ -753,7 +755,7 @@ func checkApps(f probe.Facts) []Result {
 			case s.Poller:
 				poll := tilde(s.Folder)
 				if !s.Last.IsZero() {
-					poll += " · last transcript " + ago(f.At.Sub(s.Last))
+					poll += " · last transcript " + stamp(s.Last)
 				}
 				lines = append(lines, "poller      "+poll)
 			case s.Present && s.Folder == "":
@@ -770,10 +772,10 @@ func checkApps(f probe.Facts) []Result {
 				}
 			}
 			if n, at := liveCaptures(f, a.Seen); n > 0 {
-				lines = append(lines, fmt.Sprintf("captures    %d in the last 7 days (latest %s)", n, ago(f.At.Sub(at))))
+				lines = append(lines, fmt.Sprintf("captures    %d in the last 7 days (latest %s)", n, stamp(at)))
 			}
 			if !last.IsZero() {
-				lines = append(lines, "seen        "+ago(f.At.Sub(last)))
+				lines = append(lines, "seen        "+stamp(last))
 				if noEntry {
 					// Called CMF without a local entry: a claude.ai connector
 					// (or another remote one) reaches it over the public URL.
@@ -822,14 +824,20 @@ func checkApps(f probe.Facts) []Result {
 			if hookProblem != "" {
 				// Connected, but its checkpoints run an old cmf or plugin (v0.1.5).
 				r.Level, r.Detail = Warn, hookProblem+"\n"+r.Detail
-				if hookUpdatable {
-					self := f.Self
-					if self == "" {
-						self = "cmf"
-					}
+				self := f.Self
+				if self == "" {
+					self = "cmf"
+				}
+				switch {
+				case hookUpdatable:
 					r.Fix = &Fix{Label: "Update the hook's cmf", Steps: []Step{
 						step("copy this cmf over the older one the checkpoint hook runs (backup kept)",
 							run.Cmd{Name: self, Args: []string{"capture", "hook", "update", "--yes"}}),
+					}}
+				case hookPython:
+					r.Fix = &Fix{Label: "Replace with the cmf hook", Steps: []Step{
+						step("replace the older Python checkpoint hook with one running this cmf (backup kept; the app may ask you to trust the new hook)",
+							run.Cmd{Name: self, Args: []string{"capture", "hook", "install", hookHarness, "--yes"}}),
 					}}
 				}
 			}
@@ -862,7 +870,7 @@ func instructionsLine(f probe.Facts, client string, harnesses []string) (line, p
 	}
 	if client == "claude-desktop" {
 		if n, at := liveCaptures(f, harnesses); n > 0 {
-			return fmt.Sprintf("in your claude.ai account (CMF can't read them); working: %d captures in the last 7 days, latest %s", n, ago(f.At.Sub(at))), ""
+			return fmt.Sprintf("in your claude.ai account (CMF can't read them); working: %d captures in the last 7 days, latest %s", n, stamp(at)), ""
 		}
 		return "in your claude.ai account (CMF can't read them); no captures from Chat or Cowork in the last 7 days, so check Settings → Account → Instructions for Claude and Cowork's cmf-capture plugin", ""
 	}
@@ -927,20 +935,17 @@ func refusedLine(f probe.Facts, rc probe.RefusedCall) string {
 	if rc.Count != 1 {
 		calls = "calls"
 	}
-	return fmt.Sprintf("CMF refused %d %s in the last day (last %s): its sign-in or access token isn't valid any more", rc.Count, calls, ago(f.At.Sub(rc.LastAt)))
+	return fmt.Sprintf("CMF refused %d %s in the last day (last %s): its sign-in or access token isn't valid any more", rc.Count, calls, stamp(rc.LastAt))
 }
 
-func ago(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%d min ago", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%d h ago", int(d.Hours()))
-	}
-	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+// stamp is a time as Status shows it: the local date and time
+// (10/26/26 03:42:38 PM), not "20 min ago" (Todd, 2026-10-26).
+func stamp(t time.Time) string {
+	return t.Local().Format(StampLayout)
 }
+
+// StampLayout is Status's date-and-time format.
+const StampLayout = "01/02/06 03:04:05 PM"
 
 // SelftestCmd runs the server's self-test (item 1.7) inside the stack.
 // It calls the real providers; extraction on a local model takes minutes.
@@ -961,9 +966,9 @@ func checkSelfTest(f probe.Facts) Result {
 	case t == nil:
 		r.Level, r.Detail = NA, "not run yet; `cmf selftest` runs it (a few minutes, calls your providers once)"
 	case t.OK:
-		r.Level, r.Detail = OK, fmt.Sprintf("passed %s (%.0f s)", ago(f.At.Sub(t.At)), t.Seconds)
+		r.Level, r.Detail = OK, fmt.Sprintf("passed %s (%.0f s)", stamp(t.At), t.Seconds)
 	default:
-		r.Level, r.Detail, r.Fix = Fail, fmt.Sprintf("%s failed %s: %s", t.FailedStage, ago(f.At.Sub(t.At)), t.FailedDetail), rerun
+		r.Level, r.Detail, r.Fix = Fail, fmt.Sprintf("%s failed %s: %s", t.FailedStage, stamp(t.At), t.FailedDetail), rerun
 	}
 	if r.Fix == nil {
 		r.Action = rerun

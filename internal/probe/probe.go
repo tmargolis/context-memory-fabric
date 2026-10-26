@@ -77,6 +77,12 @@ type Health struct {
 		Embeddings   string   `json:"embeddings"`
 		CaptureLLM   string   `json:"capture_llm"`
 		EmbeddingDim int      `json:"embedding_dim"`
+		// The model each provider runs (v0.1.9); absent from older servers.
+		LLMModels []struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		} `json:"llm_models"`
+		EmbedModel string `json:"embed_model"`
 	} `json:"providers"`
 	KnowledgeSources []string          `json:"knowledge_sources"`
 	BackgroundWrites []BackgroundWrite `json:"background_writes"`

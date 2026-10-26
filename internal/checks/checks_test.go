@@ -17,6 +17,9 @@ import (
 
 var at = time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC)
 
+// Status shows local times; tests read them in UTC.
+func init() { time.Local = time.UTC }
+
 func healthy() probe.Facts {
 	dev := mode.Mode{Mode: mode.Developer, Repo: "/src/cmf"}
 	h := &probe.Health{Status: "ok", Graph: "mem-fabric-local"}
@@ -62,7 +65,7 @@ func TestHealthyInstallIsGreen(t *testing.T) {
 		t.Fatal("expected all ok / n/a")
 	}
 	r := byID(results)
-	if !strings.Contains(r["graph"].Detail, "6769 nodes") || r["app-claude-desktop"].Level != OK || !strings.Contains(r["app-claude-desktop"].Detail, "seen        13 h ago") {
+	if !strings.Contains(r["graph"].Detail, "6769 nodes") || r["app-claude-desktop"].Level != OK || !strings.Contains(r["app-claude-desktop"].Detail, "seen        10/24/26 12:00:00 AM") {
 		t.Fatalf("%+v %+v", r["graph"], r["app-claude-desktop"])
 	}
 	if !strings.Contains(r["launchd"].Detail, "com.cmf.spark-tunnel") {
@@ -198,7 +201,7 @@ func TestAppRows(t *testing.T) {
 	}
 	r := byID(Evaluate(f))
 	code := r["app-claude-code"]
-	for _, want := range []string{"connection  local entry in /u/.claude.json", "hook        the cmf-capture plugin", "poller      /u/.claude/projects · last transcript 3 min ago"} {
+	for _, want := range []string{"connection  local entry in /u/.claude.json", "hook        the cmf-capture plugin", "poller      /u/.claude/projects · last transcript 10/24/26 12:57:00 PM"} {
 		if code.Level != OK || !strings.Contains(code.Detail, want) {
 			t.Fatalf("%q in %+v", want, code)
 		}
@@ -319,12 +322,12 @@ func TestSelftestRow(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	f.Health.Selftest = &probe.Selftest{OK: true, At: at.Add(-3 * time.Hour), Seconds: 74}
-	if r := byID(Evaluate(f))["selftest"]; r.Level != OK || r.Detail != "passed 3 h ago (74 s)" {
+	if r := byID(Evaluate(f))["selftest"]; r.Level != OK || r.Detail != "passed 10/24/26 10:00:00 AM (74 s)" {
 		t.Fatalf("%+v", r)
 	}
 	f.Health.Selftest = &probe.Selftest{At: at.Add(-72 * time.Hour), FailedStage: "recall", FailedDetail: "search didn't return it"}
 	r := byID(Evaluate(f))["selftest"]
-	if r.Level != Fail || r.Detail != "recall failed 3 days ago: search didn't return it" || r.Fix == nil ||
+	if r.Level != Fail || r.Detail != "recall failed 10/21/26 01:00:00 PM: search didn't return it" || r.Fix == nil ||
 		!strings.HasSuffix(r.Fix.Steps[0].Show, "exec -T cmf-server python -m server.selftest") {
 		t.Fatalf("%+v", r)
 	}
@@ -377,7 +380,7 @@ func TestConnectorRow(t *testing.T) {
 	}
 	f.Env["CMF_MCP_ISSUER_URL"] = "https://mac.tail1.ts.net/"
 	f.Health.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-2 * time.Hour)}}
-	if r := byID(Evaluate(f))["connector"]; r.Level != OK || !strings.Contains(r.Detail, "https://mac.tail1.ts.net/mcp") || !strings.Contains(r.Detail, "2 h ago") {
+	if r := byID(Evaluate(f))["connector"]; r.Level != OK || !strings.Contains(r.Detail, "https://mac.tail1.ts.net/mcp") || !strings.Contains(r.Detail, "last call   10/24/26 11:00:00 AM") {
 		t.Fatalf("%+v", r)
 	}
 	f.Health.ClientsSeen = nil
@@ -399,7 +402,7 @@ func TestRefusedAppRow(t *testing.T) {
 	f.Health.RefusedCalls = []probe.RefusedCall{{Harness: "codex", Count: 12, LastAt: at.Add(-5 * time.Minute), LastPath: "/token"}}
 	r := byID(Evaluate(f))
 	c := r["app-codex"]
-	if c.Level != Warn || !strings.HasPrefix(c.Detail, "CMF refused 12 calls in the last day (last 5 min ago)") || c.Fix == nil ||
+	if c.Level != Warn || !strings.HasPrefix(c.Detail, "CMF refused 12 calls in the last day (last 10/24/26 12:55:00 PM)") || c.Fix == nil ||
 		c.Fix.Label != "Use this computer's address" || c.Fix.Steps[0].Show != "/Applications/cmf clients set codex --yes" {
 		t.Fatalf("%+v %+v", c, c.Fix)
 	}
@@ -499,7 +502,7 @@ func TestInstructionsOnAppRows(t *testing.T) {
 	f.Health.LiveCaptures = map[string]probe.LiveCapture{"codex": {Count: 3, Last: at.Add(-2 * time.Hour)}}
 	r := byID(Evaluate(f))
 	if c := r["app-codex"]; c.Level != OK || !strings.Contains(c.Detail, "instructions CMF's instructions in /u/.codex/AGENTS.md") ||
-		!strings.Contains(c.Detail, "captures    3 in the last 7 days (latest 2 h ago)") {
+		!strings.Contains(c.Detail, "captures    3 in the last 7 days (latest 10/24/26 11:00:00 AM)") {
 		t.Fatalf("%+v", c)
 	}
 	if c := r["app-claude-desktop"]; !strings.Contains(c.Detail, "no captures from Chat or Cowork in the last 7 days") {
@@ -514,5 +517,18 @@ func TestInstructionsOnAppRows(t *testing.T) {
 	}
 	if c := r["app-claude-desktop"]; !strings.Contains(c.Detail, "working: 2 captures in the last 7 days") {
 		t.Fatalf("%+v", c)
+	}
+}
+
+func TestPythonHookGetsReplaceFix(t *testing.T) {
+	f := healthy()
+	f.Self = "/Applications/cmf"
+	f.Clients = []clients.State{{ID: "antigravity", Label: "Antigravity", Path: "/u/.gemini/config/mcp_config.json", Installed: true, Exists: true,
+		Entries: []clients.Entry{{Name: "context-memory-fabric", URL: "http://127.0.0.1:8000/mcp", CMF: true, Correct: true, Kind: "cmf-bridge"}}}}
+	f.Capture = []capture.SourceState{{Source: capture.Source{ID: "antigravity", Harness: "antigravity"}, Present: true, Hook: "python", Worker: true}}
+	c := byID(Evaluate(f))["app-antigravity"]
+	if c.Level != Warn || c.Fix == nil || c.Fix.Label != "Replace with the cmf hook" ||
+		c.Fix.Steps[0].Show != "/Applications/cmf capture hook install antigravity --yes" {
+		t.Fatalf("%+v %+v", c, c.Fix)
 	}
 }

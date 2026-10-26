@@ -135,10 +135,16 @@ func TestExistingNudgesCount(t *testing.T) {
 	if h := ReadHooks("codex", user); h.Nudge != "python" || !h.Worker {
 		t.Fatal(h)
 	}
-	for _, harness := range []string{"claude_code", "codex"} {
-		if c, _ := PlanHook(harness, user, "/Applications/cmf", false); !c.Empty() || !strings.Contains(c.Note, "already") {
-			t.Fatalf("%s: %+v", harness, c)
-		}
+	if c, _ := PlanHook("claude_code", user, "/Applications/cmf", false); !c.Empty() || !strings.Contains(c.Note, "already") {
+		t.Fatalf("%+v", c)
+	}
+	// The older Python hook is replaced (it used to stop at "already has"),
+	// in place; the worker hook beside it stays.
+	c, _ := PlanHook("codex", user, "/Applications/cmf", false)
+	if c.Empty() || c.Note != "replace the Python checkpoint hook with one running cmf" ||
+		strings.Contains(string(c.New), "capture_nudge run") || !strings.Contains(string(c.New), `hook stop --harness codex`) ||
+		!strings.Contains(string(c.New), "cmf-codex-worker") || strings.Count(string(c.New), Marker) != 1 {
+		t.Fatalf("%s", c.New)
 	}
 	c, err := PlanHook("antigravity", user, "/Applications/cmf", false)
 	if err != nil || c.Empty() {
@@ -149,8 +155,11 @@ func TestExistingNudgesCount(t *testing.T) {
 	if cfg["cmf-antigravity-worker"] == nil || cfg[Marker] == nil {
 		t.Fatal(string(c.New))
 	}
-	if _, err := PlanHook("codex", user, "", false); err != nil {
-		t.Fatal("already present: no path needed", err)
+	if _, err := PlanHook("claude_code", user, "", false); err != nil {
+		t.Fatal("already captured: no path needed", err)
+	}
+	if _, err := PlanHook("codex", user, "", false); err == nil {
+		t.Fatal("replacing the Python hook needs a lasting cmf path")
 	}
 	if _, err := PlanHook("antigravity", user, "", false); err == nil {
 		t.Fatal("installing needs a lasting cmf path")

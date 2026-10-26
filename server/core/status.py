@@ -135,6 +135,26 @@ def live_captures(journal_path: Optional[Path] = None, now: Optional[datetime] =
     return out
 
 
+def model_for(config, provider: str, role: str) -> Optional[str]:
+    """The model a provider runs for role "llm" or "embeddings" (v0.1.9: Features shows them)."""
+    if provider == "local":
+        return config.local_llm_model if role == "llm" else config.local_embed_model
+    if provider == "anthropic":
+        return config.anthropic_model if role == "llm" else None
+    if provider == "openai":
+        return config.openai_model if role == "llm" else config.openai_embed_model
+    if provider == "gemini":
+        if role == "embeddings":
+            return "gemini-embedding-001"
+        import os
+
+        from server.core.rate_limiter import DEFAULT_MODEL_CHAIN
+
+        chain = [m.strip() for m in os.getenv("CMF_GEMINI_MODEL_CHAIN", "").split(",") if m.strip()]
+        return (chain or DEFAULT_MODEL_CHAIN)[0]
+    return None
+
+
 def llm_context(config) -> dict[str, Any]:
     """The extraction model's context, for Status's too-small warning (B20)."""
     from server.providers.context_limit import RECOMMENDED_MIN_TOKENS, context_tokens
@@ -192,6 +212,8 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
             # apart from the shared list.
             "capture_llm_separate": capture_llm_override(),
             "embedding_dim": config.embedding_dim,
+            "llm_models": [{"provider": p, "model": model_for(config, p, "llm")} for p in config.llm_providers],
+            "embed_model": model_for(config, config.embed_provider, "embeddings"),
         },
         "knowledge_sources": knowledge,
         "background_writes": [

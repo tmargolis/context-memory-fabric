@@ -148,8 +148,10 @@ func PlanHook(harness, userHome, cmf string, remove bool) (*HookChange, error) {
 		c.Old = data
 	}
 	switch {
-	case !remove && h.Nudge != "":
-		c.New, c.Note = c.Old, map[string]string{"plugin": "already captured by the cmf-capture plugin", "cmf": "already has the cmf checkpoint hook", "python": "already has the Python checkpoint hook"}[h.Nudge]
+	case !remove && (h.Nudge == "plugin" || h.Nudge == "cmf"):
+		// The older Python hook (Nudge "python") is replaced below: Status
+		// tells you to run this to do it, and it used to stop here.
+		c.New, c.Note = c.Old, map[string]string{"plugin": "already captured by the cmf-capture plugin", "cmf": "already has the cmf checkpoint hook"}[h.Nudge]
 		return c, nil
 	case remove && (h.Nudge == "" || h.Nudge == "plugin"):
 		c.New, c.Note = c.Old, "no checkpoint hook to remove"
@@ -173,8 +175,11 @@ func PlanHook(harness, userHome, cmf string, remove bool) (*HookChange, error) {
 		} else {
 			entry := jsonedit.New()
 			entry.SetValue("Stop", []any{handler})
-			root.Set(Marker, entry.Raw())
+			root.Set(Marker, entry.Raw()) // replaces a Python hook's entry in place
 			c.Note = "add a " + Marker + " Stop entry running cmf"
+			if h.Nudge == "python" {
+				c.Note = "replace the Python checkpoint hook with one running cmf"
+			}
 		}
 	} else {
 		hooks, err := root.Child("hooks")
@@ -187,7 +192,9 @@ func PlanHook(harness, userHome, cmf string, remove bool) (*HookChange, error) {
 		}
 		var kept []json.RawMessage
 		for _, g := range groups {
-			if remove && strings.Contains(string(g), Marker) {
+			// Removing drops the checkpoint hook; installing drops a Python
+			// one it replaces (a cmf one never gets here).
+			if strings.Contains(string(g), Marker) {
 				continue
 			}
 			kept = append(kept, g)
@@ -202,6 +209,9 @@ func PlanHook(harness, userHome, cmf string, remove bool) (*HookChange, error) {
 			raw, _ := json.Marshal(group)
 			kept = append(kept, raw)
 			c.Note = "add a Stop hook running cmf"
+			if h.Nudge == "python" {
+				c.Note = "replace the Python checkpoint hook with one running cmf"
+			}
 		}
 		if len(kept) == 0 {
 			hooks.Remove("Stop")
