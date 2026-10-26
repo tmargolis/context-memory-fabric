@@ -119,7 +119,7 @@ async function loadStatus() {
     return;
   }
   const when = checkedAt(s.checked_at);
-  $("summary").replaceChildren(levelWords[s.overall] || s.overall,
+  $("summary").replaceChildren(statusIcon(s.overall), " ", levelWords[s.overall] || s.overall,
     when ? el("span", { class: "checked-at", title: s.checked_at }, "checked " + when) : null);
   $("summary").classList.add(s.overall);
   // One number when the cmf program and the server agree; both when they don't.
@@ -128,7 +128,7 @@ async function loadStatus() {
   $("browser-link").href = s.browser_url;
   $("browser-link").title = s.browser_url + (s.graph ? ` · pick graph “${s.graph}” there` : "");
   $("checks").replaceChildren(...s.checks.map((c) => el("li", {},
-    el("span", { class: "dot " + (c.level === "n/a" ? "na" : c.level), title: c.level }),
+    statusIcon(c.level),
     el("div", {}, checkTitle(c),
       c.about ? el("div", { class: "check-about" }, ...withCode(c.about)) : null,
       el("div", { class: "check-detail" }, c.detail)),
@@ -138,6 +138,15 @@ async function loadStatus() {
       ? el("button", { class: "small fix", title: c.action.steps.map((st) => st.command).join("\n"), onclick: () => runFix(c, c.action) }, c.action.label)
       : el("span"),
   )));
+}
+
+// A check's level as an icon that differs by shape and symbol as well as
+// colour (a tick in a circle, ! in a triangle, a cross in a square, a dash),
+// readable without telling colours apart; the label is for screen readers.
+const levelIcons = { ok: ["✓", "OK"], warn: ["!", "Warning"], fail: ["✕", "Failed"], "n/a": ["–", "Not applicable"] };
+function statusIcon(level) {
+  const [glyph, label] = levelIcons[level] || ["?", level];
+  return el("span", { class: "status-icon " + (level === "n/a" ? "na" : level), role: "img", "aria-label": label, title: label }, glyph);
 }
 
 // Text with `backticks` as code spans (still text nodes, never HTML).

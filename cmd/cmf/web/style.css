@@ -10,6 +10,7 @@
   --warn: #b7791f;
   --fail: #b3261e;
   --na: #a3a19b;
+  --icon-ink: #ffffff;
   --code: #f0eee9;
   --radius: 10px;
   color-scheme: light dark;
@@ -27,6 +28,7 @@
     --warn: #e0b052;
     --fail: #f08a80;
     --na: #6f6d68;
+    --icon-ink: #161615;
     --code: #262624;
   }
 }
@@ -73,12 +75,16 @@ button.small { padding: 3px 10px; font-size: 13px; }
 .summary.ok { border-left: 4px solid var(--ok); }
 .checked-at { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 10px; }
 .checks { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-.checks li { display: grid; grid-template-columns: 14px 1fr auto; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: start; }
+.checks li { display: grid; grid-template-columns: 18px 1fr auto; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); align-items: start; }
 .checks li:first-child { border-top: 0; }
-.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--na); }
-.dot.ok { background: var(--ok); }
-.dot.warn { background: var(--warn); }
-.dot.fail { background: var(--fail); }
+/* Status icons differ by shape and symbol, not only colour: a tick in a
+   circle (ok), ! in a triangle (warn), a cross in a square (fail), a dash (n/a). */
+.status-icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  font: 700 12px/1 system-ui, sans-serif; color: var(--icon-ink); background: var(--na); flex: none; vertical-align: -3px; }
+.status-icon.ok { background: var(--ok); border-radius: 50%; }
+.status-icon.warn { background: var(--warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); padding-top: 5px; height: 18px; font-size: 11px; }
+.status-icon.fail { background: var(--fail); border-radius: 3px; }
+.status-icon.na { background: transparent; color: var(--muted); border: 1.5px solid var(--na); border-radius: 50%; width: 15px; height: 15px; }
 .check-title { font-weight: 600; color: var(--ink); display: inline-block; }
 a.check-title { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
 .check-about code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 4px; }
