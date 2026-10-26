@@ -10,7 +10,11 @@ import (
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 )
 
-var target = Target{Port: 8000, PublicURL: "https://cmf.example.ts.net"}
+// Remote access on, and the local token the apps on this computer use.
+var target = Target{Port: 8000, PublicURL: "https://cmf.example.ts.net", Token: "local-token"}
+
+// oauthOnly: remote access on, no local token yet.
+var oauthOnly = Target{Port: 8000, PublicURL: "https://cmf.example.ts.net"}
 
 func setup(t *testing.T) (Env, *home.Backup) {
 	dir := t.TempDir()
@@ -98,17 +102,70 @@ X = "y"
 trust_level = "trusted"
 `
 
-func TestCodexPublicURLEntryIsKept(t *testing.T) {
+func TestCodexPublicURLEntryKeptWithoutToken(t *testing.T) {
 	env, _ := setup(t)
 	a := app("codex")
 	write(t, a.Path(env), codex)
-	s := Inspect(a, env, target)
+	s := Inspect(a, env, oauthOnly)
 	if !s.Healthy() {
 		t.Fatalf("%+v", s.Entries)
 	}
-	c, _ := Plan(s, target, true)
+	c, _ := Plan(s, oauthOnly, true)
 	if !c.Empty() {
 		t.Fatal(c.Summary)
+	}
+}
+
+// With a local token, a public-URL entry (its own OAuth sign-in, which can
+// lapse) is replaced by the local address carrying the token.
+func TestCodexPublicURLEntryReplacedByLocalToken(t *testing.T) {
+	env, b := setup(t)
+	a := app("codex")
+	write(t, a.Path(env), codex)
+	s := Inspect(a, env, target)
+	if s.Healthy() || !strings.Contains(s.CMF()[0].Problem, "public address") {
+		t.Fatalf("%+v", s.Entries)
+	}
+	c, err := Plan(s, target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(b, target, env, true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(a.Path(env))
+	if !strings.HasSuffix(string(got), "[mcp_servers.context_memory_fabric]\nurl = \"http://127.0.0.1:8000/mcp\"\nhttp_headers = { Authorization = \"Bearer local-token\" }\n") {
+		t.Fatal(string(got))
+	}
+	if s := Inspect(a, env, target); !s.Healthy() {
+		t.Fatalf("%+v", s.Entries)
+	}
+}
+
+func TestLocalEntryTokens(t *testing.T) {
+	env, _ := setup(t)
+	a := app("claude-code")
+	for _, tc := range []struct {
+		body, problem string
+		tgt           Target
+	}{
+		{`{"type":"http","url":"http://127.0.0.1:8000/mcp","headers":{"Authorization":"Bearer local-token"}}`, "", target},
+		{`{"type":"http","url":"http://127.0.0.1:8000/mcp"}`, "has no access token", target},
+		{`{"type":"http","url":"http://127.0.0.1:8000/mcp"}`, "has no access token", oauthOnly},
+		{`{"type":"http","url":"http://127.0.0.1:8000/mcp","headers":{"Authorization":"Bearer old"}}`, "has an old access token", target},
+		{`{"type":"http","url":"http://127.0.0.1:8000/mcp"}`, "", Target{Port: 8000}}, // nothing guards the server
+	} {
+		write(t, a.Path(env), `{"mcpServers":{"context-memory-fabric":`+tc.body+`}}`)
+		e := Inspect(a, env, tc.tgt).CMF()[0]
+		if e.Correct != (tc.problem == "") || !strings.Contains(e.Problem, tc.problem) {
+			t.Errorf("%s: %+v", tc.body, e)
+		}
+	}
+	// Codex's headers as their own table.
+	c := app("codex")
+	write(t, c.Path(env), "[mcp_servers.cmf]\nurl = \"http://127.0.0.1:8000/mcp\"\n\n[mcp_servers.cmf.http_headers]\nAuthorization = \"Bearer local-token\"\n")
+	if s := Inspect(c, env, target); !s.Healthy() {
+		t.Fatalf("%+v", s.Entries)
 	}
 }
 
@@ -255,8 +312,13 @@ func TestBridgeEntry(t *testing.T) {
 	write(t, exe, "binary")
 	bt := Target{Port: 8000, Token: "secret-token", Bridge: exe}
 	write(t, a.Path(env), `{"mcpServers": {"context-memory-fabric": {"command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]}}}`)
-	// An existing correct mcp-remote entry is kept as is.
+	// An mcp-remote entry carrying the token is kept as is; one without it is refused by the server.
+	write(t, a.Path(env), `{"mcpServers": {"context-memory-fabric": {"command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp", "--header", "Authorization:Bearer ${CMF_MCP_AUTH_TOKEN}"], "env": {"CMF_MCP_AUTH_TOKEN": "secret-token"}}}}`)
 	if c, _ := Plan(Inspect(a, env, bt), bt, true); !c.Empty() {
+		t.Fatal(c.Summary)
+	}
+	write(t, a.Path(env), `{"mcpServers": {"context-memory-fabric": {"command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]}}}`)
+	if c, _ := Plan(Inspect(a, env, bt), bt, true); !strings.Contains(strings.Join(c.Summary, "; "), "has no access token") {
 		t.Fatal(c.Summary)
 	}
 	os.WriteFile(a.Path(env), []byte(`{"mcpServers": {}}`), 0o644)

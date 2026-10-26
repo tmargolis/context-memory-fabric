@@ -128,6 +128,12 @@ EXTRACT_POLICY_VERSION = "1.7"
 # updating it. 24K chars covers ~96% of wiki pages.
 PAGE_FULL_MAX_CHARS = 24_000
 PAGE_CONTEXT_BUDGET_CHARS = 48_000
+# Since B18 (2026-10-26) both give way to the loaded model's real context
+# (server.providers.context_limit): full pages shrink to snippets first, then
+# turns are cut toward _MIN_TURN_CHARS. A snippet entry is budgeted at
+# _PAGE_ENTRY_CHARS (300-char snippet plus its JSON fields).
+_MIN_TURN_CHARS = 200
+_PAGE_ENTRY_CHARS = 700
 
 _RESPONSE_FORMAT_MARKER = "Respond with JSON only:"
 assert _RESPONSE_FORMAT_MARKER in _SYSTEM, (
@@ -552,31 +558,74 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
 
         return out
 
-    def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext) -> str:
-        lines = [self._system, ""]
+    def _build_prompt(self, ordered: list[SourceEvent], context: PolicyContext, budget_chars: Optional[int] = None) -> str:
+        """The extraction prompt, sized to the model's context (B18).
+
+        Pages shown in full give way first, then long turns are cut shorter;
+        a window that still can't fit raises PromptTooLongError so the caller
+        can split it instead of sending a prompt the model will refuse.
+        """
+        from server.core.tool_errors import PromptTooLongError
+        from server.providers.context_limit import prompt_budget_chars
+
+        limit = budget_chars if budget_chars is not None else prompt_budget_chars()
+        head = [self._system, ""]
         # Personal routing stays in the existing configured rules file, never in generic prompts.
         rules = review_rules_path()
         if rules.is_file():
-            lines += ["--- DEPLOYMENT ROUTING / REVIEW RULES ---", rules.read_text(), ""]
+            head += ["--- DEPLOYMENT ROUTING / REVIEW RULES ---", rules.read_text(), ""]
         if is_subagent_window(ordered):
-            lines += [SUBAGENT_NOTE, ""]
-        lines.append("--- CONVERSATION WINDOW ---")
-        for i, ev in enumerate(ordered, start=1):
-            text = (ev.content.get("text") or "").strip()
-            if len(text) > _MAX_TURN_CHARS:
-                text = text[:_MAX_TURN_CHARS] + " …[truncated]"
-            lines.append(f"[turn {i}] ({turn_label(ev)}) {text}")
+            head += [SUBAGENT_NOTE, ""]
+        head.append("--- CONVERSATION WINDOW ---")
 
         threads = context.open_threads or []
+        thread_lines: list[str] = []
         if threads:
-            lines.append("")
-            lines.append("--- OPEN THREADS (match thread_key if this window continues one) ---")
+            thread_lines += ["", "--- OPEN THREADS (match thread_key if this window continues one) ---"]
             for t in threads[:20]:
                 d = t.to_context_dict() if hasattr(t, "to_context_dict") else dict(t)
-                lines.append(json.dumps(d, default=str))
+                thread_lines.append(json.dumps(d, default=str))
+
+        folders = context.existing_project_folders or []
+        folder_lines: list[str] = []
+        if folders:
+            folder_lines += ["", "--- EXISTING PROJECT FOLDERS (route a doc proposal into one of these when the topic matches) ---",
+                             json.dumps(folders)]
+
+        doc_pages = (context.open_doc_pages or [])[:20]
+        wiki_docs = (context.relevant_wiki_docs or [])[:10]
+
+        # Everything but the turns and the full pages, with room for each page's snippet entry.
+        fixed = len("\n".join(head + thread_lines + folder_lines)) + 200 + _PAGE_ENTRY_CHARS * (len(doc_pages) + len(wiki_docs))
+        texts = [(ev.content.get("text") or "").strip() for ev in ordered]
+        labels = [f"[turn {i}] ({turn_label(ev)}) " for i, ev in enumerate(ordered, start=1)]
+        room = limit - fixed - sum(len(lb) + 16 for lb in labels)
+
+        def _turns_len(cap: int) -> int:
+            return sum(min(len(t), cap) for t in texts)
+
+        cap = _MAX_TURN_CHARS
+        if _turns_len(cap) > room:
+            lo, hi = _MIN_TURN_CHARS, _MAX_TURN_CHARS
+            if _turns_len(lo) > room:
+                raise PromptTooLongError(
+                    f"extraction prompt for {len(ordered)} turns needs more than {limit:,} characters even with turns "
+                    f"cut to {_MIN_TURN_CHARS}"
+                )
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                lo, hi = (mid, hi) if _turns_len(mid) <= room else (lo, mid - 1)
+            cap = lo
+
+        lines = list(head)
+        for label, text in zip(labels, texts):
+            if len(text) > cap:
+                text = text[:cap] + " …[truncated]"
+            lines.append(label + text)
+        lines += thread_lines
 
         # One budget for every page shown in full; this conversation's own proposals first.
-        budget = [PAGE_CONTEXT_BUDGET_CHARS]
+        budget = [max(0, min(PAGE_CONTEXT_BUDGET_CHARS, room - _turns_len(cap)))]
 
         def _page(content: Optional[str], snippet: Optional[str]) -> dict:
             if content and len(content) <= min(PAGE_FULL_MAX_CHARS, budget[0]):
@@ -584,28 +633,25 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
                 return {"current_content": content}
             return {"snippet": snippet or (content or "")[:300], "full_content_shown": False}
 
-        doc_pages = context.open_doc_pages or []
         if doc_pages:
             lines.append("")
             lines.append("--- ALREADY PROPOSED DOCS (same conversation and relevant pending targets; reuse paths, add only new material) ---")
-            for p in doc_pages[:20]:
+            for p in doc_pages:
                 lines.append(json.dumps({"target_path": p.get("target_path"), "statement": p.get("statement") or p.get("source_context"), "source_conversation_id": p.get("source_conversation_id"), "conflicts_with": p.get("conflicts_with", []),
                                          **_page(p.get("proposed_content"), None)}, default=str))
 
-        folders = context.existing_project_folders or []
-        if folders:
-            lines.append("")
-            lines.append("--- EXISTING PROJECT FOLDERS (route a doc proposal into one of these when the topic matches) ---")
-            lines.append(json.dumps(folders))
+        lines += folder_lines
 
-        wiki_docs = context.relevant_wiki_docs or []
         if wiki_docs:
             lines.append("")
             lines.append("--- EXISTING WIKI DOCUMENTATION (searched across entire corpus; reuse/update target_path instead of creating duplicates) ---")
-            for d in wiki_docs[:10]:
+            for d in wiki_docs:
                 shown = {k: v for k, v in d.items() if k not in ("snippet", "current_content")}
                 lines.append(json.dumps({**shown, **_page(d.get("current_content"), d.get("snippet"))}, default=str))
-        return "\n".join(lines)
+        prompt = "\n".join(lines)
+        if len(prompt) > limit:
+            raise PromptTooLongError(f"extraction prompt is {len(prompt):,} characters; the model's context allows {limit:,}")
+        return prompt
 
     def _to_doc_candidate(
         self,

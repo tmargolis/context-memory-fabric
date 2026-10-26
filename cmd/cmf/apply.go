@@ -134,6 +134,13 @@ func runApply(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	return runRequest(req, dryRun, yes, out)
+}
+
+// runRequest is cmf apply after the feature file is read: plan, review,
+// confirm, apply. `cmf clients` uses it too when an entry needs the local
+// token, which only a plan can create.
+func runRequest(req *features.Request, dryRun, yes bool, out io.Writer) error {
 	ctx := context.Background()
 	rp, err := planRequest(ctx, req)
 	if err != nil {
@@ -253,7 +260,7 @@ func (rp *requestPlan) Review() []string {
 		lines = append(lines, "  Recreate the containers whose settings changed (docker compose up -d), then wait for the server")
 	}
 	for _, n := range rp.Plan.Notes {
-		lines = append(lines, "  Cost: "+n)
+		lines = append(lines, "  Note: "+n) // cost notes and other things to know
 	}
 	return lines
 }

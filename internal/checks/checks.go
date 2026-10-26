@@ -163,7 +163,17 @@ func checkMode(f probe.Facts) Result {
 		r.Level = Warn
 		r.Detail += fmt.Sprintf("; but the compose files say %s. Run `cmf mode set %s` to make them agree", f.Mode.Detected.Mode, m.Mode)
 	}
+	if f.Health != nil && f.CmfVersion != "" && f.Health.Version != "" && BaseVersion(f.CmfVersion) != BaseVersion(f.Health.Version) {
+		r.Level = Warn
+		r.Detail += fmt.Sprintf("; this cmf is %s but the server is %s: use the cmf that matches the server (the release with the same number, or one built from the same checkout)", f.CmfVersion, f.Health.Version)
+	}
 	return r
+}
+
+// BaseVersion drops a leading "v" and a local build's "-dev", so 0.1.4,
+// v0.1.4 and 0.1.4-dev count as the same version.
+func BaseVersion(v string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(v, "v"), "-dev")
 }
 
 func checkDocker(f probe.Facts) Result {
@@ -416,9 +426,16 @@ func checkProviders(f probe.Facts) Result {
 		return r
 	}
 	h := f.Health
+	small := ""
+	if c := h.LLMContext; c != nil && c.Local && c.Tokens > 0 && c.Tokens < c.RecommendedMin {
+		small = smallContextLine(c)
+	}
 	if h.ProviderTests == nil {
 		p := h.Providers
 		r.Level, r.Detail = NA, fmt.Sprintf("LLM %s, embeddings %s, capture %s; this server is older than the live provider test; update it to see whether each one answers", p.LLM, p.Embeddings, p.CaptureLLM)
+		if small != "" {
+			r.Level, r.Detail = Warn, small
+		}
 		return r
 	}
 	var bad, good []string
@@ -434,6 +451,9 @@ func checkProviders(f probe.Facts) Result {
 	if h.ConfigCheck != nil {
 		warnings = h.ConfigCheck.Warnings
 	}
+	if small != "" {
+		warnings = append(warnings, small)
+	}
 	switch {
 	case len(bad) > 0:
 		r.Level, r.Detail = Fail, strings.Join(bad, "; ")
@@ -443,6 +463,22 @@ func checkProviders(f probe.Facts) Result {
 		r.Level, r.Detail = OK, strings.Join(good, ", ")+" answer"
 	}
 	return r
+}
+
+// smallContextLine: a local model loaded with too small a context makes
+// longer saves and poller windows fail or be cut down (B18/B20).
+func smallContextLine(c *probe.LLMContext) string {
+	model := c.Model
+	if model == "" {
+		model = "the local model"
+	}
+	return fmt.Sprintf("%s is loaded with a %d-token context; CMF needs at least %d (32768 recommended), so long memories are split and some conversations can't be read. Reload it with a larger context in LM Studio", model, c.Tokens, c.RecommendedMin)
+}
+
+// MemoryRetryCmd re-saves failed memories that are still kept (B20).
+func MemoryRetryCmd(home string) run.Cmd {
+	return run.Cmd{Name: "docker", Args: []string{"compose", "--project-directory", home, "exec", "-T", "cmf-server", "python", "-m", "server.memory_writes", "retry"},
+		Timeout: 30 * time.Minute}
 }
 
 func checkEmbedding(f probe.Facts) Result {
@@ -530,6 +566,11 @@ func checkCapture(f probe.Facts) Result {
 	} else if n := len(f.Health.BackgroundWrites); n > 0 {
 		r.Detail += fmt.Sprintf("; last %d background writes committed", n)
 	}
+	if n := len(f.Health.RetryableWrites); n > 0 {
+		r.Level = Warn
+		r.Detail += fmt.Sprintf("; %d failed memory save(s) kept for a retry", n)
+		r.Fix = &Fix{Label: "Retry failed saves", Steps: []Step{step("save the kept memories again (a minute or two each on a local model)", MemoryRetryCmd(f.Home))}}
+	}
 	return r
 }
 
@@ -552,7 +593,7 @@ func checkClients(f probe.Facts) Result {
 		case len(cmf) > 1:
 			bad = append(bad, fmt.Sprintf("%s has %d CMF entries", s.Label, len(cmf)))
 		default:
-			bad = append(bad, fmt.Sprintf("%s's CMF entry %q doesn't reach this install", s.Label, cmf[0].Name))
+			bad = append(bad, fmt.Sprintf("%s's CMF entry %q %s", s.Label, cmf[0].Name, cmf[0].Problem))
 		}
 	}
 	tail := "" // apps with no entry: their own rows below say so
@@ -593,6 +634,10 @@ func checkConnector(f probe.Facts) Result {
 			}
 		}
 	}
+	if rc, ok := refusedSince(f, last, func(h string) bool { return strings.HasPrefix(h, "claude") && h != "claude_code" }); ok {
+		r.Level, r.Detail = Warn, refusedLine(f, rc)+"\naddress     "+addr+"/mcp\nreconnect it in claude.ai → Settings → Connectors (Disconnect, then Connect), then start a new conversation"
+		return r
+	}
 	if last.IsZero() {
 		r.Level, r.Detail = NA, "remote access is on, but no Claude call came through a connector in the last day\naddress     "+addr+"/mcp\nadd it in claude.ai → Settings → Connectors, then start a new conversation"
 		return r
@@ -610,7 +655,7 @@ var appRows = []struct {
 }{
 	{"app-claude-code", "Claude Code (CLI and Code tab)", "claude-code", "claude_code", []string{"claude_code", "claude_desktop_code"}},
 	{"app-claude-desktop", "Claude Desktop (Chat and Cowork)", "claude-desktop", "claude_cowork", []string{"claude_desktop", "claude_cowork"}},
-	{"app-codex", "Codex", "codex", "codex", []string{"codex"}},
+	{"app-codex", "Codex", "codex", "codex", []string{"codex", "codex_mcp_client"}},
 	{"app-antigravity", "Antigravity", "antigravity", "antigravity", []string{"antigravity"}},
 	{"app-cursor", "Cursor", "cursor", "", []string{"cursor"}},
 	{"app-vscode", "VS Code", "vscode", "", []string{"vscode", "visual_studio_code", "copilot"}},
@@ -667,7 +712,7 @@ func checkApps(f probe.Facts) []Result {
 				if !c.Healthy() {
 					state = fmt.Sprintf("%d CMF entries, see the row below", len(cmf))
 					if len(cmf) == 1 {
-						state = "an entry that doesn't reach this install"
+						state = "an entry that " + cmf[0].Problem + ","
 					}
 				}
 				connected = c.Healthy()
@@ -719,6 +764,32 @@ func checkApps(f probe.Facts) []Result {
 			}
 		}
 		r.Detail = strings.Join(lines, "\n")
+		var seen time.Time
+		if f.Health != nil {
+			for _, c := range f.Health.ClientsSeen {
+				if slices.Contains(a.Seen, c.Harness) && c.LastSeen.After(seen) {
+					seen = c.LastSeen
+				}
+			}
+		}
+		if rc, ok := refusedSince(f, seen, func(h string) bool { return slices.Contains(a.Seen, h) }); ok {
+			// Its entry looks fine, but the server turns its calls away: a
+			// lapsed sign-in or an old token. Rewriting the entry with this
+			// computer's address and token fixes both.
+			r.Level, r.Detail = Warn, refusedLine(f, rc)+"\n"+r.Detail
+			if c, ok := clientByID[a.Client]; ok && c.Installed && c.Err == "" {
+				self := f.Self
+				if self == "" {
+					self = "cmf"
+				}
+				r.Fix = &Fix{Label: "Use this computer's address", Steps: []Step{
+					step("point "+a.Title+" at this computer's CMF address with its access token (backup kept; creates the token and restarts the server if there isn't one yet)",
+						run.Cmd{Name: self, Args: []string{"clients", "set", a.Client, "--yes"}}),
+				}}
+			}
+			out = append(out, r)
+			continue
+		}
 		if !connected && !installed {
 			continue // not on this computer: the Features page still lists it
 		}
@@ -731,6 +802,34 @@ func checkApps(f probe.Facts) []Result {
 		out = append(out, r)
 	}
 	return out
+}
+
+// refusedSince is the latest refusal of a harness match accepts that came
+// after the app's last successful call (seen), if any.
+func refusedSince(f probe.Facts, seen time.Time, match func(string) bool) (probe.RefusedCall, bool) {
+	var best probe.RefusedCall
+	if f.Health == nil {
+		return best, false
+	}
+	for _, rc := range f.Health.RefusedCalls {
+		// Refusals the app got past (Codex tries an old sign-in before its
+		// token on each connect, B21) aren't a lockout.
+		if rc.LastOKAt != nil && !rc.LastOKAt.Before(rc.LastAt) {
+			continue
+		}
+		if match(rc.Harness) && rc.LastAt.After(seen) && rc.LastAt.After(best.LastAt) {
+			best = rc
+		}
+	}
+	return best, !best.LastAt.IsZero()
+}
+
+func refusedLine(f probe.Facts, rc probe.RefusedCall) string {
+	calls := "call"
+	if rc.Count != 1 {
+		calls = "calls"
+	}
+	return fmt.Sprintf("CMF refused %d %s in the last day (last %s): its sign-in or access token isn't valid any more", rc.Count, calls, ago(f.At.Sub(rc.LastAt)))
 }
 
 func ago(d time.Duration) string {
@@ -798,6 +897,11 @@ func ApplyFix(ctx context.Context, runner run.Runner, fix *Fix, log func(string)
 				out = ": " + out
 			}
 			return fmt.Errorf("%s failed (%v)%s", s.Show, res.Err, out)
+		} else if text := strings.TrimSpace(res.Stdout); text != "" {
+			// What the step says it did, e.g. cmf's "restart Codex" note.
+			for _, line := range strings.Split(text, "\n") {
+				log("    " + line)
+			}
 		}
 	}
 	return nil

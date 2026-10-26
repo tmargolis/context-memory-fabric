@@ -47,6 +47,9 @@ _KNOWN_HARNESS_PATTERNS: list[tuple[str, str]] = [
     (r"claude.*code", "claude_code"),
     (r"claude.*ai", "claude_desktop"),  # observed client_info.name variant
     (r"chatgpt|openai", "chatgpt"),
+    # Codex connects as "codex-mcp-client" (its rmcp client name, 2026-10-25);
+    # before this entry it fell through to the slug codex_mcp_client.
+    (r"codex", "codex"),
     (r"cursor", "cursor"),
     (r"antigravity", "antigravity"),
     (r"windsurf", "windsurf"),
@@ -63,7 +66,11 @@ def resolve_harness(client_info: Optional[Any]) -> str:
     mcp/server/connection.py's `Connection.from_envelope` docstring), so
     this function tolerates `None` and any object missing a `.name`.
     """
-    name = getattr(client_info, "name", None)
+    return harness_for_name(getattr(client_info, "name", None))
+
+
+def harness_for_name(name: Optional[str]) -> str:
+    """The harness slug for a client name (or a User-Agent, which most clients start with their name)."""
     if not name or not str(name).strip():
         return "unknown_mcp_client"
 

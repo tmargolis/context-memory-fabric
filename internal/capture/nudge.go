@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -118,16 +120,50 @@ func decide(harness string, payload map[string]any, st *nudgeState, now time.Tim
 
 // Render is what the hook prints.
 func Render(harness string, nudge bool) map[string]any {
+	return render(harness, nudge, "")
+}
+
+func render(harness string, nudge bool, project string) map[string]any {
+	reason := Reason
+	if project != "" {
+		reason += fmt.Sprintf(" If you call it, pass project=%q.", project)
+	}
 	if harness == "antigravity" {
 		if nudge {
-			return map[string]any{"decision": "continue", "reason": Reason}
+			return map[string]any{"decision": "continue", "reason": reason}
 		}
 		return map[string]any{"decision": "stop"}
 	}
 	if nudge {
-		return map[string]any{"decision": "block", "reason": Reason}
+		return map[string]any{"decision": "block", "reason": reason}
 	}
 	return map[string]any{}
+}
+
+var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+
+// ProjectHint is the session's project for capture_session: the name of the
+// git repository holding cwd, as a slug, or "" outside one. The server only
+// sees an MCP call, so without it live captures were filed under `misc`
+// (B19, 2026-10-26).
+func ProjectHint(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	dir, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-"), "-")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 func envNum(name string, def float64) float64 {
@@ -169,5 +205,6 @@ func RunHook(harness string, stdin []byte, statePath string, now time.Time) (out
 			os.Rename(tmp, statePath)
 		}
 	}
-	return Render(harness, nudge)
+	cwd, _ := payload["cwd"].(string)
+	return render(harness, nudge, ProjectHint(cwd))
 }

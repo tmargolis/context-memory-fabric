@@ -169,6 +169,9 @@ func TestPinImage(t *testing.T) {
 	if c, _ := PinImage(h, nil, "dev"); len(c) != 0 {
 		t.Fatal("a dev build pins nothing")
 	}
+	if c, _ := PinImage(h, nil, "0.1.4-dev"); len(c) != 0 {
+		t.Fatal("a dev build pins nothing")
+	}
 	c, err := PinImage(h, nil, "v0.2.0")
 	if err != nil || len(c) != 1 || !strings.Contains(string(c[0].Data), "CMF_VERSION=0.2.0") {
 		t.Fatalf("%v %+v", err, c)

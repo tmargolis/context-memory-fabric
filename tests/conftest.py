@@ -72,6 +72,8 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("CMF_PROJECT_ALIASES", raising=False)
     monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
     monkeypatch.delenv("CMF_PROJECT_FOLDER_MAP", raising=False)
+    # Prompt sizing (B18/B20) reads the model's context; never ask a real LM Studio.
+    monkeypatch.setenv("CMF_LLM_CONTEXT_TOKENS", "131072")
     from server.episode_proposals import get_episode_proposals_dir
     from server.proposals import get_proposals_dir
 

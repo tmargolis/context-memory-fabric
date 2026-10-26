@@ -277,7 +277,7 @@
             }
           ],
           "default": null,
-          "description": "Optional project/topic label to tag this batch with.",
+          "description": "The project this session is working on, as a short slug (e.g. 'context-memory-fabric', usually the repository or folder name). Pass it whenever the session has one: items without a project are filed under 'misc' and are harder to find in project-scoped recall.",
           "title": "Project"
         },
         "source_description": {

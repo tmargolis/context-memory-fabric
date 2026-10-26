@@ -15,6 +15,8 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Optional
 
+from server.core import refused
+
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 CLIENTS_SEEN_WINDOW = timedelta(hours=24)
 
@@ -94,6 +96,18 @@ def embedding_status(configured: int, graph: str, graph_exists: Optional[bool]) 
     return out
 
 
+def llm_context(config) -> dict[str, Any]:
+    """The extraction model's context, for Status's too-small warning (B20)."""
+    from server.providers.context_limit import RECOMMENDED_MIN_TOKENS, context_tokens
+
+    try:
+        tokens = context_tokens(config)
+    except Exception:  # noqa: BLE001 - never fail /health over this
+        return {}
+    return {"tokens": tokens, "local": config.llm_is_local, "recommended_min": RECOMMENDED_MIN_TOKENS,
+            "model": config.local_llm_model if config.llm_is_local else None}
+
+
 def snapshot(provider_tests: bool = False) -> dict[str, Any]:
     """Everything /health reports. Never raises for an unreachable dependency.
 
@@ -117,8 +131,9 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         capture_provider = f"invalid: {e}"
     try:
         writes = get_default_write_log().recent(5)
+        retryable = [w["episode_name"] for w in get_default_write_log().retryable()]
     except sqlite3.Error:
-        writes = []
+        writes, retryable = [], []
     from server.core import startup_check
 
     fdb = falkordb_status(graph)
@@ -141,10 +156,14 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         },
         "knowledge_sources": knowledge,
         "background_writes": [
-            {k: w.get(k) for k in ("episode_name", "graph", "status", "error_kind", "error_message", "queued_at", "finished_at")}
+            {k: w.get(k) for k in ("episode_name", "graph", "status", "error_kind", "error_message", "queued_at", "finished_at",
+                                   "retryable")}
             for w in writes
         ],
+        "retryable_writes": retryable,
+        "llm_context": llm_context(config),
         "clients_seen": clients_seen(),
+        "refused_calls": refused.recent(),
         "config_check": startup_check.LAST_RESULT.as_dict() if startup_check.LAST_RESULT else None,
         "embedding": embedding_status(config.embedding_dim, graph, fdb.get("graph_exists")),
     }

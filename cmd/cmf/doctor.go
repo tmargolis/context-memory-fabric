@@ -35,6 +35,7 @@ func collect(ctx context.Context) (probe.Facts, error) {
 	p := probe.Prober{Home: h, Runner: runner, Get: getHealth, OS: goos, Now: now, ClientEnv: &cenv}
 	f := p.Collect(ctx)
 	f.Self, _ = os.Executable()
+	f.CmfVersion = version
 	return f, nil
 }
 

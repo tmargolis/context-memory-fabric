@@ -189,6 +189,16 @@ class ConsolidationStore:
         )
         self._conn.commit()
 
+    def record_oversize(self, job_id: str, context_tokens: int, error: str) -> None:
+        """A window too long for the model even after splitting (B18). Recorded
+        as 'oversize' with the context it failed at, so later passes skip it
+        until the model is loaded with a larger context."""
+        self._conn.execute(
+            "UPDATE consolidation_jobs SET status='oversize', last_error=?, updated_at=? WHERE job_id=?",
+            (f"context={context_tokens}: {error}"[:2000], datetime.now(timezone.utc).isoformat(), job_id),
+        )
+        self._conn.commit()
+
     def mark_succeeded_no_output(self, job_id: str) -> None:
         """A window (MS3.5) the policy legitimately produced zero episodes
         from. The job is done — recorded so it is not re-run — but there is

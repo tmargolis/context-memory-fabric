@@ -31,6 +31,7 @@ PROVIDER_QUOTA = "provider_quota"
 PROVIDER_UNAVAILABLE = "provider_unavailable"
 PROVIDER_UNREACHABLE = "provider_unreachable"
 MODEL_NOT_FOUND = "model_not_found"
+PROMPT_TOO_LONG = "prompt_too_long"
 
 NO_MEMORIES_YET = (
     "No memories yet: the memory graph is empty or hasn't been created. "
@@ -55,6 +56,52 @@ _AUTH_MARKERS = (
 )
 
 _MODEL_NOT_FOUND_MARKERS = ("model_not_found", "not_found_error", "is not found for api version", "no such model")
+
+# A prompt longer than the model's context (B18/B20). LM Studio / llama.cpp say
+# "n_keep: 12119 >= n_ctx: 8192"; OpenAI-compatible servers and hosted APIs say
+# "context length" / "maximum context" / "prompt is too long".
+_PROMPT_TOO_LONG_MARKERS = (
+    "n_ctx",
+    "context length",
+    "context_length_exceeded",
+    "maximum context",
+    "prompt is too long",
+    "prompt too long",
+)
+
+
+class PromptTooLongError(RuntimeError):
+    """Raised by CMF itself before sending a prompt that can't fit the model's context."""
+
+
+def is_prompt_too_long(exc: BaseException) -> bool:
+    for e in _chain(exc):
+        if isinstance(e, PromptTooLongError):
+            return True
+        text = str(e).lower()
+        if any(m in text for m in _PROMPT_TOO_LONG_MARKERS):
+            return True
+    return False
+
+
+def prompt_too_long_message(config=None) -> str:
+    from server.providers.context_limit import context_tokens
+
+    if config is None:
+        from server.core.config import load_config
+
+        config = load_config()
+    limit = context_tokens(config)
+    if config.llm_is_local:
+        return (
+            f"The memory was too long for the local model's context (loaded at {limit:,} tokens). "
+            "Reload the model with a larger context (32,768 or more) in LM Studio, then retry it "
+            "(CMF management → Status, or `cmf memory retry`)."
+        )
+    return (
+        f"The memory was too long for the {config.llm_provider} model's context. "
+        "Retry it from CMF management → Status, or `cmf memory retry`."
+    )
 
 
 @dataclass(frozen=True)
@@ -146,6 +193,9 @@ def classify(exc: BaseException, config=None) -> Optional[ClassifiedError]:
         text = str(e).lower()
         name = type(e).__name__
         module = type(e).__module__ or ""
+
+        if isinstance(e, PromptTooLongError) or any(m in text for m in _PROMPT_TOO_LONG_MARKERS):
+            return ClassifiedError(PROMPT_TOO_LONG, prompt_too_long_message(config))
 
         if isinstance(e, GeminiQuotaExhaustedError):
             return ClassifiedError(

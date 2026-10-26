@@ -171,3 +171,14 @@ def test_cli_run_reads_stdin(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(json.dumps({"session_id": "s"})))
     assert capture_nudge.main(["run", "--harness", "claude_code"]) == 0
     assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+
+def test_nudge_names_the_repository_as_project(tmp_path):
+    """B19: the server-side hook passes the git repository's name too."""
+    repo = tmp_path / "context-memory-fabric"
+    (repo / ".git").mkdir(parents=True)
+    assert capture_nudge.project_hint(str(repo)) == "context-memory-fabric"
+    assert render("codex", True, "context-memory-fabric")["reason"] == (
+        NUDGE_REASON + ' If you call it, pass project="context-memory-fabric".'
+    )
+    assert render("codex", True)["reason"] == NUDGE_REASON

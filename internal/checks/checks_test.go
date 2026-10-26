@@ -385,3 +385,84 @@ func TestConnectorRow(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// An app whose entry looks fine but whose calls the server refuses (a lapsed
+// OAuth sign-in, an old token) is flagged, with a one-click switch to this
+// computer's address; a successful call since clears it.
+func TestRefusedAppRow(t *testing.T) {
+	f := healthy()
+	f.Self = "/Applications/cmf"
+	f.Env["CMF_MCP_ISSUER_URL"] = "https://mac.tail1.ts.net"
+	f.Clients = []clients.State{{ID: "codex", Label: "Codex", Path: "/u/.codex/config.toml", Installed: true, Exists: true,
+		Entries: []clients.Entry{{Name: "context_memory_fabric", URL: "https://mac.tail1.ts.net/mcp", CMF: true, Correct: true, Kind: "url"}}}}
+	f.Health.ClientsSeen = []probe.ClientSeen{{Harness: "claude_desktop", LastSeen: at.Add(-time.Hour)}}
+	f.Health.RefusedCalls = []probe.RefusedCall{{Harness: "codex", Count: 12, LastAt: at.Add(-5 * time.Minute), LastPath: "/token"}}
+	r := byID(Evaluate(f))
+	c := r["app-codex"]
+	if c.Level != Warn || !strings.HasPrefix(c.Detail, "CMF refused 12 calls in the last day (last 5 min ago)") || c.Fix == nil ||
+		c.Fix.Label != "Use this computer's address" || c.Fix.Steps[0].Show != "/Applications/cmf clients set codex --yes" {
+		t.Fatalf("%+v %+v", c, c.Fix)
+	}
+	if r["connector"].Level != OK {
+		t.Fatalf("Codex's refusals aren't the connector's: %+v", r["connector"])
+	}
+	f.Health.ClientsSeen = append(f.Health.ClientsSeen, probe.ClientSeen{Harness: "codex", LastSeen: at.Add(-time.Minute)})
+	if c := byID(Evaluate(f))["app-codex"]; c.Level != OK || c.Fix != nil {
+		t.Fatalf("a call that got in since clears it: %+v", c)
+	}
+
+	// The connector's own refusals: reconnect it in claude.ai.
+	f.Health.RefusedCalls = []probe.RefusedCall{{Harness: "claude_user", Count: 1, LastAt: at.Add(-time.Minute)}}
+	if c := byID(Evaluate(f))["connector"]; c.Level != Warn || !strings.Contains(c.Detail, "CMF refused 1 call ") || !strings.Contains(c.Detail, "Disconnect, then Connect") {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestRefusalsTheAppGotPastAreIgnored(t *testing.T) {
+	f := healthy()
+	f.Clients = []clients.State{{ID: "codex", Label: "Codex", Path: "/u/.codex/config.toml", Installed: true, Exists: true,
+		Entries: []clients.Entry{{Name: "context_memory_fabric", URL: "http://127.0.0.1:8000/mcp", CMF: true, Correct: true, Kind: "url"}}}}
+	ok := at.Add(-4 * time.Minute)
+	f.Health.RefusedCalls = []probe.RefusedCall{{Harness: "codex", Count: 3, LastAt: at.Add(-5 * time.Minute), LastPath: "/token", LastOKAt: &ok}}
+	if c := byID(Evaluate(f))["app-codex"]; c.Level == Warn {
+		t.Fatalf("Codex got in right after: %+v", c)
+	}
+	early := at.Add(-6 * time.Minute)
+	f.Health.RefusedCalls[0].LastOKAt = &early
+	if c := byID(Evaluate(f))["app-codex"]; c.Level != Warn {
+		t.Fatalf("refused since its last accepted request: %+v", c)
+	}
+}
+
+func TestRetryableSavesAndSmallContext(t *testing.T) {
+	f := healthy()
+	f.Health.RetryableWrites = []string{"codex-cmf-017"}
+	r := byID(Evaluate(f))["capture"]
+	if r.Level != Warn || !strings.Contains(r.Detail, "1 failed memory save(s) kept for a retry") || r.Fix == nil ||
+		!strings.HasSuffix(r.Fix.Steps[0].Show, "python -m server.memory_writes retry") {
+		t.Fatalf("%+v %+v", r, r.Fix)
+	}
+	f.Health.LLMContext = &probe.LLMContext{Tokens: 8192, Local: true, RecommendedMin: 16384, Model: "qwen"}
+	if p := byID(Evaluate(f))["providers"]; p.Level != Warn || !strings.Contains(p.Detail, "qwen is loaded with a 8192-token context") {
+		t.Fatalf("%+v", p)
+	}
+	f.Health.LLMContext.Tokens = 32768
+	if p := byID(Evaluate(f))["providers"]; strings.Contains(p.Detail, "token context") {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestCmfAndServerVersionsMustMatch(t *testing.T) {
+	f := healthy()
+	f.Health.Version = "0.1.4"
+	for _, v := range []string{"0.1.4", "v0.1.4", "0.1.4-dev", ""} {
+		f.CmfVersion = v
+		if r := byID(Evaluate(f))["mode"]; r.Level != OK {
+			t.Fatalf("%q: %+v", v, r)
+		}
+	}
+	f.CmfVersion = "0.1.2"
+	if r := byID(Evaluate(f))["mode"]; r.Level != Warn || !strings.Contains(r.Detail, "this cmf is 0.1.2 but the server is 0.1.4") {
+		t.Fatalf("%+v", r)
+	}
+}

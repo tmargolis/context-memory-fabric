@@ -10,11 +10,19 @@ failures, so the `memory_status` tool, `capture_health` and `/health` can show i
 Kept in the journal database beside the OAuth tables. A row still `queued`
 from before this server process started can never finish, so it reads as
 `lost`.
+
+Since B20 (2026-10-26) each row also keeps the `remember` arguments until the
+write commits, so a failed or lost save can be retried instead of being gone:
+`python -m server.memory_writes retry` (what `cmf memory retry` and Status's
+Retry button run) re-saves them and records the outcome here.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,19 +67,43 @@ class BackgroundWriteLog:
         self._conn.executescript(SCHEMA_SQL)
         self._conn.commit()
 
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(background_writes)")}
+        if "payload" not in columns:
+            self._conn.execute("ALTER TABLE background_writes ADD COLUMN payload TEXT")
+            self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
 
-    def queued(self, episode_name: str, graph: str) -> None:
+    def queued(self, episode_name: str, graph: str, payload: Optional[dict[str, Any]] = None) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO background_writes (episode_name, graph, status, queued_at) VALUES (?, ?, ?, ?)",
-                (episode_name, graph, QUEUED, _now()),
+                "INSERT OR REPLACE INTO background_writes (episode_name, graph, status, queued_at, payload) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (episode_name, graph, QUEUED, _now(), json.dumps(payload) if payload is not None else None),
             )
             self._conn.commit()
 
     def committed(self, episode_name: str) -> None:
         self._finish(episode_name, COMMITTED, None, None)
+        with self._lock:
+            self._conn.execute("UPDATE background_writes SET payload = NULL WHERE episode_name = ?", (episode_name,))
+            self._conn.commit()
+
+    def retryable(self) -> list[dict[str, Any]]:
+        """Failed or lost writes whose memory is still kept, oldest first, with `payload` decoded."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM background_writes WHERE payload IS NOT NULL AND status != ? ORDER BY queued_at",
+                (COMMITTED,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            r = self._row(row)
+            if r["status"] in (FAILED, LOST):
+                r["payload"] = json.loads(r["payload"])
+                out.append(r)
+        return out
 
     def failed(self, episode_name: str, error_kind: str, error_message: str) -> None:
         self._finish(episode_name, FAILED, error_kind, error_message)
@@ -87,6 +119,7 @@ class BackgroundWriteLog:
 
     def _row(self, row: sqlite3.Row) -> dict[str, Any]:
         out = dict(row)
+        out["retryable"] = out.get("payload") is not None and out["status"] != COMMITTED
         if out["status"] == QUEUED and out["queued_at"] < self._started_at:
             out["status"] = LOST
             out["error_message"] = "The server restarted before this write finished; nothing was saved."
@@ -138,4 +171,50 @@ def format_write_status(rows: list[dict[str, Any]], episode_name: Optional[str] 
     lines = [header, *(format_write(r) for r in rows)]
     if any(r["status"] == QUEUED for r in rows):
         lines.append("_`queued` writes are still being processed; check again in a minute._")
+    if any(r.get("retryable") and r["status"] in (FAILED, LOST) for r in rows):
+        lines.append("_A failed save's memory is kept: retry it from CMF management → Status, or `cmf memory retry`._")
     return "\n".join(lines)
+
+
+async def retry_failed(log: Optional[BackgroundWriteLog] = None, out=sys.stdout) -> int:
+    """Re-save every failed or lost write that still has its memory; returns how many failed again."""
+    from datetime import datetime as _dt
+
+    from server.core.tool_errors import classify
+    from server.providers.memory_graphiti import remember
+
+    log = log or get_default_write_log()
+    rows = log.retryable()
+    if not rows:
+        print("No failed memory saves to retry.", file=out)
+        return 0
+    still_failing = 0
+    for row in rows:
+        name, args = row["episode_name"], dict(row["payload"])
+        if args.get("reference_time"):
+            args["reference_time"] = _dt.fromisoformat(args["reference_time"])
+        log.queued(name, row["graph"], row["payload"])
+        try:
+            await remember(name=name, **args)
+        except Exception as e:  # noqa: BLE001 - recorded, then the next one is tried
+            classified = classify(e)
+            kind, message = (classified.kind, classified.message) if classified else ("unexpected", f"Unexpected error ({type(e).__name__}).")
+            log.failed(name, kind, message)
+            still_failing += 1
+            print(f"{name}: failed again: {message}", file=out)
+            continue
+        log.committed(name)
+        print(f"{name}: saved", file=out)
+    return still_failing
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv != ["retry"]:
+        print("usage: python -m server.memory_writes retry", file=sys.stderr)
+        return 2
+    return 1 if asyncio.run(retry_failed()) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

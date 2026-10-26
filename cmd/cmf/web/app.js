@@ -122,7 +122,9 @@ async function loadStatus() {
   $("summary").replaceChildren(levelWords[s.overall] || s.overall,
     when ? el("span", { class: "checked-at", title: s.checked_at }, "checked " + when) : null);
   $("summary").classList.add(s.overall);
-  $("meta").textContent = `cmf ${s.version}` + (s.graph ? ` · graph ${s.graph}` + (s.nodes >= 0 ? `, ${s.nodes} nodes` : "") : "");
+  // One number when the cmf program and the server agree; both when they don't.
+  const ver = s.versions_match ? `CMF ${s.version}` : `cmf ${s.version} · server ${s.server_version}`;
+  $("meta").textContent = ver + (s.graph ? ` · graph ${s.graph}` + (s.nodes >= 0 ? `, ${s.nodes} nodes` : "") : "");
   $("browser-link").href = s.browser_url;
   $("browser-link").title = s.browser_url + (s.graph ? ` · pick graph “${s.graph}” there` : "");
   $("checks").replaceChildren(...s.checks.map((c) => el("li", {},
@@ -131,9 +133,9 @@ async function loadStatus() {
       c.about ? el("div", { class: "check-about" }, ...withCode(c.about)) : null,
       el("div", { class: "check-detail" }, c.detail)),
     c.fix && c.level !== "ok"
-      ? el("button", { class: "small fix", title: c.fix.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c, c.fix) }, "Fix: " + c.fix.label)
+      ? el("button", { class: "small fix", title: c.fix.steps.map((st) => st.command).join("\n"), onclick: () => runFix(c, c.fix) }, "Fix: " + c.fix.label)
       : c.action
-      ? el("button", { class: "small fix", title: c.action.steps.map((st) => st.show).join("\n"), onclick: () => runFix(c, c.action) }, c.action.label)
+      ? el("button", { class: "small fix", title: c.action.steps.map((st) => st.command).join("\n"), onclick: () => runFix(c, c.action) }, c.action.label)
       : el("span"),
   )));
 }
@@ -169,7 +171,7 @@ async function goToFeature(target) {
 }
 
 async function runFix(c, fix) {
-  const steps = fix.steps.map((st) => "  $ " + st.show).join("\n");
+  const steps = fix.steps.map((st) => "  $ " + st.command).join("\n");
   if (!confirm(`${fix.label}\n\nThis runs:\n${steps}`)) return;
   await stream(`/api/fix/${encodeURIComponent(c.id)}`, null, fix.label);
   loadStatus();

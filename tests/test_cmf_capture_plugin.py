@@ -58,3 +58,19 @@ def test_surface_harness_attribution():
     assert surface_harness('claude_desktop', 'claude session (remote-new-thing)') == ('claude_desktop', 'remote-new-thing')
     assert surface_harness('chatgpt', 'claude session (cli)') == ('chatgpt', 'cli')  # never relabels other clients
     assert surface_harness('claude_desktop', 'my notes') == ('claude_desktop', None)
+
+
+def test_nudge_names_the_repository_as_project(tmp_path):
+    """B19: live captures were filed under misc; the hook passes the git repo's name."""
+    repo = tmp_path / 'My Repo'
+    (repo / '.git').mkdir(parents=True)
+    (repo / 'src').mkdir()
+    assert nudge.project_hint(str(repo / 'src')) == 'my-repo'
+    assert nudge.project_hint(str(tmp_path)) is None
+    assert nudge.project_hint(None) is None
+    state = tmp_path / 'state.json'
+    payload = {'session_id': 's', 'cwd': str(repo / 'src')}
+    out = {}
+    for i in range(nudge.DEFAULT_MIN_TURNS):
+        out = nudge.run(json.dumps(payload), state, T0 + timedelta(seconds=i))
+    assert out['reason'].endswith('" and project="my-repo".')

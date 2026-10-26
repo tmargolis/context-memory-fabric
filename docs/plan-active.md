@@ -124,8 +124,10 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B15 | Test graph compatibility | **Closed 2026-10-13** → [plan-history.md](plan-history.md#b15--test-graph-compatibility-closed-2026-10-13) |
 | B16 | Project-aware retrieval | **Closed 2026-10-15** → [plan-history.md](plan-history.md#b16--project-aware-retrieval-closed-2026-10-15) |
 | B17 | Project taxonomy consolidation | **Closed 2026-10-14** → [plan-history.md](plan-history.md#b17--project-taxonomy-consolidation-closed-2026-10-14) |
-| [B18](#b18--poller-consolidation-overflows-the-local-models-context) | Poller consolidation overflows the local model's context | Open; small code fix, short Spark check |
-| [B19](#b19--project-less-claude_desktop_code-promotions) | Project-less `claude_desktop_code` promotions | Open; read-only diagnosis first, retag needs approval |
+| B18 | Poller consolidation overflows the local model's context | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b18--poller-consolidation-overflows-the-local-models-context-closed-2026-10-26) |
+| B19 | Project-less `claude_desktop_code` promotions | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b19--project-less-claude_desktop_code-promotions-closed-2026-10-26) |
+| B20 | Saves that overflow the local model's context are lost | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b20--saves-that-overflow-the-local-models-context-are-lost-closed-2026-10-26) |
+| B21 | Codex keeps a stale OAuth login beside the token | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b21--codex-keeps-a-stale-oauth-login-beside-the-token-closed-2026-10-26) |
 
 ### Recurring review operations
 
@@ -255,29 +257,6 @@ Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pu
 
 - [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
 
-
-### B18 — Poller consolidation overflows the local model's context
-
-Found 2026-10-25 in the stack's logs while building v0.1.1 (CMF management's errors-only filter now shows these lines). Every poller cycle, `cmf-poller` logs `Consolidation window failed for …` with `Error code: 400 … n_keep: ~12–16k >= n_ctx: 8192` for the same 8 Codex conversations. The consolidation prompt built in `server/adapters/codex/worker.py` (around line 222) is larger than the 8,192-token context the Spark model is loaded with, so those conversations never consolidate, and the same calls fail again each cycle.
-
-- [ ] **Cap the window by tokens.** Measure the consolidation prompt before sending it and split or trim the window to fit the model's context, with room left for the reply. Read the limit from settings (or from the server's model info where it reports it), not a constant, since another user's local model may be smaller still.
-- [ ] **Stop retrying the same failure every cycle.** A window that overflows after splitting should be recorded once and skipped, not resent each poll.
-- [ ] **Check the other adapters** (Claude Code, Cowork, Antigravity) for the same unbounded window.
-- [ ] **Optional, operational:** reload the Spark model with a larger context (the 2026-09-21 merge overflow ran it at 32,768). It helps this machine only, so it doesn't replace the cap.
-- [ ] **Verify:** the 8 conversations consolidate on the next cycle, and `cmf logs cmf-poller --errors` shows no `n_ctx` lines.
-
-
-### B19 — Project-less `claude_desktop_code` promotions
-
-Found 2026-10-17, re-checked 2026-10-25 (read-only query of the live graph). Episodes from the Claude Desktop Code tab are promoted with `project = 'misc'`, the fallback slug used when a promotion resolves no project (`server/consolidation/promotion.py`, `server/consolidation/graph_tagging.py`). It's still happening: 10 episodes on 2026-10-17, 17 by 2026-10-21 (`claude-desktop-code-misc-001`…`-017`), plus `chatgpt-misc-010` / `-011`. `misc` episodes are diluted in project-aware retrieval. Same shape as the 2026-09-23 `claude_code` fix ([plan-history.md](plan-history.md), "Episodes promoted with NULL project"). Since B17 (2026-10-14), `misc` is also the intended home for genuinely unplaceable captures, reviewed nightly, so the diagnosis must separate episodes that had a project to find from ones that really had none.
-
-- [ ] **Root cause.** Trace the affected episodes from their review/proposal rows through `record_reasoning_episode()` and the promotion pipeline; find where the `claude_desktop_code` harness loses its project (the Code tab shares Claude Code's JSONL, split by `entrypoint`).
-- [ ] **Fix with a test** so new Code-tab promotions resolve a project like `claude_code` ones do.
-- [ ] **ChatGPT ones:** decide whether `chatgpt-misc-*` is expected (no project in the source) or the same bug.
-- [ ] **Retag (needs Todd's go-ahead):** a proposed project per affected episode, applied with `scripts/retag_promoted_projects.py` after a backup.
-- [ ] **Verify:** no new `*-misc-*` Code-tab episodes after the next promotions; the retagged ones show their project.
-
-Proposed as a session card (`task_bade6f5d`, read-only until approved).
 
 ---
 

@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any, Optional
 
@@ -151,11 +152,29 @@ def decide(
     return False
 
 
-def render(harness: str, nudge: bool) -> dict[str, Any]:
+def render(harness: str, nudge: bool, project: Optional[str] = None) -> dict[str, Any]:
+    reason = NUDGE_REASON + (f' If you call it, pass project="{project}".' if project else "")
     if harness == "antigravity":
         # `decision` is required; anything but "continue" lets it stop.
-        return {"decision": "continue", "reason": NUDGE_REASON} if nudge else {"decision": "stop"}
-    return {"decision": "block", "reason": NUDGE_REASON} if nudge else {}
+        return {"decision": "continue", "reason": reason} if nudge else {"decision": "stop"}
+    return {"decision": "block", "reason": reason} if nudge else {}
+
+
+def project_hint(cwd) -> Optional[str]:
+    """The session's project for capture_session: the name of the git
+    repository holding `cwd`, as a slug, or None outside one. The server only
+    sees an MCP call, so without it live captures were filed under `misc`
+    (B19, 2026-10-26)."""
+    if not cwd:
+        return None
+    try:
+        here = Path(cwd).resolve()
+    except (OSError, RuntimeError):
+        return None
+    for d in (here, *here.parents):
+        if (d / ".git").exists():
+            return re.sub(r"[^a-z0-9]+", "-", d.name.lower()).strip("-") or None
+    return None
 
 
 def _load_state(path: Path) -> dict[str, Any]:
@@ -203,7 +222,7 @@ def run_hook(harness: str, stdin_text: str, state_path: Optional[Path] = None, n
         )
         _prune(state, now)
         _save_state(path, state)
-        return render(harness, nudge)
+        return render(harness, nudge, project_hint(payload.get("cwd")))
     except Exception:
         return render(harness, False)
 

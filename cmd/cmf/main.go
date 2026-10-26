@@ -7,9 +7,20 @@ import (
 	"io"
 	"os"
 	"sort"
+
+	contextmemoryfabric "github.com/tmargolis/context-memory-fabric"
 )
 
-var version = "dev"
+// version is stamped by the release build (-X main.version=<pyproject version>).
+// A local build reports the same number from pyproject.toml, marked -dev so it
+// never pins the Standard-mode image to a tag that isn't published yet.
+var version = ""
+
+func init() {
+	if version == "" {
+		version = contextmemoryfabric.Version() + "-dev"
+	}
+}
 
 type command struct {
 	summary string
@@ -26,6 +37,7 @@ var commands = map[string]command{
 	"logs":        {"recent logs of the stack (service names, --tail N, -f, --errors)", runLogs},
 	"diagnostics": {"a redacted report to send for help; shown first, then --copy or --out", runDiagnostics},
 	"selftest":    {"write, recall and delete a test memory in a scratch graph (calls your providers)", runSelftest},
+	"memory":      {"memory saves: retry the ones that failed (cmf memory retry)", runMemory},
 	"clients":     {"each AI app's CMF entry: list, set / remove <app>, fix duplicates", runClients},
 	"install":     {"set up a fresh install in ~/.cmf (Standard mode); Features → Apply starts it", runInstall},
 	"migrate":     {"move a repo-based install (host or preview stack) into ~/.cmf: plan, apply, restore <stamp>", runMigrate},

@@ -313,9 +313,9 @@ func (s *uiServer) status(r *http.Request) (any, error) {
 			browser = p
 		}
 	}
-	graph := ""
+	graph, serverVersion := "", ""
 	if facts.Health != nil {
-		graph = facts.Health.Graph
+		graph, serverVersion = facts.Health.Graph, facts.Health.Version
 	}
 	// The address you use for the Browser: Tailscale Serve's https one when
 	// it publishes the Browser's port, this computer's otherwise.
@@ -324,7 +324,8 @@ func (s *uiServer) status(r *http.Request) (any, error) {
 		browserURL = served
 	}
 	return map[string]any{"overall": checks.Worst(results), "checked_at": facts.At, "checks": results,
-		"graph": graph, "nodes": facts.Nodes, "browser_url": browserURL, "version": version}, nil
+		"graph": graph, "nodes": facts.Nodes, "browser_url": browserURL, "version": version,
+		"server_version": serverVersion, "versions_match": serverVersion == "" || checks.BaseVersion(serverVersion) == checks.BaseVersion(version)}, nil
 }
 
 // connectorSeen: Claude Desktop called CMF in the last day with no local

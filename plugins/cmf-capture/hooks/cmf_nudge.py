@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 DEFAULT_MIN_TURNS = 5
@@ -75,6 +76,23 @@ def surface(transcript_path) -> str:
     return os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown"
 
 
+def project_hint(cwd) :
+    """The session's project for capture_session: the name of the git
+    repository holding `cwd`, as a slug, or None outside one. The server only
+    sees an MCP call, so without it live captures were filed under `misc`
+    (B19, 2026-10-26)."""
+    if not cwd:
+        return None
+    try:
+        here = Path(cwd).resolve()
+    except (OSError, RuntimeError):
+        return None
+    for d in (here, *here.parents):
+        if (d / ".git").exists():
+            return re.sub(r"[^a-z0-9]+", "-", d.name.lower()).strip("-") or None
+    return None
+
+
 def decide(payload, state, now, min_turns=DEFAULT_MIN_TURNS, min_minutes=DEFAULT_MIN_MINUTES) -> bool:
     """Update `state` for this stop and return True to nudge."""
     key = payload.get("session_id")
@@ -125,8 +143,10 @@ def run(stdin_text: str, path: Path, now: datetime) -> dict:
     if not nudge:
         return {}
     where = surface(payload.get("transcript_path"))
+    project = project_hint(payload.get("cwd"))
+    extra = f' and project="{project}"' if project else ""
     return {"decision": "block",
-            "reason": NUDGE_REASON + f" If you call it, pass source_description=\"claude session ({where})\"."}
+            "reason": NUDGE_REASON + f" If you call it, pass source_description=\"claude session ({where})\"{extra}."}
 
 
 def main() -> int:

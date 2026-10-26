@@ -197,6 +197,12 @@ Connectors run in their vendor's cloud, so they reach CMF only through a public 
 
 **AI apps on this computer keep working.** With OAuth on, the server still accepts a local access token, `CMF_MCP_AUTH_TOKEN`, which the app entries CMF management writes carry (it generates the token the first time you turn an app on with remote access on). OAuth's own tokens expire and can be revoked; the local token is a random 256-bit secret kept in `~/.cmf/.env` and those apps' configs. Remove it from `.env` and Apply to shut every local entry out.
 
+**Apps on this computer use the local address, not the public one.** Once the local token exists, an app entry pointing at your public address (one you added by hand, or from an older setup) counts as wrong and is replaced with the local address and token: its OAuth sign-in can lapse (a rebuilt server, a moved journal), and then every call is refused while the config file still looks fine. Status flags an app the server has been turning away ("CMF refused N calls in the last day") with a **Use this computer's address** button, which creates the token if needed, restarts the server and rewrites the app's entry, backups kept. The claude.ai connector keeps using the public address and OAuth; if its calls are refused, its row says to reconnect it in claude.ai.
+
+For Codex, the same button also removes the old sign-in Codex stored for CMF (in the macOS Keychain or Codex's `.credentials.json`). Codex tried it before the token on every connect and was refused each time; nothing else of Codex's is touched.
+
+**A local model needs room to read.** CMF sizes every prompt to the context your local model is loaded with (it asks LM Studio; set `CMF_LLM_CONTEXT_TOKENS` for other servers). Load it with at least 16,384 tokens, 32,768 recommended: Status warns below 16K. With a small context, long memories are saved in parts and some long conversations are skipped until the context grows. If a memory save fails anyway, its text is kept: Status shows **Retry failed saves**, or run `cmf memory retry`.
+
 ### The claude.ai connector (Claude Desktop, Cowork, Claude Code)
 
 One connector on your claude.ai account reaches CMF from Claude Desktop's Chat and Cowork, the Desktop Code tab, Claude Code in a terminal (when it's signed in with that account) and claude.ai in a browser, with no per-app config.

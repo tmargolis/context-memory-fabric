@@ -150,24 +150,42 @@ type Target struct {
 
 func (t Target) LocalURL() string { return fmt.Sprintf("http://127.0.0.1:%d/mcp", t.Port) }
 
-// accepts reports whether u reaches this CMF: its local port or its public URL.
-func (t Target) accepts(u string) bool {
+// NeedsToken: the server lets a local entry in only with the token, since
+// either the static token or OAuth (remote access) guards it.
+func (t Target) NeedsToken() bool { return t.Token != "" || t.PublicURL != "" }
+
+// isLocal reports whether u is this computer's CMF address.
+func (t Target) isLocal(u string) bool {
 	p, err := url.Parse(strings.TrimSpace(u))
-	if err != nil || p.Host == "" {
-		return false
-	}
-	path := strings.TrimSuffix(p.Path, "/")
-	if path != "/mcp" {
+	if err != nil || p.Host == "" || strings.TrimSuffix(p.Path, "/") != "/mcp" {
 		return false
 	}
 	host := p.Hostname()
-	if (host == "127.0.0.1" || host == "localhost" || host == "::1") && p.Port() == fmt.Sprint(t.Port) {
-		return true
+	return (host == "127.0.0.1" || host == "localhost" || host == "::1") && p.Port() == fmt.Sprint(t.Port)
+}
+
+// isPublic reports whether u is this CMF's public address (remote access).
+func (t Target) isPublic(u string) bool {
+	p, err := url.Parse(strings.TrimSpace(u))
+	if err != nil || p.Host == "" || strings.TrimSuffix(p.Path, "/") != "/mcp" || t.PublicURL == "" {
+		return false
 	}
-	if t.PublicURL != "" {
-		if pub, err := url.Parse(t.PublicURL); err == nil && pub.Host != "" && strings.EqualFold(pub.Host, p.Host) && p.Scheme == pub.Scheme {
-			return true
-		}
+	pub, err := url.Parse(t.PublicURL)
+	return err == nil && pub.Host != "" && strings.EqualFold(pub.Host, p.Host) && p.Scheme == pub.Scheme
+}
+
+// accepts reports whether u reaches this CMF: its local port or its public URL.
+func (t Target) accepts(u string) bool { return t.isLocal(u) || t.isPublic(u) }
+
+// works reports whether an entry at u carrying token gets in. Apps on this
+// computer use the local address with the token whenever one exists; the
+// public address (its own OAuth sign-in, which can lapse) only until then.
+func (t Target) works(u, token string) bool {
+	switch {
+	case t.isLocal(u):
+		return !t.NeedsToken() || (t.Token != "" && token == t.Token)
+	case t.isPublic(u):
+		return t.Token == ""
 	}
 	return false
 }
@@ -177,8 +195,10 @@ type Entry struct {
 	Name    string `json:"name"`
 	URL     string `json:"url,omitempty"` // where it points, when it points at a URL
 	CMF     bool   `json:"cmf"`           // a CMF entry (by name or target)
-	Correct bool   `json:"correct"`       // a CMF entry that reaches this install
+	Correct bool   `json:"correct"`       // a CMF entry that reaches this install and gets in
 	Kind    string `json:"kind"`          // "url", "bridge", "stdio" or "other"
+	// Problem says why a CMF entry isn't correct, in plain words.
+	Problem string `json:"problem,omitempty"`
 }
 
 type State struct {
@@ -212,8 +232,9 @@ func (s State) Healthy() bool {
 var cmfName = regexp.MustCompile(`(?i)context[-_ ]?memory|mem(ory)?[-_ ]?fabric|^cmf([-_].*)?$`)
 
 // classify describes one parsed entry. fields are its top-level string
-// values (command, url, serverUrl), args its argument list.
-func classify(name string, fields map[string]string, args []string, t Target) Entry {
+// values (command, url, serverUrl), args its argument list, token the bearer
+// token its Authorization header carries ("" for none).
+func classify(name string, fields map[string]string, args []string, token string, t Target) Entry {
 	e := Entry{Name: name, Kind: "other"}
 	for _, k := range []string{"url", "serverUrl", "httpUrl"} {
 		if u := fields[k]; u != "" {
@@ -235,6 +256,12 @@ func classify(name string, fields map[string]string, args []string, t Target) En
 		_, err := os.Stat(fields["command"])
 		e.Correct = err == nil && t.accepts(e.URL)
 		e.CMF = true
+		if !e.Correct {
+			e.Problem = "runs a cmf bridge that isn't there any more"
+			if err == nil {
+				e.Problem = "points at " + e.URL + ", not this install"
+			}
+		}
 		return e
 	}
 	if e.URL == "" && strings.Contains(joined, "mcp-remote") {
@@ -248,8 +275,22 @@ func classify(name string, fields map[string]string, args []string, t Target) En
 	if e.Kind == "other" && (strings.Contains(joined, "server.mcp") || strings.Contains(fields["command"], "server.mcp")) {
 		e.Kind = "stdio" // a CMF server started by the app itself (developer setups)
 	}
-	e.Correct = e.URL != "" && t.accepts(e.URL)
-	e.CMF = cmfName.MatchString(name) || e.Correct || e.Kind == "stdio"
+	reaches := e.URL != "" && t.accepts(e.URL)
+	e.Correct = reaches && t.works(e.URL, token)
+	e.CMF = cmfName.MatchString(name) || reaches || e.Kind == "stdio"
+	switch {
+	case e.Correct || !e.CMF:
+	case e.Kind == "stdio":
+		e.Problem = "starts its own CMF server"
+	case !reaches:
+		e.Problem = "points at " + e.URL + ", not this install"
+	case t.isPublic(e.URL):
+		e.Problem = "signs in over the public address (OAuth), which can lapse; apps on this computer use the local address and token"
+	case token == "":
+		e.Problem = "has no access token, so the server refuses it"
+	default:
+		e.Problem = "has an old access token, so the server refuses it"
+	}
 	return e
 }
 
@@ -300,8 +341,8 @@ func parseEntries(f Format, data []byte, t Target) ([]Entry, error) {
 	var out []Entry
 	for _, name := range servers.Keys() {
 		raw, _ := servers.Get(name)
-		fields, args := entryFields(raw)
-		out = append(out, classify(name, fields, args, t))
+		fields, args, token := entryFields(raw)
+		out = append(out, classify(name, fields, args, token, t))
 	}
 	return out, nil
 }

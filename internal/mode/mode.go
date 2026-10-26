@@ -186,10 +186,10 @@ func Plan(h home.Home, m Mode) ([]Change, error) {
 
 // PinImage adds to changes, for standard mode, the CMF_VERSION that makes the
 // stack run the server image released with this cmf (instead of latest).
-// A development build ("dev" or "") pins nothing.
+// A development build ("dev", "", or a local "<version>-dev") pins nothing.
 func PinImage(h home.Home, changes []Change, version string) ([]Change, error) {
 	version = strings.TrimPrefix(version, "v")
-	if version == "" || version == "dev" {
+	if version == "" || version == "dev" || strings.HasSuffix(version, "-dev") {
 		return changes, nil
 	}
 	env, err := home.ReadEnv(h.EnvFile())

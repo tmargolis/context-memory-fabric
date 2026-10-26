@@ -156,7 +156,7 @@ if _oauth_issuer_url and _oauth_password:
 # Initialize MCP Server with instructions
 app = MCPServer(
     name="context-memory-fabric",
-    version="0.1.3",
+    version="0.1.4",
     instructions=SERVER_INSTRUCTIONS,
     auth_server_provider=oauth_provider,
     auth=_auth_settings,
@@ -605,7 +605,9 @@ async def capture_session(
     ],
     project: Annotated[
         Optional[str],
-        Field(description="Optional project/topic label to tag this batch with."),
+        Field(description="The project this session is working on, as a short slug (e.g. 'context-memory-fabric', "
+                    "usually the repository or folder name). Pass it whenever the session has one: items without a "
+                    "project are filed under 'misc' and are harder to find in project-scoped recall."),
     ] = None,
     source_description: Annotated[
         Optional[str],
@@ -2180,6 +2182,11 @@ def main():
 
         if auth_token:
             starlette_app.add_middleware(BearerTokenAuthMiddleware, token=auth_token)
+        # Added last, so it is outermost and sees every refusal (the static
+        # token's and OAuth's alike): Status shows which apps were turned away.
+        from server.core.refused import RefusedCallsMiddleware
+
+        starlette_app.add_middleware(RefusedCallsMiddleware)
 
         if oauth_provider is not None:
             logger.info(f"OAuth enabled -- issuer {_oauth_issuer_url}, consent page at {_oauth_issuer_url}/oauth/consent")

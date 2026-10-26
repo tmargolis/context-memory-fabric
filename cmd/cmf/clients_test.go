@@ -210,3 +210,47 @@ func TestInstallFresh(t *testing.T) {
 		t.Fatal(errOut.String())
 	}
 }
+
+// Remote access on, no local token yet, Codex on the public address: `cmf
+// clients set codex` (Status's "Use this computer's address") goes through
+// the Apply plan, which creates the token, restarts the server and points
+// Codex at the local address with it.
+func TestClientsSetCreatesTokenUnderOAuth(t *testing.T) {
+	fake := fakeMachine(t, true)
+	fake.Answers["docker compose*"] = run.Result{}
+	sleep, healthTimeout = func(time.Duration) {}, time.Second
+	t.Cleanup(func() { sleep, healthTimeout = time.Sleep, 3*time.Minute })
+	envFile := filepath.Join(os.Getenv("CMF_HOME"), ".env")
+	os.WriteFile(envFile, []byte("COMPOSE_PROFILES=capture\nCMF_MCP_ISSUER_URL=https://mac.tail1.ts.net\nCMF_MCP_OAUTH_PASSWORD=pw\n"), 0o600)
+	codex, _ := clients.Find("codex")
+	path := codex.Path(clientEnv())
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	os.WriteFile(path, []byte("[mcp_servers.context_memory_fabric]\nurl = \"https://mac.tail1.ts.net/mcp\"\n"), 0o600)
+
+	var out, errOut bytes.Buffer
+	if code := runCLI([]string{"clients", "set", "codex", "--dry-run"}, &out, &errOut); code != 0 ||
+		!strings.Contains(out.String(), "need a local access token first") || !strings.Contains(out.String(), "CMF_MCP_AUTH_TOKEN") ||
+		!strings.Contains(out.String(), `remove "context_memory_fabric" (signs in over the public address`) || !strings.Contains(out.String(), "Dry run") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	if code := runCLI([]string{"clients", "set", "codex", "--yes"}, &out, &errOut); code != 0 {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errOut.String())
+	}
+	env, _ := os.ReadFile(envFile)
+	token := ""
+	for _, line := range strings.Split(string(env), "\n") {
+		if v, ok := strings.CutPrefix(line, "CMF_MCP_AUTH_TOKEN="); ok {
+			token = v
+		}
+	}
+	got, _ := os.ReadFile(path)
+	if len(token) != 64 || !strings.Contains(string(got), "url = \"http://127.0.0.1:8000/mcp\"\nhttp_headers = { Authorization = \"Bearer "+token+"\" }") {
+		t.Fatalf("token %q\n%s", token, got)
+	}
+	out.Reset()
+	runCLI([]string{"clients"}, &out, &errOut)
+	if !strings.Contains(out.String(), "Codex           connected\n") {
+		t.Fatal(out.String())
+	}
+}

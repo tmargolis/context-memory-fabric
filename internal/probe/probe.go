@@ -81,6 +81,11 @@ type Health struct {
 	KnowledgeSources []string          `json:"knowledge_sources"`
 	BackgroundWrites []BackgroundWrite `json:"background_writes"`
 	ClientsSeen      []ClientSeen      `json:"clients_seen"`
+	RefusedCalls     []RefusedCall     `json:"refused_calls"` // absent from servers before 0.1.4
+	// Saves whose memory is kept for a retry, and the extraction model's
+	// context (B20); both absent from servers before 0.1.4.
+	RetryableWrites []string    `json:"retryable_writes"`
+	LLMContext      *LLMContext `json:"llm_context"`
 	// Item 1.1; absent from servers that predate it.
 	ConfigCheck   *ConfigCheck   `json:"config_check"`
 	Embedding     *Embedding     `json:"embedding"`
@@ -103,6 +108,15 @@ type BackgroundWrite struct {
 	ErrorKind  string `json:"error_kind"`
 	QueuedAt   string `json:"queued_at"`
 	FinishedAt string `json:"finished_at"`
+}
+
+// LLMContext is the extraction model's context in tokens: the loaded
+// context for a local model, a default for a hosted one.
+type LLMContext struct {
+	Tokens         int    `json:"tokens"`
+	Local          bool   `json:"local"`
+	RecommendedMin int    `json:"recommended_min"`
+	Model          string `json:"model"`
 }
 
 // ConfigCheck is the server's startup config check (item 1.1).
@@ -133,6 +147,17 @@ type ClientSeen struct {
 	Calls    int       `json:"calls"`
 }
 
+// RefusedCall is an app the server turned away (401/403) in the last day,
+// named the way its calls would be (the harness).
+type RefusedCall struct {
+	Harness  string    `json:"harness"`
+	Count    int       `json:"count"`
+	LastAt   time.Time `json:"last_at"`
+	LastPath string    `json:"last_path"`
+	// The app's latest accepted MCP request (absent before 0.1.4's B21).
+	LastOKAt *time.Time `json:"last_ok_at"`
+}
+
 type Facts struct {
 	At        time.Time
 	OS        string
@@ -154,7 +179,9 @@ type Facts struct {
 	Clients   []clients.State       // each AI app's CMF entries; nil when not checked
 	Capture   []capture.SourceState // how each transcript source is captured; nil when not checked
 	Self      string                // this cmf binary, for fixes that run cmf itself
-	Installed bool                  // ~/.cmf has a .env and a compose file
+	// CmfVersion is this cmf binary's version, to compare with the server's.
+	CmfVersion string
+	Installed  bool // ~/.cmf has a .env and a compose file
 }
 
 // Service returns the stack's container for a compose service, if any.
@@ -241,7 +268,11 @@ func (p Prober) Collect(ctx context.Context) Facts {
 		f.Port = port
 	}
 	if p.ClientEnv != nil {
+		// The token decides whether an entry gets in; it stays here, never in f.Env.
 		t := clients.Target{Port: f.Port, PublicURL: f.Env["CMF_MCP_ISSUER_URL"]}
+		if envErr == nil {
+			t.Token = env.Get("CMF_MCP_AUTH_TOKEN")
+		}
 		f.Clients = clients.InspectAll(*p.ClientEnv, t)
 		if envErr == nil {
 			f.Capture = capture.Report(p.ClientEnv.Home, env, f.At)

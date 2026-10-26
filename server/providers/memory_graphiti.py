@@ -650,6 +650,71 @@ async def resolve_remember_identity(
     return episode_name, resolved_project, resolved_harness
 
 
+# B20 (docs/plan-active.md): Graphiti puts the 10 most recent episodes, whole,
+# into every extraction prompt unless told which to use, so a short memory in
+# a busy project sent ~12K tokens and an 8K-context local model refused it.
+# remember() now passes the newest earlier episodes that fit the model's
+# context beside the new one and Graphiti's own instructions (estimated at
+# GRAPHITI_PROMPT_CHARS), and splits a memory that can't fit even alone.
+GRAPHITI_PROMPT_CHARS = 12_000
+MIN_PART_CHARS = 2_000
+
+
+def _content_room() -> int:
+    from server.providers.context_limit import prompt_budget_chars
+
+    return prompt_budget_chars() - GRAPHITI_PROMPT_CHARS
+
+
+def split_for_context(content: str, room: Optional[int] = None) -> list[str]:
+    """`content` in parts that each fit the model's context, cut at paragraphs, then lines, then words."""
+    room = _content_room() if room is None else room
+    if len(content) <= room or room < MIN_PART_CHARS:
+        return [content]
+    parts: list[str] = []
+    rest = content
+    while len(rest) > room:
+        cut = -1
+        for sep in ("\n\n", "\n", " "):
+            cut = rest.rfind(sep, room // 2, room)
+            if cut > 0:
+                break
+        cut = cut if cut > 0 else room
+        parts.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        parts.append(rest)
+    return parts
+
+
+async def context_episode_uuids(graphiti: Any, content: str, reference_time: datetime) -> Optional[list[str]]:
+    """The newest of Graphiti's usual context episodes that fit beside `content`, or None to let Graphiti pick."""
+    from graphiti_core.helpers import get_default_group_id
+    from graphiti_core.search.search_utils import RELEVANT_SCHEMA_LIMIT
+
+    room = _content_room() - len(content)
+    try:
+        recent = await graphiti.retrieve_episodes(
+            reference_time,
+            last_n=RELEVANT_SCHEMA_LIMIT,
+            group_ids=[get_default_group_id(graphiti.driver.provider)],
+            source=EpisodeType.text,
+        )
+    except Exception as e:  # noqa: BLE001 - fall back to Graphiti's own choice
+        logger.debug(f"Could not list context episodes; letting Graphiti choose: {e}")
+        return None
+    kept: list[str] = []
+    for ep in sorted(recent, key=lambda e: e.valid_at, reverse=True):
+        size = len(ep.content or "")
+        if size > room:
+            break
+        room -= size
+        kept.append(ep.uuid)
+    if len(kept) < len(recent):
+        logger.info(f"Extraction context: {len(kept)} of the {len(recent)} most recent episodes fit the model's context.")
+    return kept
+
+
 async def remember(
     content: str,
     name: Optional[str] = None,
@@ -696,40 +761,50 @@ async def remember(
     call_start = time.monotonic()
     embed_before, comp_before = _call_counts()
 
-    result = None
-    for attempt in range(max_retries):
-        try:
-            result = await graphiti.add_episode(
-                name=episode_name,
-                episode_body=neutralize_fulltext_hazards(content),
-                source_description=source_description,
-                reference_time=ref_time,
-                source=EpisodeType.text,
-                **extraction_kwargs(source_description=source_description),
-            )
-            break
-        except Exception as e:
-            if _is_transient_gemini_error(e) and attempt < max_retries - 1:
-                backoff = 25.0 * (attempt + 1)
-                logger.warning(
-                    f"Transient provider error in remember() ({_classify_transient_error(e)}). "
-                    f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
+    # A memory too long for the model's context is saved as numbered parts
+    # (B20): `<name>`, `<name>-p2`, ... each a whole episode of its own.
+    parts = split_for_context(content)
+    if len(parts) > 1:
+        logger.info(f"'{episode_name}' is too long for the model's context; saving it as {len(parts)} parts.")
+    post: dict[str, Any] = {}
+    for index, part in enumerate(parts, start=1):
+        part_name = episode_name if index == 1 else f"{episode_name}-p{index}"
+        result = None
+        for attempt in range(max_retries):
+            try:
+                result = await graphiti.add_episode(
+                    name=part_name,
+                    episode_body=neutralize_fulltext_hazards(part),
+                    source_description=source_description,
+                    reference_time=ref_time,
+                    source=EpisodeType.text,
+                    previous_episode_uuids=await context_episode_uuids(graphiti, part, ref_time),
+                    **extraction_kwargs(source_description=source_description),
                 )
-                await asyncio.sleep(backoff)
-            else:
-                raise
+                break
+            except Exception as e:
+                if _is_transient_gemini_error(e) and attempt < max_retries - 1:
+                    backoff = 25.0 * (attempt + 1)
+                    logger.warning(
+                        f"Transient provider error in remember() ({_classify_transient_error(e)}). "
+                        f"Retrying in {backoff:.1f}s (attempt {attempt+1}/{max_retries})..."
+                    )
+                    await asyncio.sleep(backoff)
+                else:
+                    raise
 
-    post = await postprocess_episode(
-        graphiti, result, episode_name=episode_name, content=content, source_description=source_description,
-    )
+        part_post = await postprocess_episode(
+            graphiti, result, episode_name=part_name, content=part, source_description=source_description,
+        )
+        post = post or part_post
 
-    # Apply inline tagging (harness label, project label + e.project property, and Project node link)
-    try:
-        from server.consolidation.graph_tagging import tag_promoted_episode
+        # Apply inline tagging (harness label, project label + e.project property, and Project node link)
+        try:
+            from server.consolidation.graph_tagging import tag_promoted_episode
 
-        await tag_promoted_episode(graphiti.driver, episode_name, resolved_project, resolved_harness)
-    except Exception as e:
-        logger.warning(f"tag_promoted_episode failed for {episode_name}: {e}")
+            await tag_promoted_episode(graphiti.driver, part_name, resolved_project, resolved_harness)
+        except Exception as e:
+            logger.warning(f"tag_promoted_episode failed for {part_name}: {e}")
 
     embed_after, comp_after = _call_counts()
     logger.info(
@@ -744,7 +819,9 @@ async def remember(
         "harness": resolved_harness,
         "reference_time": ref_time.isoformat(),
         "source_description": source_description,
-        "message": f"Successfully remembered episode '{episode_name}' in episodic memory.",
+        "message": f"Successfully remembered episode '{episode_name}' in episodic memory."
+        + (f" It was too long for the model's context, so it was saved in {len(parts)} parts." if len(parts) > 1 else ""),
+        "parts": len(parts),
         "debris_removed": post["debris_removed"],
         "project_entity": post["project_entity"],
         "episode_embedded": post["embedded"],
@@ -809,7 +886,13 @@ async def remember_queued(
     from server.memory_writes import get_default_write_log
 
     write_log = get_default_write_log()
-    write_log.queued(episode_name, target_db)
+    write_log.queued(episode_name, target_db, {
+        "content": content,
+        "source_description": source_description,
+        "reference_time": ref_time.isoformat(),
+        "project": resolved_project,
+        "harness": resolved_harness,
+    })
 
     async def _run() -> None:
         try:
@@ -1481,6 +1564,7 @@ async def _reextract_episode(
             source_description=sd,
             reference_time=parse_iso_datetime(reference_time),
             source=EpisodeType.text,
+            previous_episode_uuids=await context_episode_uuids(graphiti, content, parse_iso_datetime(reference_time)),
             **extraction_kwargs(source_description=sd),
         )
         new_uuid = result.episode.uuid

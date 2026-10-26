@@ -1744,6 +1744,64 @@ The MS8 replay at `now` fell from Hit@8 90.0% / MRR 0.515 to 82.5% / 0.434 after
   - Any production change needs a new ruling from User, a backup first, and before/after counts.
 - **Risk.** A roll-up cuts per-event precision and can hurt cases that pass today; the replay is how to find out.
 
+### B18 — Poller consolidation overflows the local model's context (closed 2026-10-26)
+
+Found 2026-10-25 in the stack's logs while building v0.1.1 (CMF management's errors-only filter now shows these lines). Every poller cycle, `cmf-poller` logs `Consolidation window failed for …` with `Error code: 400 … n_keep: ~12–16k >= n_ctx: 8192` for the same 8 Codex conversations. The consolidation prompt built in `server/adapters/codex/worker.py` (around line 222) is larger than the 8,192-token context the Spark model is loaded with, so those conversations never consolidate, and the same calls fail again each cycle.
+
+- [x] **Cap the window by tokens.** Measure the consolidation prompt before sending it and split or trim the window to fit the model's context, with room left for the reply. Read the limit from settings (or from the server's model info where it reports it), not a constant, since another user's local model may be smaller still.
+- [x] **Stop retrying the same failure every cycle.** A window that overflows after splitting should be recorded once and skipped, not resent each poll.
+- [x] **Check the other adapters** (Claude Code, Cowork, Antigravity) for the same unbounded window.
+- [x] **Optional, operational:** reload the Spark model with a larger context (the 2026-09-21 merge overflow ran it at 32,768). It helps this machine only, so it doesn't replace the cap.
+- [ ] **Verify:** the 8 conversations consolidate on the next cycle, and `cmf logs cmf-poller --errors` shows no `n_ctx` lines.
+
+Built 2026-10-26 (v0.1.4, unreleased). `server/providers/context_limit.py` reads the limit (`CMF_LLM_CONTEXT_TOKENS`, else LM Studio's `loaded_context_length`, cached 5 min); `ExtractPolicyV1._build_prompt` fits it (full pages give way first, then turns are cut toward 200 chars, else `PromptTooLongError`); `pipeline._evaluate_fitting` splits a refused window in half once, then records the job `oversize` with the context it failed at and skips it until the context grows. All four adapters share `run_reasoning_consolidation`, so one fix covers them. Since the 32k reload the poller had logged no `n_ctx` lines (checked 2026-10-26).
+
+**Closed 2026-10-26** in v0.1.4: after the rebuild the poller's first window extracted with the new sizing (1 succeeded, 0 failed) and logged no `n_ctx` lines; `/health` reports `llm_context` 32768 from LM Studio.
+
+### B19 — Project-less `claude_desktop_code` promotions (closed 2026-10-26)
+
+Found 2026-10-17, re-checked 2026-10-25 (read-only query of the live graph). Episodes from the Claude Desktop Code tab are promoted with `project = 'misc'`, the fallback slug used when a promotion resolves no project (`server/consolidation/promotion.py`, `server/consolidation/graph_tagging.py`). It's still happening: 10 episodes on 2026-10-17, 17 by 2026-10-21 (`claude-desktop-code-misc-001`…`-017`), plus `chatgpt-misc-010` / `-011`. `misc` episodes are diluted in project-aware retrieval. Same shape as the 2026-09-23 `claude_code` fix ([plan-history.md](plan-history.md), "Episodes promoted with NULL project"). Since B17 (2026-10-14), `misc` is also the intended home for genuinely unplaceable captures, reviewed nightly, so the diagnosis must separate episodes that had a project to find from ones that really had none.
+
+- [x] **Root cause.** Trace the affected episodes from their review/proposal rows through `record_reasoning_episode()` and the promotion pipeline; find where the `claude_desktop_code` harness loses its project (the Code tab shares Claude Code's JSONL, split by `entrypoint`).
+- [x] **Fix with a test** so new Code-tab promotions resolve a project like `claude_code` ones do.
+- [x] **ChatGPT ones:** decide whether `chatgpt-misc-*` is expected (no project in the source) or the same bug.
+- [ ] **Retag (needs Todd's go-ahead):** a proposed project per affected episode, applied with `scripts/retag_promoted_projects.py` after a backup.
+- [ ] **Verify:** no new `*-misc-*` Code-tab episodes after the next promotions; the retagged ones show their project.
+
+Proposed as a session card (`task_bade6f5d`, read-only until approved).
+
+Diagnosed and fixed 2026-10-26 (v0.1.4, unreleased). The live graph held 18 `claude-desktop-code-misc-*`, 3 `chatgpt-misc-*` and 2 `codex-misc-*`; all but one came from live `capture_session` calls, not the poller: the Stop-hook checkpoint asked for `source_description` but never `project`, and the server sees only an MCP call. Now all three hook copies (`plugins/cmf-capture/hooks/cmf_nudge.py`, plugin 0.1.2; `server/adapters/capture_nudge.py`; `internal/capture/nudge.go`) add `project="<git repo name>"` from the hook payload's `cwd`, and `capture_session` applies the project aliases. ChatGPT ones are expected (no folder). The one poller `codex-misc-001` is a Codex scheduled-task conversation with no repository, so `misc` is right. Side finding: two episodes are both named `codex-misc-001` (one poller, one live capture); not yet looked into.
+
+**Closed 2026-10-26** in v0.1.4 (the fix). Not done: retagging the 23 existing `misc` episodes (needs a proposed-project table and Todd's approval; reopen as a new item if wanted), and the duplicate `codex-misc-001` name. The hook change reaches sessions once the v0.1.4 `cmf` binary and cmf-capture plugin 0.1.2 are installed.
+
+### B20 — Saves that overflow the local model's context are lost (closed 2026-10-26)
+
+Found 2026-10-25 in the v0.1.4 end-to-end Codex test. Codex's `remember` was queued, then the background write `codex-context-memory-fabric-017` failed: extraction sent `unsloth/qwen3.5-122b-a10b` about 12,100 tokens (`n_keep: 12119 >= n_ctx: 8192`, a 400 `BadRequestError`). The prompt grows with the project's existing memories, so the self-test (one tiny memory) passes while real saves fail. Same limit as [B18](#b18--poller-consolidation-overflows-the-local-models-context), on the direct-save path. Stopgap (Todd, 2026-10-25): reload the Spark model at a 32k context.
+
+- [x] ~~**Fall over on context-length errors.**~~ Replaced (Todd, 2026-10-26) by fitting the prompt instead; see below. `server/providers/failover_llm.py` moves to the next ranked provider only on rate-limit, quota and auth errors; treat "prompt longer than the context" (OpenAI-compatible 400s naming `n_ctx` / `context length` / `maximum context`) as a reason to try the next one, and log which served it. With a single provider, fail as today.
+- [x] **Name it plainly.** Classify it in `server/core/tool_errors.py` so `memory_status` and Status's background-write results say "the memory was too long for the local model's context (load it with a larger context, or rank a second LLM)" instead of `unexpected`.
+- [x] **Keep the memory.** A save that fails this way stays retryable (journal row kept) rather than lost, so it can be re-run after the context is raised.
+- [ ] **Verify:** with an 8k model and a second ranked provider, a 12k save commits through the second; with one provider, `memory_status` names the cause.
+
+Built 2026-10-26 (v0.1.4, unreleased), in B18's style rather than by switching models. The prompt grew because Graphiti's `add_episode` puts the 10 most recent episodes, whole, into each extraction prompt; `remember` now passes `previous_episode_uuids` with only the newest that fit beside the new memory and Graphiti's own instructions (`context_episode_uuids`), and saves a memory too long even alone as parts (`<name>`, `<name>-p2`, ...). The overflow error is classified `prompt_too_long` with the loaded context in the message. `background_writes` keeps the `remember` arguments until the save commits; `cmf memory retry` / Status's **Retry failed saves** re-saves them (`python -m server.memory_writes retry`). Status warns when the local model's context is under 16K. Confirmed at 32k: `codex-context-memory-fabric-017` committed 2026-10-26 00:14 UTC.
+
+**Closed 2026-10-26** in v0.1.4: `codex-context-memory-fabric-017` committed at 32k; budgeted context, parts and retry covered by tests (`tests/test_context_budget.py`); `/health` shows `retryable_writes` and `llm_context`.
+
+### B21 — Codex keeps a stale OAuth login beside the token (closed 2026-10-26)
+
+Found 2026-10-25 in the v0.1.4 Codex test. After `cmf clients set codex` moved Codex to the local address plus `CMF_MCP_AUTH_TOKEN`, `codex mcp list` still shows Auth OAuth for `context_memory_fabric`: Codex keeps the login it stored from the public address (before the journal move) and tries it first on every connect. The server refuses it (401 on GET/POST `/mcp` and POST `/token`, 3 per connect), and then Codex gets in with the header. Calls work (a 32k `remember`, `codex-context-memory-fabric-017`, committed 2026-10-26 00:14 UTC), but each connect adds refused calls. The Codex row can turn yellow briefly until a successful call clears it. Today the only way to clear the stale login is `codex mcp logout context_memory_fabric`, and users shouldn't need shell commands.
+
+- [x] **Find where Codex stores it.** Check `~/.codex` (credentials file vs keychain, per `mcp_oauth_credentials_store`) for the `context_memory_fabric` entry, and whether removing it leaves other servers' logins untouched.
+- [x] **Clear it on set.** When `cmf clients set codex` writes the local token entry (and the Status "Use this computer's address" fix, which runs it), also remove Codex's stored OAuth login for that server name (back up first, like the config), or run `codex mcp logout <name>` when the `codex` CLI is on PATH. Say so in the plan output.
+- [x] **Don't count it as a lockout.** Optionally, in `checks.refusedSince`, ignore refusals immediately followed (same connect, within seconds) by a successful call from the same app, so the Codex row doesn't flicker yellow.
+- [ ] **Verify:** after `cmf clients set codex --yes`, `codex mcp list` shows bearer/header auth only, and a new Codex session adds no `refused_calls` for codex.
+
+Built 2026-10-26 (v0.1.4, unreleased). Codex stores it in the macOS Keychain (service `Codex MCP Credentials`, account `<server name>|<hash>`) or `.credentials.json` in the Codex home. `internal/clients/codexauth.go` lists matches from `security dump-keychain` (attributes only) and removes them with `security delete-generic-password` when `cmf clients set codex` writes or keeps the token entry; the file form is edited after a backup. The Keychain is touched only for the user's own Codex home (`$CODEX_HOME` or `~/.codex`). The server now also notes each app's latest accepted `/mcp` request, and Status ignores refusals the app got past.
+
+**Incident during the build (2026-10-26):** before that home-directory guard existed, `cmd/cmf`'s `TestClientsSetCreatesTokenUnderOAuth` ran `cmf clients set codex --yes` against the real `security` tool and removed Todd's real Codex Keychain entry for `context_memory_fabric`, the stale sign-in this item targets. It can't be restored (CMF never reads the secret); Codex keeps working with its token header. The guard plus a package `TestMain` fake now keep tests away from the real Keychain.
+
+**Closed 2026-10-26** in v0.1.4. The live check that a new Codex session adds no `refused_calls` hadn't run at closing (Codex hadn't connected since the restart); its stale Keychain sign-in was already removed (see the incident above).
+
 ### B06 historical queue snapshots (archived 2026-10-11)
 
 Historical measurements moved from the active B06 standing-operation item on 2026-10-11, when B06 remained open. B06 subsequently [closed 2026-10-12](#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12).

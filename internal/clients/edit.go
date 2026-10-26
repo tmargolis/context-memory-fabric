@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,10 +14,10 @@ import (
 	"github.com/tmargolis/context-memory-fabric/internal/jsonedit"
 )
 
-func entryFields(raw json.RawMessage) (map[string]string, []string) {
+func entryFields(raw json.RawMessage) (map[string]string, []string, string) {
 	var m map[string]any
 	if json.Unmarshal(raw, &m) != nil {
-		return nil, nil
+		return nil, nil, ""
 	}
 	fields := map[string]string{}
 	for k, v := range m {
@@ -32,7 +33,41 @@ func entryFields(raw json.RawMessage) (map[string]string, []string) {
 			}
 		}
 	}
-	return fields, args
+	env := map[string]string{}
+	if e, ok := m["env"].(map[string]any); ok {
+		for k, v := range e {
+			if s, ok := v.(string); ok {
+				env[k] = s
+			}
+		}
+	}
+	token := ""
+	if h, ok := m["headers"].(map[string]any); ok {
+		for k, v := range h {
+			if s, ok := v.(string); ok && strings.EqualFold(k, "Authorization") {
+				token = bearer(s)
+			}
+		}
+	}
+	// mcp-remote: --header "Authorization:Bearer ${CMF_MCP_AUTH_TOKEN}", the
+	// variable set in the entry's env.
+	for i, a := range args {
+		if a == "--header" && i+1 < len(args) {
+			if k, v, ok := strings.Cut(args[i+1], ":"); ok && strings.EqualFold(strings.TrimSpace(k), "Authorization") {
+				token = bearer(os.Expand(strings.TrimSpace(v), func(k string) string { return env[k] }))
+			}
+		}
+	}
+	return fields, args, token
+}
+
+// bearer is the token in an Authorization value ("Bearer <token>").
+func bearer(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > 7 && strings.EqualFold(v[:7], "bearer ") {
+		return strings.TrimSpace(v[7:])
+	}
+	return ""
 }
 
 // entry is the JSON entry an app gets for t.
@@ -78,9 +113,11 @@ type Change struct {
 	New     []byte
 	Summary []string // one line per entry added, kept or removed
 	Perm    os.FileMode
+	// Codex sign-ins to remove once the token entry is written (B21).
+	ForgetLogins []CodexLogin
 }
 
-func (c *Change) Empty() bool { return bytes.Equal(c.Old, c.New) }
+func (c *Change) Empty() bool { return bytes.Equal(c.Old, c.New) && len(c.ForgetLogins) == 0 }
 
 // Plan makes the change that leaves s with exactly one CMF entry reaching t
 // (want) or none (!want). A correct entry that is already there, such as one
@@ -141,8 +178,21 @@ func Plan(s State, t Target, want bool) (*Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.Empty() {
+	if bytes.Equal(c.Old, c.New) {
 		c.Summary = nil
+	}
+	// A Codex entry that signs in with the local token: any OAuth sign-in
+	// Codex still holds for a CMF server name is tried first and refused (B21).
+	if s.App.Format == TOMLCodex && want && t.Token != "" {
+		names := []string{nameFor(s.App)}
+		for _, e := range s.CMF() {
+			names = append(names, e.Name)
+		}
+		c.ForgetLogins = CodexLogins(filepath.Dir(s.Path), names)
+		for _, l := range c.ForgetLogins {
+			name, _, _ := strings.Cut(l.Account, "|")
+			c.Summary = append(c.Summary, fmt.Sprintf("remove Codex's old sign-in for %q (it's tried before the token and refused)", name))
+		}
 	}
 	return c, nil
 }
@@ -158,12 +208,8 @@ func (s State) entry(name string) Entry {
 
 func describe(e Entry) string {
 	switch {
-	case e.Kind == "stdio":
-		return "starts its own CMF server"
-	case e.Kind == "cmf-bridge" && !e.Correct:
-		return "runs a cmf bridge that isn't there any more"
-	case e.URL != "" && !e.Correct:
-		return "points at " + e.URL + ", not this install"
+	case e.Problem != "":
+		return e.Problem
 	case e.URL != "":
 		return "duplicate of " + e.URL
 	}
@@ -227,6 +273,7 @@ func codexTable(header string) (name string, own bool, ok bool) {
 }
 
 var tomlString = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*=\s*"((?:[^"\\]|\\.)*)"`)
+var tomlInlineAuth = regexp.MustCompile(`^\s*http_headers\s*=\s*\{.*\bAuthorization\s*=\s*"((?:[^"\\]|\\.)*)"`)
 var tomlArray = regexp.MustCompile(`^\s*args\s*=\s*\[(.*)\]`)
 
 func codexEntries(text string, t Target) []Entry {
@@ -234,11 +281,16 @@ func codexEntries(text string, t Target) []Entry {
 	var cur string
 	fields := map[string]map[string]string{}
 	args := map[string][]string{}
+	tokens := map[string]string{}
 	order := []string{}
+	headers := "" // the server whose [mcp_servers.<name>.http_headers] table this is
 	for _, line := range strings.Split(text, "\n") {
 		if m := tomlHeader.FindStringSubmatch(line); m != nil {
 			name, own, ok := codexTable(m[1])
-			cur = ""
+			cur, headers = "", ""
+			if ok && !own && strings.HasSuffix(strings.TrimSpace(m[1]), ".http_headers") {
+				headers = name
+			}
 			if ok && own {
 				cur = name
 				if _, seen := fields[name]; !seen {
@@ -248,8 +300,19 @@ func codexEntries(text string, t Target) []Entry {
 			}
 			continue
 		}
+		if headers != "" {
+			if m := tomlString.FindStringSubmatch(line); m != nil && strings.EqualFold(m[1], "Authorization") {
+				v, _ := strconv.Unquote(`"` + m[2] + `"`)
+				tokens[headers] = bearer(v)
+			}
+			continue
+		}
 		if cur == "" {
 			continue
+		}
+		if m := tomlInlineAuth.FindStringSubmatch(line); m != nil {
+			v, _ := strconv.Unquote(`"` + m[1] + `"`)
+			tokens[cur] = bearer(v)
 		}
 		if m := tomlString.FindStringSubmatch(line); m != nil {
 			fields[cur][m[1]], _ = strconv.Unquote(`"` + m[2] + `"`)
@@ -261,7 +324,7 @@ func codexEntries(text string, t Target) []Entry {
 		}
 	}
 	for _, name := range order {
-		out = append(out, classify(name, fields[name], args[name], t))
+		out = append(out, classify(name, fields[name], args[name], tokens[name], t))
 	}
 	return out
 }
@@ -311,6 +374,9 @@ func (c *Change) Write(b *home.Backup, t Target, env Env, want bool) error {
 	if c.Empty() {
 		return nil
 	}
+	if bytes.Equal(c.Old, c.New) {
+		return forgetCodexLogins(c.ForgetLogins, b)
+	}
 	now, err := os.ReadFile(c.Path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -333,5 +399,5 @@ func (c *Change) Write(b *home.Backup, t Target, env Env, want bool) error {
 	case !want && len(cmf) > 0:
 		return fmt.Errorf("%s still has a CMF entry after removing it", c.Path)
 	}
-	return nil
+	return forgetCodexLogins(c.ForgetLogins, b)
 }

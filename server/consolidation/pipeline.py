@@ -41,6 +41,7 @@ from collections import defaultdict
 from datetime import datetime
 import logging
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -50,7 +51,9 @@ from server.consolidation.triage import assess_window
 from server.consolidation.windowing import Windower, default_windower, group_by_conversation
 from server.core.models import SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError
+from server.core.tool_errors import is_prompt_too_long
 from server.journal.store import SqliteEventStore
+from server.providers.context_limit import context_tokens
 from server.policies.protocols import (
     ExtractionCategory,
     ExtractionPolicy,
@@ -292,6 +295,24 @@ def _retrieve_relevant_wiki_docs(
         return []
 
 
+def _context_grew(last_error: Optional[str]) -> bool:
+    """True when the model's context is now larger than the one an oversize window failed at."""
+    m = re.match(r"context=(\d+):", last_error or "")
+    return bool(m) and context_tokens() > int(m.group(1))
+
+
+def _evaluate_fitting(policy: WindowedExtractionPolicy, events: list[SourceEvent], context: PolicyContext) -> list:
+    """policy.evaluate_window, split in half once when the window is too long for the model (B18)."""
+    try:
+        return policy.evaluate_window(events, context)
+    except Exception as exc:  # noqa: BLE001 - only a too-long prompt is handled here
+        if not is_prompt_too_long(exc) or len(events) < 2:
+            raise
+        mid = len(events) // 2
+        logger.info("Window of %d events is too long for the model's context; extracting it in two halves.", len(events))
+        return policy.evaluate_window(events[:mid], context) + policy.evaluate_window(events[mid:], context)
+
+
 def run_reasoning_consolidation(
     journal_store: SqliteEventStore,
     consolidation_store: ConsolidationStore,
@@ -409,6 +430,8 @@ def run_reasoning_consolidation(
             "by_approval_state": defaultdict(int),
             "quota_exhausted": False,
             "stopped_at_max_windows": False,
+            "windows_oversize": 0,
+            "windows_skipped_oversize": 0,
             "errors": [],
         }
 
@@ -440,6 +463,9 @@ def run_reasoning_consolidation(
                         continue
                     if existing["status"] == "triaged_out" and triage:
                         stats["windows_skipped_done"] += 1
+                        continue
+                    if existing["status"] == "oversize" and not _context_grew(existing["last_error"]):
+                        stats["windows_skipped_oversize"] += 1
                         continue
 
                 if triage:
@@ -507,13 +533,20 @@ def run_reasoning_consolidation(
                 )
                 consolidation_store.mark_running(job_id, primary, policy.name, policy.version)
                 try:
-                    episodes = policy.evaluate_window(list(window.events), context)
+                    episodes = _evaluate_fitting(policy, list(window.events), context)
                 except GeminiQuotaExhaustedError:
                     # Leave the job 'running' so it retries next pass; write nothing.
                     stats["quota_exhausted"] = True
                     _finalize(stats)
                     return stats
                 except Exception as exc:  # noqa: BLE001 — record any policy failure, keep going
+                    if is_prompt_too_long(exc):
+                        # Too long even split in half: record once and skip it on
+                        # later passes rather than failing every cycle (B18).
+                        consolidation_store.record_oversize(job_id, context_tokens(), str(exc))
+                        stats["windows_oversize"] += 1
+                        logger.warning("Window %s is too long for the model's context even split; skipping it.", win_id)
+                        continue
                     consolidation_store.record_failure(job_id, str(exc))
                     stats["windows_failed"] += 1
                     stats["errors"].append(str(exc))

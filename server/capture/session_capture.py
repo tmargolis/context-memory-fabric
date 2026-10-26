@@ -292,6 +292,11 @@ def capture_session(
     uses the default paths, same convention PromotionStore/ConsolidationStore/
     create_doc_proposal already follow.
     """
+    # The same aliases the pollers apply (B19), so a folder name the Stop hook
+    # passes lands on the project's canonical slug.
+    from server.consolidation.project_aliases import resolve_project
+
+    project = resolve_project(project.strip()) if project and project.strip() else None
     results: list[SessionItemResult] = []
     with ConsolidationStore(db_path=db_path) as consolidation_store:
         for item in items:

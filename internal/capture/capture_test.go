@@ -223,3 +223,25 @@ func TestBlock(t *testing.T) {
 		t.Fatal("a broken fence must not be rewritten")
 	}
 }
+
+func TestNudgeNamesTheRepositoryAsProject(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "Context Memory Fabric")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "cmd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ProjectHint(filepath.Join(repo, "cmd")); got != "context-memory-fabric" {
+		t.Fatal(got)
+	}
+	if got := ProjectHint(t.TempDir()); got != "" {
+		t.Fatal(got)
+	}
+	if got := render("codex", true, "cmf")["reason"]; got != Reason+` If you call it, pass project="cmf".` {
+		t.Fatal(got)
+	}
+	if got := Render("codex", true)["reason"]; got != Reason {
+		t.Fatal(got)
+	}
+}
