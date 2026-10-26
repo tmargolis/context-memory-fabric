@@ -198,7 +198,7 @@ func TestAppRows(t *testing.T) {
 	}
 	r := byID(Evaluate(f))
 	code := r["app-claude-code"]
-	for _, want := range []string{"connection  local entry in /u/.claude.json", "hook        the cmf-capture plugin (Python)", "poller      /u/.claude/projects · last transcript 3 min ago"} {
+	for _, want := range []string{"connection  local entry in /u/.claude.json", "hook        the cmf-capture plugin", "poller      /u/.claude/projects · last transcript 3 min ago"} {
 		if code.Level != OK || !strings.Contains(code.Detail, want) {
 			t.Fatalf("%q in %+v", want, code)
 		}
@@ -464,5 +464,25 @@ func TestCmfAndServerVersionsMustMatch(t *testing.T) {
 	f.CmfVersion = "0.1.2"
 	if r := byID(Evaluate(f))["mode"]; r.Level != Warn || !strings.Contains(r.Detail, "this cmf is 0.1.2 but the server is 0.1.4") {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestOutdatedHookCmf(t *testing.T) {
+	f := healthy()
+	f.Self = "/Applications/cmf-new"
+	f.Health.Version = "0.1.5"
+	f.Clients = []clients.State{{ID: "codex", Label: "Codex", Path: "/u/.codex/config.toml", Installed: true, Exists: true,
+		Entries: []clients.Entry{{Name: "context_memory_fabric", URL: "http://127.0.0.1:8000/mcp", CMF: true, Correct: true, Kind: "url"}}}}
+	f.Capture = []capture.SourceState{{Source: capture.Source{ID: "codex", Harness: "codex"}, Present: true, Hook: "cmf",
+		HookBinary: "/Applications/cmf", HookVersion: "0.1.3"}}
+	c := byID(Evaluate(f))["app-codex"]
+	if c.Level != Warn || !strings.HasPrefix(c.Detail, "the hook runs cmf 0.1.3 but the server is 0.1.5") || c.Fix == nil ||
+		c.Fix.Steps[0].Show != "/Applications/cmf-new capture hook update --yes" ||
+		!strings.Contains(c.Detail, "hook        cmf hook stop (cmf 0.1.3 at /Applications/cmf)") {
+		t.Fatalf("%+v %+v", c, c.Fix)
+	}
+	f.Capture[0].HookVersion = "0.1.5"
+	if c := byID(Evaluate(f))["app-codex"]; c.Level != OK || c.Fix != nil {
+		t.Fatalf("%+v", c)
 	}
 }

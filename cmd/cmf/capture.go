@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/tmargolis/context-memory-fabric/internal/capture"
+	"github.com/tmargolis/context-memory-fabric/internal/checks"
 	"github.com/tmargolis/context-memory-fabric/internal/home"
 )
 
@@ -149,8 +151,11 @@ func runCapture(args []string, out io.Writer) error {
 		return nil
 
 	case "hook":
+		if len(rest) == 1 && rest[0] == "update" {
+			return updateHookBinaries(h, user, env, dryRun, yes, out)
+		}
 		if len(rest) < 2 || (rest[0] != "install" && rest[0] != "remove") {
-			return fmt.Errorf("usage: cmf capture hook install|remove <%s ...> [--dry-run] [--yes]", strings.Join(capture.Harnesses, "|"))
+			return fmt.Errorf("usage: cmf capture hook install|remove <%s ...> [--dry-run] [--yes], or cmf capture hook update", strings.Join(capture.Harnesses, "|"))
 		}
 		var changes []*capture.HookChange
 		for _, harness := range rest[1:] {
@@ -253,4 +258,82 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// updateHookBinaries copies this cmf over the one an app's checkpoint hook
+// runs when that one's version differs from the server's (v0.1.5): the
+// hook keeps calling the same path, now the matching version. Only a
+// released cmf of the server's version is copied; the old file is backed up.
+func updateHookBinaries(h home.Home, user string, env *home.Env, dryRun, yes bool, out io.Writer) error {
+	server := serverVersion(context.Background(), env)
+	if server == "" {
+		return errors.New("can't read the server's version (is the stack running?); nothing was changed")
+	}
+	if strings.HasSuffix(version, "-dev") || checks.BaseVersion(version) != checks.BaseVersion(server) {
+		return fmt.Errorf("this cmf is %s and the server is %s: run the update from the released cmf %s (it copies itself), nothing was changed", version, server, server)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	self, _ = filepath.EvalSymlinks(self)
+	var targets []string
+	for _, st := range capture.Report(user, env, now()) {
+		if st.Hook != "cmf" || st.HookBinary == "" || slices.Contains(targets, st.HookBinary) {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(st.HookBinary); err == nil && real == self {
+			continue
+		}
+		if st.HookVersion != "" && checks.BaseVersion(st.HookVersion) == checks.BaseVersion(server) {
+			continue
+		}
+		have := st.HookVersion
+		if have == "" {
+			have = "missing"
+		}
+		fmt.Fprintf(out, "%s: replace %s (cmf %s) with this cmf %s (backup kept)\n", st.Label, st.HookBinary, have, version)
+		targets = append(targets, st.HookBinary)
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(out, "Every checkpoint hook already runs cmf "+server+".")
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintln(out, "Dry run: nothing was changed.")
+		return nil
+	}
+	if !yes && !confirm(out, "Apply?") {
+		return errors.New("cancelled; nothing was changed")
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		return err
+	}
+	backup, err := h.NewBackup(now())
+	if err != nil {
+		return err
+	}
+	backup.SaveNote("cmf capture hook update")
+	for _, t := range targets {
+		if err := backup.Save(t); err != nil {
+			return fmt.Errorf("backing up %s: %w", t, err)
+		}
+		if err := home.WriteFile(t, data, 0o755); err != nil {
+			return fmt.Errorf("writing %s: %w", t, err)
+		}
+		if got := capture.BinaryVersion(t); checks.BaseVersion(got) != checks.BaseVersion(server) {
+			return fmt.Errorf("%s reports %q after the copy; restore it with `cmf restore %s`", t, got, backup.Stamp)
+		}
+	}
+	fmt.Fprintf(out, "Done. The hooks run cmf %s now. Undo with: cmf restore %s\n", version, backup.Stamp)
+	return nil
+}
+
+// serverVersion is the running server's version from /health, "" if it can't be read.
+func serverVersion(ctx context.Context, env *home.Env) string {
+	if h := serverHealth(ctx, env); h != nil {
+		return h.Version
+	}
+	return ""
 }

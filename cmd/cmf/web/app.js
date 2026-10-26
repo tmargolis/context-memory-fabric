@@ -313,6 +313,47 @@ function captureState(source) {
   return (features.capture || []).find((s) => s.id === source);
 }
 
+// Where each app takes custom instructions (v0.1.5): CMF's server
+// instructions alone rarely get an agent to use and save memory.
+const instructionsWhere = {
+  "connector": "Claude (Chat, Cowork, claude.ai): Settings → Account → Instructions for Claude. One place covers every Claude app signed in to the account.",
+  "claude-code": "Claude Code and the Code tab: your global ~/.claude/CLAUDE.md (or a project's CLAUDE.md).",
+  "codex": "Codex: Settings → Personalization → Codex instructions (it edits ~/.codex/AGENTS.md).",
+  "antigravity": "Antigravity: its global rules (Customizations → Rules).",
+  "cursor": "Cursor: Settings → Rules → User Rules.",
+  "vscode": "VS Code: Copilot's custom instructions (settings, or .github/copilot-instructions.md).",
+};
+
+function instructionsNote(id) {
+  const where = instructionsWhere[id];
+  if (!where || !features.instructions) return null;
+  const copy = el("button", { class: "small", onclick: async (ev) => {
+    try { await navigator.clipboard.writeText(features.instructions); ev.target.textContent = "Copied"; }
+    catch { ev.target.textContent = "Copy failed: open the doc"; }
+  } }, "Copy instructions");
+  return el("div", { class: "card-desc note" },
+    el("strong", {}, "Instructions. "), "Paste CMF's instructions so the app looks things up in CMF and saves to it. ", where, " ",
+    copy, " ", el("a", { href: features.instructions_doc, target: "_blank", rel: "noopener" }, "What it says ↗"));
+}
+
+// The app's capture: its checkpoint hook (and what it runs), the poller,
+// and what's wrong with the hook, with Update when cmf can fix it.
+function captureNote(st, title) {
+  if (!st || !st.present) return null;
+  const poller = st.poller ? "the poller reads " + (st.folder || st.dirs[0]) : "the poller doesn't read it";
+  const lines = [el("div", {}, (title ? title + ": " : "") + (st.hook_line || "checkpoint hook: none") + " · " + poller + ".")];
+  if (st.hook_problem) {
+    lines.push(el("div", { class: "cost" }, ...withCode(st.hook_problem), " ",
+      st.hook_updatable ? el("button", { class: "small", onclick: async () => {
+        await runFix({ id: "app-" + appForSource[st.id] }, { label: "Update the hook's cmf", steps: [{ command: "cmf capture hook update --yes" }] });
+        loadFeatures();
+      } }, "Update") : null));
+  }
+  return el("div", { class: "card-desc note" }, el("strong", {}, "Capture. "), ...lines);
+}
+
+const appForSource = { claude_code: "claude-code", claude_cowork: "claude-desktop", codex: "codex", antigravity: "antigravity" };
+
 // The recommended way for Claude Desktop (Chat, Cowork, Code tab) and Claude
 // Code to reach CMF: one connector on the claude.ai account. No switch: it's
 // added in claude.ai, and the poller always reads those apps' transcripts.
@@ -332,7 +373,8 @@ function connectorCard() {
       "Then in claude.ai: Settings → Connectors → Add custom connector, URL ", el("code", {}, url || "https://<your address>/mcp"),
       ". CMF's consent page asks for ", el("code", {}, "CMF_MCP_OAUTH_PASSWORD"), " from ~/.cmf/.env. ",
       el("a", { href: connectorDoc, target: "_blank", rel: "noopener" }, "Step by step ↗")),
-    cowork && cowork.present ? el("div", { class: "card-desc note" }, "Cowork's sessions: the poller reads " + (cowork.folder || cowork.dirs[0]) + ".") : null);
+    instructionsNote("connector"),
+    captureNote(cowork, "Cowork"));
 }
 
 function clientCard(c) {
@@ -352,7 +394,8 @@ function clientCard(c) {
         el("span"))),
     connectorApps.has(c.id) ? el("div", { class: "card-desc note" },
       "The switch writes a local entry, for when you don't use the claude.ai connector above. With the connector, leave it off, or CMF's tools appear twice.") : null,
-    src && src.present ? el("div", { class: "card-desc note" }, "Transcripts: the poller reads " + (src.folder || src.dirs[0]) + ".") : null);
+    c.installed ? instructionsNote(c.id) : null,
+    captureNote(src));
 }
 
 function request() {

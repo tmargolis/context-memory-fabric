@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	contextmemoryfabric "github.com/tmargolis/context-memory-fabric"
 	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/checks"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
@@ -331,17 +332,28 @@ func (s *uiServer) status(r *http.Request) (any, error) {
 // connectorSeen: Claude Desktop called CMF in the last day with no local
 // entry, so a claude.ai connector reaches it (it covers every Claude app
 // signed in to that account).
-func connectorSeen(ctx context.Context, env *home.Env) bool {
+// instructionsURL is the instruction block's doc, for the Features cards.
+const instructionsURL = "https://github.com/tmargolis/context-memory-fabric/blob/main/docs/INSTRUCTIONS-FOR-AGENTS.md"
+
+// serverHealth is the local server's /health, or nil.
+func serverHealth(ctx context.Context, env *home.Env) *probe.Health {
 	port := 8000
 	if p, err := strconv.Atoi(env.Get("CMF_MCP_PORT")); err == nil && p > 0 {
 		port = p
 	}
 	body, err := getHealth(ctx, fmt.Sprintf("http://127.0.0.1:%d/health", port))
 	if err != nil {
-		return false
+		return nil
 	}
 	var h probe.Health
 	if json.Unmarshal(body, &h) != nil {
+		return nil
+	}
+	return &h
+}
+
+func connectorSeen(h *probe.Health) bool {
+	if h == nil {
 		return false
 	}
 	for _, c := range h.ClientsSeen {
@@ -366,12 +378,22 @@ func (s *uiServer) features(r *http.Request) (any, error) {
 		return nil, err
 	}
 	user, _ := userHome()
+	health := serverHealth(r.Context(), env)
+	server := ""
+	if health != nil {
+		server = health.Version
+	}
+	states := capture.Report(user, env, now())
+	for i := range states {
+		capture.DescribeHook(&states[i], server, contextmemoryfabric.PluginVersion())
+	}
 	return map[string]any{"groups": m.Groups, "features": m.States(env),
 		"clients": clients.InspectAll(clientEnv(), clientTarget(env)),
-		// Each transcript source, for the AI app cards' capture switches,
-		// and the public address a claude.ai connector would use.
-		"capture": capture.Report(user, env, now()), "public_url": env.Get("CMF_MCP_ISSUER_URL"),
-		"connector": connectorSeen(r.Context(), env)}, nil
+		// Each transcript source with its checkpoint hook, for the AI app
+		// cards, and the public address a claude.ai connector would use.
+		"capture": states, "public_url": env.Get("CMF_MCP_ISSUER_URL"),
+		"connector":    connectorSeen(health),
+		"instructions": contextmemoryfabric.AgentInstructions(), "instructions_doc": instructionsURL}, nil
 }
 
 func readRequest(r *http.Request) (*features.Request, error) {

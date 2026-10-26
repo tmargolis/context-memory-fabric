@@ -20,7 +20,7 @@ In Claude Code (the CLI or the desktop app's Code tab):
 /plugin install cmf-capture@context-memory-fabric
 ```
 
-In Cowork, add the same marketplace (`tmargolis/context-memory-fabric`) under Customize → Plugins and install **cmf-capture**.
+In Cowork (Claude Desktop), two steps: Customize → Plugins → Add → Add marketplace, enter `tmargolis/context-memory-fabric`; then find **cmf-capture** under Plugins → Discover and install it. Adding the marketplace alone installs nothing.
 
 If you installed CMF's local Stop hook earlier (`capture_nudge install --harness claude_code`), remove it once the plugin is on, or you'll get two checkpoints:
 

@@ -182,6 +182,7 @@ def test_fallback_key_missing_is_a_warning(monkeypatch):
 def test_provider_tests_cover_the_chain(monkeypatch):
     monkeypatch.setenv("CMF_LLM_PROVIDERS", "local,anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
+    monkeypatch.setenv("CMF_CAPTURE_LLM_PROVIDER", "local")  # an older install's separate capture provider
     from types import SimpleNamespace
 
     tests = startup_check.provider_tests(lambda u, h: SimpleNamespace(status_code=200, json=lambda: {"data": []}))

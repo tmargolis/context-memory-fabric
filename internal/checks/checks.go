@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	contextmemoryfabric "github.com/tmargolis/context-memory-fabric"
 	"github.com/tmargolis/context-memory-fabric/internal/capture"
 	"github.com/tmargolis/context-memory-fabric/internal/clients"
 	"github.com/tmargolis/context-memory-fabric/internal/mode"
@@ -723,11 +724,21 @@ func checkApps(f probe.Facts) []Result {
 			lines[0] = "connection  the claude.ai connector (its calls show under Claude Desktop)"
 			connected = true
 		}
+		hookProblem, hookUpdatable := "", false
 		if s, ok := sourceByID[a.Source]; ok {
 			installed = installed || s.Present
+			serverVersion := ""
+			if f.Health != nil {
+				serverVersion = f.Health.Version
+			}
+			capture.DescribeHook(&s, serverVersion, contextmemoryfabric.PluginVersion())
+			hookProblem, hookUpdatable = s.HookProblem, s.HookUpdatable
 			hook := hookNames[s.Hook]
 			if hook == "" {
 				hook = "none"
+			}
+			if strings.HasPrefix(s.HookLine, "checkpoint hook: ") && s.Hook != "" {
+				hook = strings.TrimPrefix(s.HookLine, "checkpoint hook: ")
 			}
 			if s.Worker {
 				hook += "; plus an older host worker hook (the poller does its job)"
@@ -796,6 +807,20 @@ func checkApps(f probe.Facts) []Result {
 		r.Level = NA // installed, not connected
 		if connected {
 			r.Level = OK
+			if hookProblem != "" {
+				// Connected, but its checkpoints run an old cmf or plugin (v0.1.5).
+				r.Level, r.Detail = Warn, hookProblem+"\n"+r.Detail
+				if hookUpdatable {
+					self := f.Self
+					if self == "" {
+						self = "cmf"
+					}
+					r.Fix = &Fix{Label: "Update the hook's cmf", Steps: []Step{
+						step("copy this cmf over the older one the checkpoint hook runs (backup kept)",
+							run.Cmd{Name: self, Args: []string{"capture", "hook", "update", "--yes"}}),
+					}}
+				}
+			}
 		} else {
 			r.Detail = "not connected\n" + r.Detail
 		}

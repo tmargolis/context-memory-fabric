@@ -36,6 +36,7 @@ type Hooks struct {
 	Harness string `json:"harness"`
 	Path    string `json:"path"`
 	Nudge   string `json:"nudge,omitempty"` // "plugin", "cmf" (this binary), "python" or ""
+	Binary  string `json:"binary,omitempty"` // the program a "cmf" nudge runs
 	Worker  bool   `json:"worker,omitempty"`
 	Err     string `json:"error,omitempty"`
 }
@@ -99,7 +100,7 @@ func ReadHooks(harness, userHome string) Hooks {
 	for _, c := range commands(harness, root, "Stop") {
 		if strings.Contains(c, Marker) {
 			if strings.Contains(c, " hook stop ") {
-				h.Nudge = "cmf"
+				h.Nudge, h.Binary = "cmf", hookBinary(c)
 			} else {
 				h.Nudge = "python"
 			}

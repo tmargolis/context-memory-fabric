@@ -43,6 +43,14 @@ type SourceState struct {
 	Week     int64     `json:"week_bytes"`            // transcript bytes written in the last 7 days
 	DailyTok int64     `json:"daily_tokens"`          // ≈ Week/4/7
 	Note     string    `json:"note,omitempty"`
+	// The checkpoint hook in detail (v0.1.5): the cmf it runs and its
+	// version, or the plugin's version; DescribeHook fills the last three.
+	HookBinary    string `json:"hook_binary,omitempty"`
+	HookVersion   string `json:"hook_version,omitempty"`
+	PluginVersion string `json:"plugin_version,omitempty"`
+	HookLine      string `json:"hook_line,omitempty"`
+	HookProblem   string `json:"hook_problem,omitempty"`
+	HookUpdatable bool   `json:"hook_updatable,omitempty"`
 }
 
 // PollerSources is the poller's set: COMPOSE_PROFILES must include capture;
@@ -152,10 +160,20 @@ func Report(userHome string, env *home.Env, now time.Time) []SourceState {
 		st.Poller = poller[s.ID] && st.Folder != ""
 		st.DailyTok = st.Week / 4 / 7
 		if h, ok := hooks[s.Harness]; ok {
-			st.Hook, st.Worker = h.Nudge, h.Worker
+			st.Hook, st.Worker, st.HookBinary = h.Nudge, h.Worker, h.Binary
 		}
-		if s.ID == "claude_cowork" && st.Hook != "plugin" {
-			st.Hook = "" // only the plugin reaches Cowork sessions
+		if s.ID == "claude_cowork" {
+			// Cowork has its own plugin list; Claude Code's plugin isn't in it.
+			st.Hook, st.Worker, st.HookBinary = "", false, ""
+			if coworkHasPlugin(userHome) {
+				st.Hook = "plugin"
+			}
+		}
+		if st.Hook == "plugin" && s.ID == "claude_code" {
+			st.PluginVersion = claudePluginVersion(userHome)
+		}
+		if st.Hook == "cmf" && st.HookBinary != "" {
+			st.HookVersion = BinaryVersion(st.HookBinary)
 		}
 		st.Poller = st.Poller && st.Present
 		unmounted := poller[s.ID] && st.Folder == "" && st.Present

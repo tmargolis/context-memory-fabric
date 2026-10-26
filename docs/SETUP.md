@@ -137,7 +137,13 @@ The path from nothing to reviewed and recalled memory, with your own keys and no
 
 1. **Install with [QUICKSTART.md](QUICKSTART.md)**, choosing your providers, keys and notes folder on the Features page.
 2. **Connect your AI apps** (Features → AI apps, or [by hand](#connecting-your-mcp-client)) and [check that it works](#check-that-it-works).
-3. **Use it.** The server's own instructions tell connected apps when to use CMF, so you don't have to say "CMF" in your prompts. For apps that ignore them, paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into the app's custom instructions.
+3. **Add CMF's instructions to each app.** Paste the block from [INSTRUCTIONS-FOR-AGENTS.md](INSTRUCTIONS-FOR-AGENTS.md) into each app's custom instructions. Every app card on the Features page has a **Copy instructions** button and says where it goes:
+   - **Claude (Chat, Cowork, claude.ai):** Settings → Account → Instructions for Claude. One place covers every Claude app signed in to the account.
+   - **Claude Code and the Code tab:** `~/.claude/CLAUDE.md` (or a project's `CLAUDE.md`).
+   - **Codex:** Settings → Personalization → Codex instructions (it edits `~/.codex/AGENTS.md`).
+   - **Cursor:** Settings → Rules → User Rules. **Antigravity:** its global rules.
+
+   CMF also sends short server instructions to every connected app, but apps follow those unevenly; with the block, an app looks things up in CMF first and knows when to save. You don't have to say "CMF" in your prompts.
 4. **Review what was captured** ([Reviewing What Was Captured](#reviewing-what-was-captured)), by hand or with a [nightly review](NIGHTLY-REVIEW.md) that recommends verdicts for you to confirm. Nothing reaches memory or your wiki until you approve it.
 
 Automatic capture of your coding sessions is described under [Background Capture](#background-capture).
@@ -190,6 +196,19 @@ More clients (Antigravity, Codex, ChatGPT, Gemini): [CLIENTS.md](CLIENTS.md).
 CMF can capture your coding sessions automatically, with Stop-hook **capture checkpoints** (the agent saves what was decided) and the **transcript poller** (CMF reads Claude Code, Codex, Cowork and Antigravity transcripts).
 
 With Context Memory Fabric management both run without Python on your computer: the poller is the stack's `cmf-poller` container (always on; it costs the first LLM provider per captured session, $0 on a local model), and `cmf capture hook install claude_code codex antigravity` adds the checkpoint hooks, which run `cmf hook stop`. `cmf capture` shows how each app is captured, what it costs, and how much prompt context CMF adds per session.
+
+**Checkpoint hooks or the poller?** They capture differently, and you can run both:
+- A **checkpoint hook** asks the agent, every few turns, to save what was decided or learned (`capture_session`). Captures are short and on point, cost a few hundred tokens each, and carry the project (the session's git repository). But the agent decides what to save, and sometimes saves nothing.
+- The **poller** reads the whole transcript later and extracts on CMF's own LLM ($0 on a local model). It catches what the agent skipped, at the cost of model time and more to review. Claude Desktop's Chat tab writes no transcripts, so there only the connector and the instructions apply.
+
+Running both captures the same session twice on purpose; the nightly review sorts out the overlap. A sensible start is both, then turning the poller off for apps whose checkpoints prove enough. Each Features card and Status row shows the app's hook, what it runs and whether it's current: a hook that runs an older `cmf` gets an **Update** button (`cmf capture hook update`, backup kept), and an older cmf-capture plugin says how to update it in Claude Code (`/plugin`). 
+
+**Cowork needs the cmf-capture plugin.** Cowork runs its sessions in the cloud, so almost none of their transcript reaches your computer and the poller sees little of them; the connector alone only lets Cowork *use* CMF. The plugin's checkpoint hook runs inside each Cowork session. Cowork keeps its own plugin list, separate from Claude Code's, and CMF can't add to it for you: in Claude Desktop:
+
+1. **Customize → Plugins → Add → Add marketplace**, and enter `tmargolis/context-memory-fabric`.
+2. Adding the marketplace doesn't install anything by itself: find **cmf-capture** under **Plugins → Discover** and install it.
+
+Once Cowork lists it, the warning on the connector card and the Claude Desktop Status row clears.
 
 ## Remote access (ChatGPT, Gemini, claude.ai connectors)
 
