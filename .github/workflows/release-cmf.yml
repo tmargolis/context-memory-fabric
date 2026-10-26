@@ -97,4 +97,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sed "s/{{VERSION}}/${{ needs.check.outputs.version }}/g" deploy/RELEASE-NOTES.md > notes.md
-          gh release create "${GITHUB_REF_NAME}" dist/* --title "CMF ${{ needs.check.outputs.version }}" --notes-file notes.md --prerelease
+          # 0.x releases were previews; from 1.0.0 a release is a full one.
+          pre=""
+          case "${{ needs.check.outputs.version }}" in 0.*) pre="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" dist/* --title "CMF ${{ needs.check.outputs.version }}" --notes-file notes.md $pre

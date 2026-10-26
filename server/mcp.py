@@ -156,7 +156,7 @@ if _oauth_issuer_url and _oauth_password:
 # Initialize MCP Server with instructions
 app = MCPServer(
     name="context-memory-fabric",
-    version="0.1.9",
+    version="1.0.0",
     instructions=SERVER_INSTRUCTIONS,
     auth_server_provider=oauth_provider,
     auth=_auth_settings,

@@ -445,12 +445,18 @@ function clientCard(c) {
   return el("div", { class: "card" + (c.id in clientEdits ? " changed" : ""), id: "client-" + c.id },
     el("div", { class: "card-head" },
       el("div", { class: "text" }, el("div", { class: "card-title" }, c.label), el("div", { class: "card-desc" }, state + (c.exists ? " · " + c.path : ""))),
-      el("label", { class: "switch", title: "A CMF entry in this app's own config" },
-        el("input", { type: "checkbox", checked: want, disabled: !c.installed || !!c.error, "aria-label": c.label + ": CMF entry",
+      el("label", { class: "switch", title: viaConnector ? "Covered by the claude.ai connector: a local entry would add CMF's tools a second time" : "A CMF entry in this app's own config" },
+        // Covered by the connector with no local entry: turning the switch on
+        // could only duplicate CMF's tools, so it's off and disabled. With a
+        // local entry it stays usable, to remove that entry.
+        el("input", { type: "checkbox", checked: want, disabled: !c.installed || !!c.error || viaConnector, "aria-label": c.label + ": CMF entry",
           onchange: (ev) => { if (ev.target.checked === has && healthy) delete clientEdits[c.id]; else clientEdits[c.id] = ev.target.checked; renderFeatures(); } }),
         el("span"))),
-    connectorApps.has(c.id) ? el("div", { class: "card-desc note" },
-      "The switch writes a local entry, for when you don't use the claude.ai connector above. With the connector, leave it off, or CMF's tools appear twice.") : null,
+    connectorApps.has(c.id) ? el("div", { class: "card-desc note" }, viaConnector
+      ? "The claude.ai connector above covers this app, so its switch is disabled: a local entry would add CMF's tools a second time. It turns on again if you stop using the connector."
+      : has && features.connector
+        ? "The claude.ai connector above already covers this app: turn this switch off to remove the local entry, or CMF's tools appear twice."
+        : "The switch writes a local entry, for when you don't use the claude.ai connector above.") : null,
     c.installed ? instructionsNote(c.id) : null,
     captureNote(src));
 }
