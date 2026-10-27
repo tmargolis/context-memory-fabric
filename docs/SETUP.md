@@ -55,7 +55,7 @@ Install with **[QUICKSTART.md](QUICKSTART.md)**: Docker Desktop, the Context Mem
 The stack it starts:
 - **CMF MCP server:** Streamable HTTP endpoint at `http://127.0.0.1:8000/mcp`
 - **FalkorDB:** on `127.0.0.1:6379`, with the FalkorDB Browser at `http://127.0.0.1:3001`
-- **Your notes:** the folder in `LLM_WIKI_PATH` (the demo wiki, your own Markdown folder, or none), mounted read-only at `/wiki` inside the container
+- **Your notes:** the folder in `LLM_WIKI_PATH` (the demo wiki, your own Markdown folder, or none), mounted read-write at `/wiki` in the server container so approved doc proposals can be applied (nothing is written without an approved proposal); the capture poller mounts it read-only
 - **Capture poller:** the `cmf-poller` container, always on: it reads every AI app's transcript folder on this computer
 
 ### Check That It Works

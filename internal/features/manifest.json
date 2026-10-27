@@ -84,7 +84,7 @@
       "id": "wiki",
       "group": "knowledge",
       "label": "Notes folder (LLM Wiki, Obsidian, any Markdown)",
-      "description": "Mounted read-only. Proposals still go to review.",
+      "description": "CMF writes to it only when you approve a doc proposal.",
       "enabled_when": {"all": [{"list_has": {"key": "CMF_KNOWLEDGE_PROVIDERS", "item": "wiki", "default": "wiki"}},
                                {"env_set": "LLM_WIKI_PATH"},
                                {"not": {"env_suffix": {"key": "LLM_WIKI_PATH", "suffix": "starter-wiki"}}}]},

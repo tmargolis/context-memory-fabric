@@ -61,9 +61,11 @@ services:
       - CMF_STATE_DIR=/data/cmf
       - CMF_JOURNAL_VOLUME=cmf-journal
     volumes:
-      # Your notes, read-only. Unset LLM_WIKI_PATH = memory only (an empty
-      # folder is mounted and the wiki tools stay off).
-      - ${LLM_WIKI_PATH:-./empty/wiki}:/wiki:ro
+      # Your notes, read-write so approved doc proposals can be applied
+      # (apply_doc_proposal / confirm_review_recommendations). Nothing is
+      # written without an approved proposal. Unset LLM_WIKI_PATH = memory
+      # only (an empty folder is mounted and the wiki tools stay off).
+      - ${LLM_WIKI_PATH:-./empty/wiki}:/wiki:rw
       # Proposals, imports and your review rules, shared with host-side tools.
       - ./state:/data/cmf
       # The SQLite journal stays in a Docker volume: SQLite breaks when the
