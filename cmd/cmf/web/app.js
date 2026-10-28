@@ -574,6 +574,7 @@ function showStopped(message) {
   document.querySelector("main").hidden = true;
   document.querySelector(".tabs").hidden = true;
   $("quit").hidden = true;
+  $("update").hidden = true;
 }
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -605,6 +606,62 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") keepAlive();
 });
 keepAlive();
+
+// --- update ------------------------------------------------------------------------------
+// Update checks the latest GitHub release on load (the server caches it for
+// ten minutes) and turns the accent color when one is newer than this cmf.
+
+let release = null;
+const quitFromDialog = () => { $("dialog").close(); $("quit").click(); };
+
+async function checkUpdate(fresh = false) {
+  const b = $("update");
+  try {
+    release = await api("/api/update" + (fresh ? "?fresh=1" : ""));
+  } catch (e) {
+    release = null;
+    b.classList.remove("available");
+    b.title = "Couldn't check for a new release: " + e.message;
+    return;
+  }
+  b.classList.toggle("available", !!(release.available || release.restart));
+  b.title = release.restart ? `cmf ${release.latest} is installed. Quit and open CMF again to use it.`
+    : release.available ? `cmf ${release.latest} is available (this is ${release.current}). Click to update.`
+    : `cmf ${release.current} is the latest release.`;
+}
+
+$("update").addEventListener("click", async () => {
+  if (!release?.available || release.restart) await checkUpdate(true);
+  if (!release) {
+    openDialog("Update", $("update").title);
+  } else if (release.restart) {
+    openDialog("Update", `cmf ${release.latest} is installed. Quit and open CMF again to use it.`, [],
+      [el("button", { class: "primary", onclick: quitFromDialog }, "Quit")]);
+  } else if (!release.available) {
+    openDialog("Update", `cmf ${release.current} is up to date (latest release ${release.latest}).`);
+  } else if (release.dev_build) {
+    openDialog("Update", `This is a development build (${release.current}); it doesn't update itself. ` +
+      `Rebuild it from the repo, or download cmf ${release.latest} from ${release.url}.`);
+  } else {
+    openDialog(`Update to cmf ${release.latest}`,
+      `This replaces this cmf (${release.current}) with ${release.latest} from GitHub, checks it against SHA256SUMS ` +
+      "and keeps the old one in a backup. Then it pins the server image to the new version, pulls and restarts the " +
+      "stack, and updates the checkpoint hooks.", [],
+      [el("button", { class: "primary", onclick: runUpdate }, "Update")]);
+  }
+});
+
+async function runUpdate() {
+  const result = await stream("/api/update", null, `Updating to cmf ${release.latest}`);
+  await checkUpdate();
+  if (release?.restart) {
+    $("dialog-foot").append(" ", el("button", { class: "primary", onclick: quitFromDialog }, "Quit"),
+      el("span", { class: "muted" }, " then open CMF again."));
+  }
+  if (result.ok) loadStatus();
+}
+
+checkUpdate();
 
 $("quit").addEventListener("click", async () => {
   try {

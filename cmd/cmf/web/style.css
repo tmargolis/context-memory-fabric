@@ -63,6 +63,8 @@ button:hover:not(:disabled), .button:hover { border-color: var(--muted); }
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button.small { padding: 3px 10px; font-size: 13px; }
+.bar-buttons { display: flex; gap: 8px; }
+#update.available { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
 .actions.sticky {
   position: sticky; bottom: 0; background: var(--bg); padding: 12px 0; border-top: 1px solid var(--line);

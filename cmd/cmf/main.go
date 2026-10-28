@@ -48,6 +48,7 @@ var commands = map[string]command{
 	"capture":      {"how each AI app is captured, estimates, prompt budget; hook install / remove; agent block", runCapture},
 	"hook":         {"the Stop hook body AI apps run (cmf hook stop --harness <app>)", runHook},
 	"backfill":     {"import the last N days of transcripts into the review queue (estimate first)", runBackfill},
+	"update":       {"replace this cmf with the latest release, then update the server and hooks (--check only looks)", runUpdate},
 	"version":      {"print the cmf version", func(_ []string, out io.Writer) error { fmt.Fprintln(out, "cmf", version); return nil }},
 }
 

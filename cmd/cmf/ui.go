@@ -70,7 +70,13 @@ type uiServer struct {
 	reason   string // why the server stopped, printed on exit
 	done     chan struct{}
 	stopOnce sync.Once
+
+	release   *releaseInfo // the last update check, reused for releaseTTL
+	checkedAt time.Time
+	updatedTo string // set once Update replaced this cmf: the page asks for a restart
 }
+
+const releaseTTL = 10 * time.Minute
 
 func newToken() string {
 	b := make([]byte, 32)
@@ -171,6 +177,8 @@ func (s *uiServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/backups", s.api(s.backups))
 	mux.HandleFunc("POST /api/restore/{stamp}", s.stream(s.restore))
 	mux.HandleFunc("POST /api/instructions/{app}", s.stream(s.addInstructions))
+	mux.HandleFunc("GET /api/update", s.api(s.updateCheck))
+	mux.HandleFunc("POST /api/update", s.stream(s.update))
 	mux.HandleFunc("POST /api/quit", s.quit)
 	mux.HandleFunc("GET /api/alive", s.aliveHandler)
 	return s.guard(mux)
@@ -577,6 +585,36 @@ func (s *uiServer) backups(*http.Request) (any, error) {
 
 // addInstructions writes CMF's instruction block into an app's file (the
 // Features cards' Add button), the same as `cmf instructions add <app>`.
+// updateCheck answers the Update button: is there a newer release? ?fresh=1 skips the cache.
+func (s *uiServer) updateCheck(r *http.Request) (any, error) {
+	s.mu.Lock()
+	info, at, updated := s.release, s.checkedAt, s.updatedTo
+	s.mu.Unlock()
+	if updated != "" {
+		return map[string]any{"current": version, "latest": updated, "restart": true}, nil
+	}
+	if info == nil || r.URL.Query().Get("fresh") != "" || time.Since(at) > releaseTTL {
+		fresh, err := latestRelease(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		s.release, s.checkedAt, info = fresh, time.Now(), fresh
+		s.mu.Unlock()
+	}
+	return info, nil
+}
+
+func (s *uiServer) update(r *http.Request, out io.Writer) (string, error) {
+	installed, err := installLatest(r.Context(), false, true, out)
+	if installed != "" {
+		s.mu.Lock()
+		s.updatedTo = installed
+		s.mu.Unlock()
+	}
+	return "", err
+}
+
 func (s *uiServer) addInstructions(r *http.Request, out io.Writer) (string, error) {
 	return "", runInstructions([]string{"add", r.PathValue("app"), "--yes"}, out)
 }

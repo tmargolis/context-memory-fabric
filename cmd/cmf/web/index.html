@@ -16,7 +16,10 @@
     <button role="tab" data-tab="review" aria-selected="false" id="review-tab" hidden>Review changes</button>
   </nav>
   <div class="meta" id="meta"></div>
-  <button id="quit" class="small" title="Stop CMF management. Your memory service keeps running.">Quit</button>
+  <div class="bar-buttons">
+    <button id="update" class="small" title="Checking for a new release…">Update</button>
+    <button id="quit" class="small" title="Stop CMF management. Your memory service keeps running.">Quit</button>
+  </div>
 </header>
 
 <div id="stopped" class="stopped" role="status" hidden><p id="stopped-text"></p></div>
