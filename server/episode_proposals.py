@@ -41,6 +41,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import sqlite3
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,42 @@ def list_episode_mirrors(
     return results
 
 
+def attach_valid_at(items: list[dict[str, Any]], db_path: Optional[Path] = None) -> list[dict[str, Any]]:
+    """Add `valid_at` + `date_precision` to each mirror, in place: the derived row's event_date,
+    which promotion hands Graphiti as valid_at. Read at view time, not stored in the mirror, so a
+    re-dated row shows its current date. None means promotion will stamp the promotion time."""
+    for d in items:
+        d.setdefault("valid_at", None)
+        d.setdefault("date_precision", None)
+    ids = [d["memory_id"] for d in items if d.get("memory_id")]
+    if not ids:
+        return items
+    if db_path is None:
+        from server.journal.store import DEFAULT_JOURNAL_PATH
+        db_path = DEFAULT_JOURNAL_PATH
+    if not Path(db_path).is_file():
+        return items
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            rows = conn.execute(
+                f"SELECT memory_id, event_date, date_precision FROM derived_memories "
+                f"WHERE memory_id IN ({','.join('?' * len(ids))})", ids,
+            ).fetchall()
+    except sqlite3.OperationalError:  # a journal with no consolidation tables yet
+        return items
+    dates = {r[0]: (r[1], r[2]) for r in rows}
+    for d in items:
+        if d.get("memory_id") in dates:
+            d["valid_at"], d["date_precision"] = dates[d["memory_id"]]
+    return items
+
+
+def _valid_at_cell(d: dict[str, Any]) -> str:
+    if not d.get("valid_at"):
+        return "none (promotion uses the promotion time)"
+    return f"`{d['valid_at']}`" + (f" ({d['date_precision']})" if d.get("date_precision") else "")
+
+
 def format_episode_mirror_for_mcp(data: dict[str, Any]) -> str:
     lines = [
         "### 🧠 Staged Episode\n",
@@ -272,6 +309,7 @@ def format_episode_mirror_for_mcp(data: dict[str, Any]) -> str:
         f"- **Tier:** `{data['tier']}` ({data['reasoning_kind']})",
         f"- **Confidence:** {data['confidence']}",
         f"- **Policy:** `{data['policy_name']}@{data['policy_version']}`",
+        f"- **Valid At:** {_valid_at_cell(data)}",
         f"- **Statement:** {data['statement']}",
     ]
     if data.get("driving_question"):
@@ -290,9 +328,10 @@ def format_episode_mirror_for_mcp(data: dict[str, Any]) -> str:
 def format_episode_mirror_list(items: list[dict[str, Any]]) -> str:
     if not items:
         return "No staged episodes found."
-    lines = ["| Memory ID | Tier | Kind | Confidence | Status |", "|---|---|---|---|---|"]
+    lines = ["| Memory ID | Tier | Kind | Confidence | Status | Valid At |", "|---|---|---|---|---|---|"]
     for d in items:
-        lines.append(f"| `{d['memory_id']}` | {d['tier']} | {d['reasoning_kind']} | {d['confidence']} | {d['approval_state']} |")
+        valid_at = d.get("valid_at") or "none"
+        lines.append(f"| `{d['memory_id']}` | {d['tier']} | {d['reasoning_kind']} | {d['confidence']} | {d['approval_state']} | {valid_at} |")
     return "\n".join(lines)
 
 

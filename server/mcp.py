@@ -45,6 +45,7 @@ from server.core import status as server_status
 from server.core.oauth_provider import CMFOAuthProvider
 from server.core.tool_errors import EMPTY_GRAPH, NO_MEMORIES_YET, classify
 from server.episode_proposals import (
+    attach_valid_at,
     format_episode_mirror_for_mcp,
     format_episode_mirror_list,
     list_episode_mirrors,
@@ -1637,7 +1638,7 @@ async def list_episode_proposals(
     """
     try:
         items = list_episode_mirrors(tier=tier, approval_state=approval_state, conversation_id=conversation_id, project=project)
-        return format_episode_mirror_list(items)
+        return format_episode_mirror_list(attach_valid_at(items))
     except Exception as e:
         logger.error(f"Error listing episode proposals: {e}")
         return f"Error listing episode proposals: {e}"
@@ -1669,7 +1670,7 @@ async def get_episode_proposal(
         data = read_episode_mirror(memory_id)
         if data is None:
             return f"No staged episode found with memory_id '{memory_id}'."
-        return format_episode_mirror_for_mcp(data)
+        return format_episode_mirror_for_mcp(attach_valid_at([data])[0])
     except Exception as e:
         logger.error(f"Error retrieving episode proposal '{memory_id}': {e}")
         return f"Error retrieving episode proposal '{memory_id}': {e}"

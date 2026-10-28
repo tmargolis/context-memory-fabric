@@ -91,6 +91,44 @@ def test_batch_shows_the_valid_at_each_item_will_carry(env):
     assert all("valid_at" in i for i in by_id.values())
 
 
+def test_episode_and_doc_views_show_valid_at(env):
+    import sqlite3
+
+    from server.consolidation.store import ConsolidationStore
+    from server.episode_proposals import attach_valid_at, format_episode_mirror_for_mcp, format_episode_mirror_list
+    from server.proposals import format_proposal_for_mcp, format_proposal_list, list_proposals
+
+    ConsolidationStore(env["db"]).close()
+    with sqlite3.connect(env["db"]) as conn:
+        conn.execute(
+            "INSERT INTO derived_memories (memory_id, source_event_id, policy_name, policy_version, category, "
+            "statement, reason, confidence, event_date, date_precision, approval_state, created_at) "
+            "VALUES ('reason:conv0:x::extract@1.6', 'e1', 'extract', '1.6', 'decision', 's', 'r', 0.8, "
+            "'2026-10-20', 'day', 'queued_for_review', '2026-10-21')"
+        )
+    eps = attach_valid_at(list_episode_mirrors(tier="tier1", base_dir=env["mirrors"]), db_path=env["db"])
+    dated = next(e for e in eps if e["memory_id"] == "reason:conv0:x::extract@1.6")
+    undated = next(e for e in eps if e["memory_id"] == "reason:conv1:x::extract@1.6")
+    assert "**Valid At:** `2026-10-20` (day)" in format_episode_mirror_for_mcp(dated)
+    assert "**Valid At:** none (promotion uses the promotion time)" in format_episode_mirror_for_mcp(undated)
+    table = format_episode_mirror_list(eps)
+    assert "| Valid At |" in table and "| 2026-10-20 |" in table and "| none |" in table
+
+    doc = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", "- dated fact", "dated", wiki_root=env["wiki"],
+                              proposals_dir=env["docs"], mode="append", source_date="2026-10-19")
+    assert "**Valid At:** `2026-10-19`" in format_proposal_for_mcp(doc)
+    undated_doc = next(p for p in list_proposals(proposals_dir=env["docs"]) if not p.source_date)
+    assert "**Valid At:** none" in format_proposal_for_mcp(undated_doc)
+    assert "| 2026-10-19 |" in format_proposal_list([doc, undated_doc])
+
+
+def test_attach_valid_at_tolerates_a_missing_journal(tmp_path):
+    from server.episode_proposals import attach_valid_at
+
+    items = attach_valid_at([{"memory_id": "m1"}], db_path=tmp_path / "nope.db")
+    assert items == [{"memory_id": "m1", "valid_at": None, "date_precision": None}]
+
+
 def test_next_batch_skips_recommended_items(env):
     first = _batch(env)
     rec.record(env["store"], first["run_id"], [{"label": "EP1", "verdict": "approve", "reason": "a dated decision"}],

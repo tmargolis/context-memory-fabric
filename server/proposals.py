@@ -457,6 +457,8 @@ def format_proposal_for_mcp(proposal: DocProposal) -> str:
         f"- **Operation:** `{proposal.operation.upper()}`",
         f"- **Target Path:** `{proposal.target_path}`",
         f"- **Created At:** `{proposal.created_at}`",
+        f"- **Valid At:** " + (f"`{proposal.source_date}` (advances the page's `updated:`)" if proposal.source_date
+                               else "none (leaves the page's `updated:` alone)"),
         f"- **Target Current SHA-256:** `{proposal.current_sha256 or 'N/A (New File)'}`",
         f"- **Proposed SHA-256:** `{proposal.proposed_sha256}`",
         f"- **Rationale:** {proposal.rationale}",
@@ -891,10 +893,10 @@ def format_proposal_list(proposals: list[DocProposal]) -> str:
     if not proposals:
         return "No proposals found."
     if any(p.provider != "wiki" for p in proposals):
-        return "\n".join(["| Proposal ID | Provider | Status | Application | Target |", "|---|---|---|---|---|", *[f"| `{p.proposal_id}` | {p.provider} | {p.status} | {p.application.get('state', '—')} | `{p.target_path}` |" for p in proposals]])
-    lines = ["| Proposal ID | Status | Operation | Target Path | Created |", "|---|---|---|---|---|"]
+        return "\n".join(["| Proposal ID | Provider | Status | Application | Target | Valid At |", "|---|---|---|---|---|---|", *[f"| `{p.proposal_id}` | {p.provider} | {p.status} | {p.application.get('state', '—')} | `{p.target_path}` | {p.source_date or 'none'} |" for p in proposals]])
+    lines = ["| Proposal ID | Status | Operation | Target Path | Created | Valid At |", "|---|---|---|---|---|---|"]
     for p in proposals:
-        lines.append(f"| `{p.proposal_id}` | {p.status} | {p.operation} | `{p.target_path}` | {p.created_at} |")
+        lines.append(f"| `{p.proposal_id}` | {p.status} | {p.operation} | `{p.target_path}` | {p.created_at} | {p.source_date or 'none'} |")
     return "\n".join(lines)
 
 
@@ -943,7 +945,7 @@ def format_provider_proposal(proposal: DocProposal) -> str:
                "current_sha256": proposal.current_sha256,
                "proposed_sha256": proposal.proposed_sha256,
                "rationale": proposal.rationale, "source_context": proposal.source_context,
-               "application": proposal.application}
+               "valid_at": proposal.source_date, "application": proposal.application}
     text = json.dumps(details, indent=2, ensure_ascii=False)
     fence = "`" * max(3, max((len(m[0]) + 1 for m in re.finditer(r"`+", text + proposal.unified_diff)), default=3))
     return (f"### Proposal `{proposal.proposal_id}` — {proposal.status}\n"

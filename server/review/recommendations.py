@@ -110,19 +110,6 @@ class RecommendationStore:
         ).fetchall()
         return {r["item_id"] for r in rows}
 
-    def event_dates(self, memory_ids: list[str]) -> dict[str, sqlite3.Row]:
-        """event_date + date_precision per staged episode: the date promotion hands Graphiti as valid_at."""
-        if not memory_ids:
-            return {}
-        try:
-            rows = self._conn.execute(
-                f"SELECT memory_id, event_date, date_precision FROM derived_memories "
-                f"WHERE memory_id IN ({','.join('?' * len(memory_ids))})", memory_ids,
-            ).fetchall()
-        except sqlite3.OperationalError:  # a journal with no consolidation tables yet
-            return {}
-        return {r["memory_id"]: r for r in rows}
-
     def start_run(self, items: list[dict[str, Any]]) -> str:
         run_id = "rr_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
         self._conn.execute(
@@ -224,7 +211,7 @@ def build_batch(
     wiki_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Start a run over the pending items no earlier run has recommended on."""
-    from server.episode_proposals import list_episode_mirrors
+    from server.episode_proposals import attach_valid_at, list_episode_mirrors
     from server.proposals import list_proposals
 
     max_items = max(1, min(int(max_items), MAX_BATCH))
@@ -243,9 +230,7 @@ def build_batch(
     ep_take = min(len(episodes), max_items - doc_take)
 
     items: list[dict[str, Any]] = []
-    dates = store.event_dates([m["memory_id"] for m in episodes[:ep_take]])
-    for i, m in enumerate(episodes[:ep_take], 1):
-        date = dates.get(m["memory_id"])
+    for i, m in enumerate(attach_valid_at(episodes[:ep_take], db_path=store.db_path), 1):
         items.append({
             "label": f"EP{i}",
             "item_type": "episode",
@@ -259,8 +244,8 @@ def build_batch(
             "conversation_id": m.get("conversation_id"),
             "thread_key": m.get("thread_key"),
             "evidence_turns": len(m.get("evidence_event_ids") or []),
-            "valid_at": date["event_date"] if date else None,
-            "date_precision": date["date_precision"] if date else None,
+            "valid_at": m["valid_at"],
+            "date_precision": m["date_precision"],
             "written_at": m.get("written_at"),
         })
     for i, p in enumerate(docs[:doc_take], 1):
