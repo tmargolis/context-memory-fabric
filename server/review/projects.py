@@ -39,8 +39,10 @@ MISC = "misc"
 # lives in a gitignored file rather than in source. Search order:
 #   1. an explicit `rules` argument (tests, callers with their own taxonomy)
 #   2. $CMF_TAXONOMY
-#   3. taxonomy.local.json at the repo root   <- gitignored, the normal case
-#   4. nothing: every episode classifies as `misc`
+#   3. taxonomy.local.json in the state dir   <- ~/.cmf/state on the host,
+#      /data/cmf in the containers; the only copy the server and poller see
+#   4. taxonomy.local.json at the repo root   <- gitignored, pre-~/.cmf installs
+#   5. nothing: every episode classifies as `misc`
 #
 # Falling back to `misc` rather than to a built-in default is deliberate. A
 # shipped default would be someone else's project list quietly mislabelling
@@ -77,8 +79,12 @@ def taxonomy_path(path: Optional[Path] = None) -> Optional[Path]:
     env = os.environ.get("CMF_TAXONOMY")
     if env:
         return Path(env)
-    local = _REPO_ROOT / DEFAULT_TAXONOMY_FILENAME
-    return local if local.exists() else None
+    from server.core.env import state_dir
+
+    for local in (state_dir() / DEFAULT_TAXONOMY_FILENAME, _REPO_ROOT / DEFAULT_TAXONOMY_FILENAME):
+        if local.exists():
+            return local
+    return None
 
 
 def _load(
@@ -179,6 +185,31 @@ def classify(
         if pattern.search(text):
             return bucket
     return MISC
+
+
+def episode_project(
+    source_project: Optional[str],
+    thread_key: Optional[str],
+    statement: Optional[str] = None,
+    compiled: Optional[list[tuple[str, re.Pattern[str]]]] = None,
+    overrides: Optional[dict[str, str]] = None,
+) -> Optional[str]:
+    """The project to stage one new episode under.
+
+    A reviewer's thread override wins, then the project the source already
+    knows (the session's folder, or what the capture caller passed), then the
+    taxonomy rules. Overrides outrank the folder because a folder is a guess
+    too: a job-search session opened on the wiki folder is still career work,
+    and only an override can say so. `misc` comes back as None, so an
+    unclassifiable episode stays untagged rather than tagged `misc`.
+    """
+    overrides = load_overrides() if overrides is None else overrides
+    if thread_key and thread_key in overrides:
+        return overrides[thread_key]
+    if source_project:
+        return source_project
+    bucket = classify(thread_key, statement, compiled, overrides)
+    return None if bucket == MISC else bucket
 
 
 def backfill(

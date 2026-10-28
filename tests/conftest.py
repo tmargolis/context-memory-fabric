@@ -72,6 +72,14 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("CMF_PROJECT_ALIASES", raising=False)
     monkeypatch.delenv("CMF_COWORK_SCHEDULED_TASK_PROJECTS", raising=False)
     monkeypatch.delenv("CMF_PROJECT_FOLDER_MAP", raising=False)
+    # Nor the operator's taxonomy.local.json (it names their projects): an
+    # empty one by default; a test that needs rules writes its own.
+    from server.review import projects
+
+    empty_taxonomy = tmp_path / "taxonomy.empty.json"
+    empty_taxonomy.write_text('{"rules": [], "overrides": {}}')
+    monkeypatch.setenv("CMF_TAXONOMY", str(empty_taxonomy))
+    projects.clear_cache()
     # Nor the provider list an Apply writes to ~/.cmf/.env (loaded at import).
     monkeypatch.delenv("CMF_LLM_PROVIDERS", raising=False)
     monkeypatch.delenv("CMF_CAPTURE_LLM_PROVIDER", raising=False)

@@ -74,6 +74,7 @@ from server.proposals import (
     strip_frontmatter,
 )
 from server.review.actions import reject_episode
+from server.review.projects import episode_project
 from server.review.store import ReviewStore
 
 logger = logging.getLogger(__name__)
@@ -628,6 +629,7 @@ def run_reasoning_consolidation(
                     anchor = episode.evidence_event_ids[0] if episode.evidence_event_ids else primary
                     prior = consolidation_store.latest_derivation_for_event(anchor, exclude_memory_id=memory_id)
                     approval = _reasoning_approval_state(episode, reasoning_auto_accept_threshold)
+                    ep_project = episode_project(project, episode.thread_key, episode.statement)
                     consolidation_store.record_reasoning_episode(
                         job_id=job_id,
                         memory_id=memory_id,
@@ -638,7 +640,7 @@ def run_reasoning_consolidation(
                         supersedes=prior["memory_id"] if prior is not None else None,
                         conversation_id=window.conversation_id,
                         harness=harness_slug,
-                        project=project,
+                        project=ep_project,
                     )
                     stats["episodes_created"] += 1
                     stats["by_reasoning_kind"][episode.reasoning_kind] += 1
@@ -936,7 +938,7 @@ def _merge_tier1_by_thread(
                 supersedes=None,
                 conversation_id=conv_key,
                 harness=harness,
-                project=project,
+                project=episode_project(project, merged_episode.thread_key),
             )
 
             episodes_merged_away += _retire_absorbed(consolidation_store, review_store, chunk, merged_memory_id)

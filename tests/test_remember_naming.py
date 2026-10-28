@@ -2,6 +2,10 @@
 
 import asyncio
 from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +16,7 @@ from server.providers.memory_graphiti import (
     remember_queued,
     resolve_remember_identity,
 )
+from server.review import projects
 
 
 class FakeDriver:
@@ -71,16 +76,24 @@ class TestRememberNaming(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(harness, "chatgpt")
 
     async def test_resolve_descriptive_name_auto_converted_to_sequence(self):
-        driver = FakeDriver(["chatgpt-ev-charging-017"])
-        ep_name, proj, harness = await resolve_remember_identity(
-            driver=driver,
-            content="Feasibility review on condo spare electrical capacity",
-            name="ev_second_engineering_review_and_records_demand_2026_09_15",
-            project=None,
-            harness="chatgpt",
-        )
-        self.assertEqual(ep_name, "chatgpt-ev-charging-018")
-        self.assertEqual(proj, "ev-charging")
+        # The project comes from the taxonomy, so bring one rather than
+        # depend on whatever taxonomy.local.json the machine has.
+        with tempfile.TemporaryDirectory() as tmp:
+            taxonomy = Path(tmp) / "taxonomy.json"
+            taxonomy.write_text(json.dumps({"rules": [["garden", r"\b(garden\w*)\b"]]}))
+            with patch.dict(os.environ, {"CMF_TAXONOMY": str(taxonomy)}):
+                projects.clear_cache()
+                driver = FakeDriver(["chatgpt-garden-017"])
+                ep_name, proj, harness = await resolve_remember_identity(
+                    driver=driver,
+                    content="Second review of the garden irrigation plan",
+                    name="garden_irrigation_second_review_2026_09_15",
+                    project=None,
+                    harness="chatgpt",
+                )
+            projects.clear_cache()
+        self.assertEqual(ep_name, "chatgpt-garden-018")
+        self.assertEqual(proj, "garden")
         self.assertEqual(harness, "chatgpt")
 
     async def test_resolve_already_formatted_semantic_name(self):

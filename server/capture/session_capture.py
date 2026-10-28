@@ -43,6 +43,7 @@ from server.journal.identity import compute_content_hash, compute_event_id
 from server.journal.store import SqliteEventStore
 from server.policies.protocols import ExtractionCategory, ReasoningEpisode
 from server.proposals import create_doc_proposal
+from server.review.projects import episode_project
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +226,9 @@ def _capture_episode_item(
         harness=event.source.harness,
         # Without it every live capture staged with project NULL and was
         # promoted under `misc`, whatever the caller passed (found 2026-10-26).
-        project=project,
+        # Callers often pass none, so the taxonomy fills it in from the
+        # thread key, the same rules the review buckets use (2026-10-28).
+        project=episode_project(project, episode.thread_key, statement),
     )
 
     return SessionItemResult(
