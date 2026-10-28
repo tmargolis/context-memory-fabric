@@ -1856,6 +1856,9 @@ async def get_review_batch(
       and doc proposals (DOC1…), oldest first. A doc carries `mode`: "append" adds `addition` to
       the live page (under `target_heading` when set), "replace" is a whole-page rewrite to read
       against the live page. `conflicts_with` lists other pending proposals for the same page.
+      `valid_at` is the date the item will carry once approved: an episode's graph valid_at
+      (with `date_precision`; null means promotion stamps it with the promotion time), a doc's
+      source date (it advances the page's `updated:`; null leaves `updated:` alone).
     - Then judge every item and call record_review_recommendations with the same `run_id`.
 
     DISTINCTIONS:

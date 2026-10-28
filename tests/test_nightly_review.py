@@ -67,6 +67,30 @@ def test_batch_shows_an_additive_proposal_and_where_it_lands(env):
     assert len(item["conflicts_with"]) == 1  # the legacy rewrite of the same page stays separately reviewable
 
 
+def test_batch_shows_the_valid_at_each_item_will_carry(env):
+    import sqlite3
+
+    from server.consolidation.store import ConsolidationStore
+
+    ConsolidationStore(env["db"]).close()  # the derived_memories table promotion reads
+    with sqlite3.connect(env["db"]) as conn:
+        for i, (date, precision) in enumerate([("2026-10-20", "day"), (None, "unknown")]):
+            conn.execute(
+                "INSERT INTO derived_memories (memory_id, source_event_id, policy_name, policy_version, category, "
+                "statement, reason, confidence, event_date, date_precision, approval_state, created_at) "
+                "VALUES (?, 'e1', 'extract', '1.6', 'decision', 's', 'r', 0.8, ?, ?, 'queued_for_review', '2026-10-21')",
+                (f"reason:conv{i}:x::extract@1.6", date, precision),
+            )
+    dated = create_doc_proposal("WIKI/projects/Acme/Billing-Jobs.md", "- dated fact", "dated", wiki_root=env["wiki"],
+                                proposals_dir=env["docs"], mode="append", source_date="2026-10-19")
+    by_id = {i["item_id"]: i for i in _batch(env)["items"]}
+    assert (by_id["reason:conv0:x::extract@1.6"]["valid_at"], by_id["reason:conv0:x::extract@1.6"]["date_precision"]) == ("2026-10-20", "day")
+    assert by_id["reason:conv1:x::extract@1.6"]["valid_at"] is None  # promotion will stamp it with "now"
+    assert by_id["reason:conv3:x::extract@1.6"]["valid_at"] is None  # no derived row at all
+    assert by_id[dated.proposal_id]["valid_at"] == "2026-10-19"
+    assert all("valid_at" in i for i in by_id.values())
+
+
 def test_next_batch_skips_recommended_items(env):
     first = _batch(env)
     rec.record(env["store"], first["run_id"], [{"label": "EP1", "verdict": "approve", "reason": "a dated decision"}],
