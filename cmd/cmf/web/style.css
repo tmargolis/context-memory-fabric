@@ -167,3 +167,6 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .log .line { display: block; min-height: 1.5em; }
 .log .line.err { background: color-mix(in srgb, var(--fail) 18%, transparent); box-shadow: inset 3px 0 0 var(--fail); }
 .log .line.err + .line.err { margin-top: 3px; }
+
+.stopped { max-width: 640px; margin: 48px auto; padding: 20px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.stopped p { margin: 0; }

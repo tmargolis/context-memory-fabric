@@ -140,35 +140,44 @@ func TestUIDiagnosticsAndLogs(t *testing.T) {
 	}
 }
 
-func TestUIStopsAfterTabCloses(t *testing.T) {
-	s, h, _ := uiFixture(t)
-	uiCloseGrace, uiTick = 20*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { uiCloseGrace, uiTick = 15*time.Second, time.Second })
-	go s.watch()
-	call(h, "POST", "/api/bye", "", nil)
+func fastClock(t *testing.T, idle time.Duration) {
+	uiIdleLimit, uiTick = idle, 5*time.Millisecond
+	t.Cleanup(func() { uiIdleLimit, uiTick = 30*time.Minute, time.Second })
+}
+
+func waitStopped(t *testing.T, s *uiServer, why string) {
+	t.Helper()
 	select {
 	case <-s.done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("server didn't stop after the tab closed")
+		t.Fatal(why)
 	}
 }
 
-func TestUIReloadKeepsItRunning(t *testing.T) {
-	s, h, _ := uiFixture(t)
-	uiCloseGrace, uiTick = 50*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { uiCloseGrace, uiTick = 15*time.Second, time.Second })
-	call(h, "POST", "/api/bye", "", nil)
-	s.mu.Lock()
-	s.byeAt = time.Now().Add(-2 * time.Second) // the bye came a moment before the reload
-	s.mu.Unlock()
-	call(h, "GET", "/", "", nil) // the reloaded page
+func TestUIStopsWhenIdle(t *testing.T) {
+	s, _, _ := uiFixture(t)
+	fastClock(t, 20*time.Millisecond)
 	go s.watch()
-	select {
-	case <-s.done:
-		t.Fatal("a reload must not stop the server")
-	case <-time.After(200 * time.Millisecond):
+	waitStopped(t, s, "server didn't stop after the idle limit with no tab open")
+	if !strings.Contains(s.reason, "no open tab") {
+		t.Fatal(s.reason)
 	}
-	s.stop()
+}
+
+func TestUIQuit(t *testing.T) {
+	s, h, _ := uiFixture(t)
+	s.busy = true
+	if w := call(h, "POST", "/api/quit", "", nil); w.Code != http.StatusConflict {
+		t.Fatal("quit while a change runs", w.Code)
+	}
+	s.busy = false
+	if w := call(h, "POST", "/api/quit", "", nil); w.Code != http.StatusNoContent {
+		t.Fatal(w.Code)
+	}
+	waitStopped(t, s, "Quit didn't stop the server")
+	if s.reason != "Quit button" {
+		t.Fatal(s.reason)
+	}
 }
 
 func TestNoArgsOpensUI(t *testing.T) {
@@ -186,18 +195,16 @@ func TestNoArgsOpensUI(t *testing.T) {
 	if !strings.HasPrefix(opened, "http://127.0.0.1:") || !strings.Contains(opened, "/?t=") {
 		t.Fatal(opened)
 	}
-	// Close the tab: the server stops on its own.
-	uiCloseGrace, uiTick = 10*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { uiCloseGrace, uiTick = 15*time.Second, time.Second })
+	// The Quit button stops it and the reason is printed.
 	host := strings.TrimPrefix(strings.Split(opened, "/?")[0], "http://")
-	req, _ := http.NewRequest("POST", "http://"+host+"/api/bye", nil)
+	req, _ := http.NewRequest("POST", "http://"+host+"/api/quit", nil)
 	req.AddCookie(&http.Cookie{Name: tokenCookie, Value: strings.Split(opened, "t=")[1]})
 	if _, err := http.DefaultClient.Do(req); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case code := <-done:
-		if code != 0 || !strings.Contains(out.String(), "CMF management stopped.") {
+		if code != 0 || !strings.Contains(out.String(), "CMF management stopped: Quit button.") {
 			t.Fatal(code, out.String())
 		}
 	case <-time.After(5 * time.Second):
@@ -205,16 +212,17 @@ func TestNoArgsOpensUI(t *testing.T) {
 	}
 }
 
-func TestUIStopsWhenTabConnectionDrops(t *testing.T) {
+// An open tab keeps the server running past the idle limit, however long it
+// sits untouched. Once its connection drops (closed, discarded by the
+// browser, or the machine slept), the idle clock starts from the drop.
+func TestUIOpenTabKeepsItRunning(t *testing.T) {
 	s, h, _ := uiFixture(t)
-	uiCloseGrace, uiTick = 20*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { uiCloseGrace, uiTick = 15*time.Second, time.Second })
+	fastClock(t, 40*time.Millisecond)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Host = "127.0.0.1:5555"
 		h.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
-	go s.watch()
 	req, _ := http.NewRequest("GET", srv.URL+"/api/alive", nil)
 	req.AddCookie(&http.Cookie{Name: tokenCookie, Value: "tok123"})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,17 +230,18 @@ func TestUIStopsWhenTabConnectionDrops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(60 * time.Millisecond)
+	go s.watch()
+	time.Sleep(150 * time.Millisecond) // well past the idle limit
 	select {
 	case <-s.done:
-		t.Fatal("stopped while the tab was open")
+		t.Fatal("stopped while a tab was open")
 	default:
 	}
-	cancel() // the tab closes without a "bye"
+	cancel() // the tab goes away (closed or discarded)
 	resp.Body.Close()
-	select {
-	case <-s.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("didn't stop after the tab's connection dropped")
+	dropped := time.Now()
+	waitStopped(t, s, "didn't stop after the tab's connection dropped")
+	if time.Since(dropped) < 30*time.Millisecond {
+		t.Fatal("the idle clock must start when the tab goes away, not from the last request")
 	}
 }

@@ -42,9 +42,8 @@ const tokenCookie = "cmf_ui"
 
 // Replaced in tests.
 var (
-	uiIdleLimit  = 30 * time.Minute
-	uiCloseGrace = 15 * time.Second // a reload sends "bye" and comes straight back
-	uiTick       = time.Second
+	uiIdleLimit = 30 * time.Minute
+	uiTick      = time.Second
 )
 
 // Replaced in tests.
@@ -67,8 +66,8 @@ type uiServer struct {
 	mu       sync.Mutex
 	busy     bool // one fix / apply / restore at a time
 	lastSeen time.Time
-	byeAt    time.Time
-	alive    int // open /api/alive connections: one per open tab
+	alive    int    // open /api/alive connections: one per open tab
+	reason   string // why the server stopped, printed on exit
 	done     chan struct{}
 	stopOnce sync.Once
 }
@@ -98,7 +97,7 @@ func runUI(args []string, out io.Writer) error {
 	url := fmt.Sprintf("http://%s/?t=%s", s.host, s.token)
 	fmt.Fprintln(out, "CMF management is running at:")
 	fmt.Fprintln(out, "  "+url)
-	fmt.Fprintln(out, "It stops when you close the tab, after 30 idle minutes, or with Ctrl-C.")
+	fmt.Fprintln(out, "It stops with the Quit button, 30 minutes after its last tab closes, or with Ctrl-C.")
 	if !noOpen {
 		if err := openBrowser(url); err != nil {
 			fmt.Fprintln(out, "Couldn't open a browser (", err, "); open the address above yourself.")
@@ -111,18 +110,32 @@ func runUI(args []string, out io.Writer) error {
 	select {
 	case <-s.done:
 	case <-sig:
+		s.stop("Ctrl-C")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
-	fmt.Fprintln(out, "CMF management stopped.")
+	s.mu.Lock()
+	reason := s.reason
+	s.mu.Unlock()
+	fmt.Fprintf(out, "CMF management stopped: %s.\n", reason)
 	return nil
 }
 
-func (s *uiServer) stop() { s.stopOnce.Do(func() { close(s.done) }) }
+func (s *uiServer) stop(reason string) {
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.reason = reason
+		s.mu.Unlock()
+		close(s.done)
+	})
+}
 
-// watch stops the server after the tab closed (and didn't come back) or
-// after the idle limit. A running fix or apply keeps it alive.
+// watch stops the server after the idle limit. An open tab counts as
+// activity, and the idle clock starts when the last one goes away, so a tab
+// the browser discards or freezes (Chrome Memory Saver, tab-discard
+// extensions, sleep) gets the full limit to come back. A running fix or
+// apply keeps it alive.
 func (s *uiServer) watch() {
 	for {
 		select {
@@ -132,11 +145,10 @@ func (s *uiServer) watch() {
 		}
 		s.mu.Lock()
 		now, busy := time.Now(), s.busy
-		closed := s.alive == 0 && !s.byeAt.IsZero() && now.Sub(s.byeAt) > uiCloseGrace && s.lastSeen.Before(s.byeAt.Add(time.Second))
-		idle := now.Sub(s.lastSeen) > uiIdleLimit
+		idle := s.alive == 0 && now.Sub(s.lastSeen) > uiIdleLimit
 		s.mu.Unlock()
-		if !busy && (closed || idle) {
-			s.stop()
+		if !busy && idle {
+			s.stop(fmt.Sprintf("no open tab or request for %s", uiIdleLimit))
 			return
 		}
 	}
@@ -159,7 +171,7 @@ func (s *uiServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/backups", s.api(s.backups))
 	mux.HandleFunc("POST /api/restore/{stamp}", s.stream(s.restore))
 	mux.HandleFunc("POST /api/instructions/{app}", s.stream(s.addInstructions))
-	mux.HandleFunc("POST /api/bye", s.bye)
+	mux.HandleFunc("POST /api/quit", s.quit)
 	mux.HandleFunc("GET /api/alive", s.aliveHandler)
 	return s.guard(mux)
 }
@@ -213,24 +225,30 @@ func (s *uiServer) index(w http.ResponseWriter, r *http.Request) {
 	w.Write(page)
 }
 
-func (s *uiServer) bye(w http.ResponseWriter, r *http.Request) {
+// quit is the page's Quit button. It waits for a running change to finish.
+func (s *uiServer) quit(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.byeAt = time.Now()
+	busy := s.busy
 	s.mu.Unlock()
+	if busy {
+		http.Error(w, "a change is still running; quit when it finishes", http.StatusConflict)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+	s.stop("Quit button")
 }
 
-// aliveHandler holds one request open per tab. When the last one drops (the
-// tab closed, or the browser quit without a "bye"), the close grace starts.
+// aliveHandler holds one request open per tab. While any is open the server
+// isn't idle; when the last one drops (the tab closed, was discarded, or the
+// machine slept), the idle clock starts from that moment.
 func (s *uiServer) aliveHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.alive++
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		if s.alive--; s.alive == 0 {
-			s.byeAt = time.Now()
-		}
+		s.alive--
+		s.lastSeen = time.Now()
 		s.mu.Unlock()
 	}()
 	w.Header().Set("Content-Type", "text/plain")

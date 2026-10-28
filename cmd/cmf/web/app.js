@@ -560,11 +560,62 @@ $("apply-btn").addEventListener("click", async () => {
 
 // --- lifetime -------------------------------------------------------------------------------
 
-// The server stops when this tab closes, or after 30 minutes without a
-// request. The open /api/alive request is how it knows the tab is still
-// there, even if the browser quits without sending the "bye".
-fetch("/api/alive", { credentials: "same-origin" }).catch(() => {});
-window.addEventListener("pagehide", () => navigator.sendBeacon("/api/bye"));
+// The server stops with the Quit button, or 30 minutes after its last tab goes
+// away. The open /api/alive request is how it knows this tab is here. When the
+// connection drops (the machine slept, or the server stopped), the page
+// reconnects; if the server is gone, it says so instead of failing silently.
+let stopped = false;
+
+function showStopped(message) {
+  if (stopped) return;
+  stopped = true;
+  $("stopped-text").textContent = message;
+  $("stopped").hidden = false;
+  document.querySelector("main").hidden = true;
+  document.querySelector(".tabs").hidden = true;
+  $("quit").hidden = true;
+}
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+let aliveRunning = false;
+
+async function keepAlive() {
+  if (aliveRunning || stopped) return;
+  aliveRunning = true;
+  let failures = 0;
+  while (!stopped && failures < 3) {
+    try {
+      const res = await fetch("/api/alive", { credentials: "same-origin", cache: "no-store" });
+      if (!res.ok) break; // the server restarted with a new token
+      failures = 0;
+      await res.text(); // returns only when the connection ends
+    } catch {
+      failures++;
+    }
+    if (!stopped) await pause(2000);
+  }
+  aliveRunning = false;
+  showStopped("CMF management has stopped. Open the CMF app again to continue.");
+}
+
+// A page restored from the back/forward cache, or shown again after sleep,
+// picks the connection back up.
+window.addEventListener("pageshow", keepAlive);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAlive();
+});
+keepAlive();
+
+$("quit").addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/quit", { method: "POST", credentials: "same-origin" });
+    if (res.status === 409) {
+      openDialog("Can't quit yet", await res.text());
+      return;
+    }
+  } catch {}
+  showStopped("CMF management has stopped. Open the CMF app again when you need it.");
+});
 
 history.replaceState({ tab: "status" }, "", "#status");
 show("status", { push: false });
