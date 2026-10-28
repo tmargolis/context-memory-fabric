@@ -141,3 +141,5 @@ docs/PUBLIC-PREVIEW-PLAN.md
 docs/adr/0005-reasoning-episode-capture.md
 scripts/dedupe_entities_report.py
 scripts/import_claude_history_prompts.py
+
+testers

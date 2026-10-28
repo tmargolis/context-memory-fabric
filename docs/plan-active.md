@@ -2,7 +2,7 @@
 
 The milestones still to do, in execution order. Index and decisions log: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). Completed milestones: [plan-history.md](plan-history.md).
 
-**MS10a (second-user readiness) closed 2026-10-08**; its record is in [plan-history.md](plan-history.md#ms10a--second-user-readiness-2026-10-08). **B06 closed 2026-10-12** ([record](plan-history.md#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12)); review continues under [standing operations](#recurring-review-operations). Remaining work is in the [Backlog](#backlog), followed by [MS10](#ms10--distribution-and-ecosystem). **MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07), and what it left open is in the [Backlog](plan-history.md#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
+**MS10a (second-user readiness) closed 2026-10-08**; its record is in [plan-history.md](plan-history.md#ms10a--second-user-readiness-2026-10-08). **B06 closed 2026-10-12** ([record](plan-history.md#b06--recurring-review-operations-and-outstanding-promotions-closed-2026-10-12)); review continues under [standing operations](#recurring-review-operations). Remaining work is in the [Backlog](#backlog) and [MS11](#ms11--knowledge-provider-follow-ons-from-ms5). **MS10 (distribution) is on hold (User, 2026-10-27)** after the setup-simplification work recorded under [MS10](#ms10--distribution-and-ecosystem). **MS9 (graph quality for retrieval) closed 2026-10-07**; its record is in [plan-history.md](plan-history.md#ms9--graph-quality-for-retrieval-2026-09-30--10-07), and what it left open is in the [Backlog](plan-history.md#merge-related-episodes-career-tailoring-threads-deferred-out-of-ms9-2026-10-07).
 
 **MS4b and MS4b-antigravity closed 2026-09-28**, and their record is in [plan-history.md](plan-history.md#ms4b--claude-code-transcript-adapter-build-backfill-re-derivation-review-2026-09-18--09-22). **MS4d (Codex) closed 2026-09-30 (Gemini CLI dropped per user steer)**, and its record is in [plan-history.md](plan-history.md#ms4d--codex-transcript-adapter-and-ongoing-capture-2026-09-30). **MS4c (OpenClaw) remains on hold (User, 2026-09-28).** Its plan is kept intact below but not scheduled. What the active coding adapters keep capturing goes to the recurring review pass ([Backlog](#backlog)).
 
@@ -51,18 +51,31 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ## MS10 — Distribution and ecosystem
 
+**⏸ On hold (2026-10-27).** Paused after the setup-simplification work below. Its plan is kept intact but not scheduled.
+
 **Goal:** Make CMF useful beyond the original personal deployment. Roadmap [Milestone 10](ROADMAP.md#milestone-10--distribution-and-ecosystem).
+
+### Progress: setup simplification (2026-10-21 → 10-26)
+
+Prompted by the first second-user setup call (Noel, 2026-10-21). Plan, per-item status and build record: [setup-simplification-plan.md](setup-simplification-plan.md).
+
+- **Server ([Phase 1](setup-simplification-plan.md#phase-1-make-failures-visible-and-self-explaining-server-code)):** startup config check, anticipated failures returned as `ToolError`, empty graph not an error, `memory_status`, `/health`, port guard, `cmf_selftest`, ranked LLM providers with failover.
+- **Docker with no checkout ([Phase 2](setup-simplification-plan.md#phase-2-docker-stack-that-needs-no-checkout)):** multi-arch image `ghcr.io/tmargolis/context-memory-fabric`, one user compose file plus a dev overlay, capture poller as a container, one config home in `~/.cmf/` for both install modes; Todd's install consolidated 2026-10-23.
+- **Context Memory Fabric management app ([Phase 3](setup-simplification-plan.md#phase-3-the-context-memory-fabric-management-app)):** `cmf` (Go) with status/doctor and Fix actions, feature manifest with apply/restore and dated backups, client config writers, `cmf migrate`, embedded GUI, `cmf bridge` (no Node), install modes, remote access helper, capture wiring and token estimates.
+- **First-run and docs ([Phase 4](setup-simplification-plan.md#phase-4-first-run-value-and-docs)):** `cmf backfill`, QUICKSTART.md, SETUP.md and CLIENTS.md led by the app.
+- **Releases:** v0.1.0 → v0.1.9 and v1.0.0 → v1.0.3 (2026-10-25 → 10-28); [build steps](setup-simplification-plan.md#build-steps).
+- **Left open there:** in-app Update (3.7); remote access in the UI (3.10); actual-vs-estimate, dollar estimates and the per-source poller switch (3.11); `cmf migrate` against a real old install; the [definition-of-done](setup-simplification-plan.md#5-definition-of-done) tester runs beyond Todd's Mac.
 
 ### Tasks
 
-- [ ] One-command local Docker Compose deployment; documented minimal (memory-only) and full (journal + memory + knowledge) configs.
-- [ ] Python SDK + OpenAPI description; MCP server package.
+- [x] One-command local Docker Compose deployment; documented minimal (memory-only) and full (journal + memory + knowledge) configs. Done by setup simplification 2.2 and 3.2: `deploy/docker/compose.yml` with feature profiles, chosen in the app and documented in QUICKSTART.md.
+- [/] Python SDK + OpenAPI description; MCP server package. The server ships as a published image (2.1) and the `cmf` release binaries (3.7); SDK and OpenAPI not started.
 - [ ] Adapter and provider development kits + conformance tests.
-- [ ] Migration and backup tools (journal identity, provenance, config).
+- [/] Migration and backup tools (journal identity, provenance, config). Install migration with backups and restore is done (`cmf migrate`, `cmf restore`, 2.5/3.5); a standalone backup/restore of journal, graph and provenance is not.
 - [ ] Threat model and privacy guide.
 - [ ] **Scopes (`personal` / `project`)** — access control model, deferred from MS6b (one person, one graph, no scoped caller yet). MS4c may need it sooner if OpenClaw's multi-agent writes require per-agent scoping.
 - [ ] A web review/governance UI on top of the MS6 APIs.
-- [ ] Sample deployments: individual, developer-team, self-hosted server.
+- [/] Sample deployments: individual, developer-team, self-hosted server. Individual is covered by the Standard and Developer install modes (3.9); team and self-hosted server are not (multi-user hosting was out of scope).
 
 ### Exit gate
 
@@ -75,20 +88,55 @@ The milestones still to do, in execution order. Index and decisions log: [IMPLEM
 
 ## MS11 — Knowledge-provider follow-ons (from MS5)
 
-**Status:** Live Notion read-only retrieval closed 2026-10-21; [implementation, verification, and known limitations](plan-history.md#ms11--live-notion-knowledge-provider-closed-2026-10-21) moved to history. Notion staging/review passed live fixture acceptance; guarded application is implemented off by default and passed 214 offline regression tests and awaits review plus separately authorized write acceptance. Other follow-ons remain open. MS11 as a whole remains open.
+**Status:** MS11a (Notion) is complete (2026-10-27): read-only retrieval, proposals and guarded apply all working. MS11b–MS11f are open. MS11 as a whole remains open.
 
-**Goal:** Take the second knowledge provider from proof to everyday use, and add the next provider when one is wanted.
+**Goal:** Take the second knowledge provider from proof to everyday use, and add the next sources when they are wanted.
 
-### Tasks
+| Sub-milestone | Source | Kind | Status |
+|---|---|---|---|
+| [MS11a](#ms11a-notion) | Notion | Knowledge base | 🟢 done 2026-10-27 |
+| [MS11b](#ms11b-gmail-redesigned) | Gmail (redesigned) | Messaging | ⚪ |
+| [MS11c](#ms11c-slack) | Slack | Messaging | ⚪ |
+| [MS11d](#ms11d-microsoft-teams) | Microsoft Teams | Messaging | ⚪ |
+| [MS11e](#ms11e-google-drive) | Google Drive | Knowledge base | ⚪ |
+| [MS11f](#ms11f-microsoft-365--sharepoint) | Microsoft 365 / SharePoint | Knowledge base | ⚪ |
+
+Messaging sources are listeners, like the AI assistants: CMF reads the conversations you choose and queues what's worth keeping for review as episodes or doc proposals, rather than serving a searchable knowledge base. The management app already shows MS11b–MS11f as "coming soon" ([setup-simplification-plan.md §3.4](setup-simplification-plan.md#34-features-the-app-manages)).
+
+### MS11a: Notion
+
+**🟢 Done (2026-10-27).** Notion is fully working: read-only retrieval, proposal staging and review, and guarded apply.
 
 - [x] **Live Notion knowledge provider** — completed 2026-10-21. Actual CMF MCP retrieval, nested text, provenance, unchanged-page cache reuse, and edit-triggered cache invalidation verified. [Completed record and caveats](plan-history.md#ms11--live-notion-knowledge-provider-closed-2026-10-21).
-- [ ] **Notion `propose_change` — after read-only retrieval** (User, 2026-10-21). [Design approved](notion-proposals-design.md) 2026-10-21. First bounded phase implemented: provider-aware envelope, bounded live block inspection, fresh single-paragraph proposal staging, digest-bound manual review, atomic local records, and explicit unsupported application. Legacy wiki JSON/callers remain compatible; automatic review/apply and consolidation exclude Notion proposals. Offline verification recorded in the design. Live fixture staging/review passed 2026-10-21 through refreshed MCP tools: nested paragraph, captured ancestry, CMF-sourced electrician shortlist, exact diff, digest-bound approval, and unsupported apply confirmed (proposal `notion-a4f30f46-6a65-440a-82b6-440d41ca6749`). User then authorized guarded-apply implementation. Off-by-default writer, dry run, lock, durable attempts, conflict checks, verification, cache generations and explicit reconciliation are implemented; the final isolated regression run passed 214 tests (four live tests deselected), including MCP contracts, wiki compatibility, automatic-review exclusion, concurrency and uncertain-outcome recovery. Review and live write acceptance remain open. No write token/configuration changes, additional service restarts, or Notion mutations were performed. Guarded live write acceptance remains open.
-- [ ] **Decide whether to enable Gmail in `.env`** (`CMF_KNOWLEDGE_PROVIDERS`). Enabling it puts email into `get_context` for every connected client, including ChatGPT and Gemini, so it is a privacy decision for User. Options:
-  - leave it off;
-  - enable it for everyone;
-  - first add per-client or per-scope gating (this ties into MS10 scopes).
-- [ ] **GitHub repository provider.** Gmail replaced it as MS5's proof, and it remains the next document-shaped source.
-- [ ] **Incremental Gmail sync.** Today the snapshot is refreshed by re-running `scripts/import_gmail_mbox.py` over a fresh Takeout export or a connector pull. Replace that with an incremental refresh that has a cursor.
+- [x] **Notion `propose_change` — after read-only retrieval** (User, 2026-10-21; confirmed fully working 2026-10-27). [Design approved](notion-proposals-design.md) 2026-10-21. First bounded phase implemented: provider-aware envelope, bounded live block inspection, fresh single-paragraph proposal staging, digest-bound manual review, atomic local records, and explicit unsupported application. Legacy wiki JSON/callers remain compatible; automatic review/apply and consolidation exclude Notion proposals. Offline verification recorded in the design. Live fixture staging/review passed 2026-10-21 through refreshed MCP tools: nested paragraph, captured ancestry, CMF-sourced electrician shortlist, exact diff, digest-bound approval, and unsupported apply confirmed (proposal `notion-a4f30f46-6a65-440a-82b6-440d41ca6749`). User then authorized guarded-apply implementation. Off-by-default writer, dry run, lock, durable attempts, conflict checks, verification, cache generations and explicit reconciliation are implemented; the final isolated regression run passed 214 tests (four live tests deselected), including MCP contracts, wiki compatibility, automatic-review exclusion, concurrency and uncertain-outcome recovery. Review and guarded live write acceptance, open at that point, are now done: User confirmed Notion fully working 2026-10-27.
+
+### MS11b: Gmail (redesigned)
+
+Redesign the MS5 sent-mail snapshot provider as a capture source: CMF reads the conversations you choose and queues what's worth keeping for review. Plan: [provider-gmail.md](provider-gmail.md) (draft 2026-10-27). Gmail → CMF only for now.
+
+- [ ] **Decisions D1–D6** in [provider-gmail.md](provider-gmail.md#decisions-for-user): OAuth publishing, Pub/Sub vs IMAP IDLE, trigger label, quiet period, denylist, backfill.
+- [ ] **Phases 0–4** in [provider-gmail.md](provider-gmail.md#phases): prove the `users.watch` trigger, build `server/adapters/gmail/`, tune extraction on two weeks of sent mail, go live in `cmf-poller`, retire the snapshot provider.
+- Dropped (User, 2026-10-27): incremental Gmail sync, and the "enable Gmail in `get_context`" decision. Raw mail no longer reaches `get_context`; only reviewed episodes do.
+
+### MS11c: Slack
+
+- [ ] Slack listener: CMF reads the conversations you choose and queues what's worth keeping for review.
+
+### MS11d: Microsoft Teams
+
+- [ ] Teams listener: CMF reads the conversations you choose and queues what's worth keeping for review.
+
+### MS11e: Google Drive
+
+- [ ] Google Drive knowledge provider (`KnowledgeSource`), passing the MS5 conformance suite; enable the app's "coming soon" row.
+
+### MS11f: Microsoft 365 / SharePoint
+
+- [ ] Microsoft 365 / SharePoint knowledge provider (`KnowledgeSource`), passing the MS5 conformance suite; enable the app's "coming soon" row.
+
+### Other follow-ons
+
+- [ ] **GitHub repository provider.** Gmail replaced it as MS5's proof, and it remains a document-shaped source.
 
 ### Exit gate
 
