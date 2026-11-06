@@ -37,6 +37,18 @@ def test_append_heading_and_fences():
     assert append_material(base,'tail','missing').endswith('tail\n\n')
 
 
+def test_append_without_matching_heading_lands_before_backmatter():
+    base='# Page\n\n## A\nold\n\n## Related\n- [[x]]\n\n## Sources\n- s\n### Raw\n- r\n'
+    out=append_material(base,'loose','Missing Section')
+    assert out.index('## Missing Section\n\nloose') < out.index('## Related')
+    assert out.index('old') < out.index('loose')
+    out=append_material(base,'## New\nbody')
+    assert out.index('## New') < out.index('## Related') and out.count('## New')==1
+    deep='# P\n\n### A\nx\n\n### Sources\n- s\n'
+    assert append_material(deep,'y','B').index('### B\n\ny') < append_material(deep,'y','B').index('### Sources')
+    assert append_material('# P\n\n## A\nx\n','tail','A').endswith('tail\n\n')
+
+
 def test_append_refuses_frontmatter():
     with pytest.raises(ValueError,match='frontmatter'):append_material('old','---\ntitle: rewrite\n---\n')
 

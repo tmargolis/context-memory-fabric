@@ -37,7 +37,7 @@ Reject:
 - Pages that duplicate an existing page or another proposal in the batch.
 - Snapshots of a design or schema that has since changed.
 
-**Judge what a doc adds.** A doc with `mode: "append"` adds `addition` to the live page, under `target_heading` when set (otherwise at the end); the rest of the page is unchanged and its `created:` date is kept. Judge the addition: reject it if the page already covers it, if it belongs on a different page, or if it is a new topic that should be its own page. A doc with `mode: "replace"` is a deliberate whole-page rewrite: read it against the live page (`get_doc_proposal` shows the diff) and flag it if it removes substantive content.
+**Judge what a doc adds.** A doc with `mode: "append"` adds `addition` to the live page, under `target_heading` when set (when the page has no such heading, as a new section before its trailing Related/Sources sections); the rest of the page is unchanged and its `created:` date is kept. Judge the addition: reject it if the page already covers it, if it belongs on a different page, or if it is a new topic that should be its own page. A doc with `mode: "replace"` is a deliberate whole-page rewrite: read it against the live page (`get_doc_proposal` shows the diff) and flag it if it removes substantive content.
 
 **Conflicts stay separate.** `conflicts_with` names other pending proposals for the same page, often from another conversation. Judge each on its own; when two say incompatible things, flag rather than pick.
 

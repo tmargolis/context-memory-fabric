@@ -220,6 +220,34 @@ def strip_frontmatter(content: str) -> str:
     return content[match.end():].lstrip("\n") if match else content
 
 
+BACKMATTER_HEADINGS = frozenset({
+    "related", "related pages", "related notes", "see also", "sources", "source", "references",
+    "links", "further reading", "citations", "notes and sources",
+})
+
+
+def _backmatter_start(headings: list[tuple[int, int, str]], end: int) -> int:
+    """Line index where the page's trailing back-matter sections begin (``end`` if none).
+
+    Walks the top-level sections backwards from the end of the page; a run of
+    sections titled like Related/Sources/References counts as back-matter, and
+    their own subsections go with them.
+    """
+    sections = [h for h in headings if h[1] > 1]
+    if not sections:
+        return end
+    top = min(depth for _, depth, _ in sections)
+    at = end
+    for n, depth, title in reversed(sections):
+        if depth > top:
+            continue
+        if title.rstrip(":").strip().lower() in BACKMATTER_HEADINGS:
+            at = n
+        else:
+            break
+    return at
+
+
 def append_material(base: str, addition: str, heading: Optional[str] = None) -> str:
     """Insert new material without rewriting old bytes; ignore headings inside fences."""
     if not addition.strip():
@@ -247,6 +275,14 @@ def append_material(base: str, addition: str, heading: Optional[str] = None) -> 
     if matches:
         i, level, _ = matches[0]
         at = next((n for n, depth, _ in headings if n > i and depth <= level), len(lines))
+    else:
+        # No (or no matching) target heading: land before the page's trailing back-matter
+        # (Related / Sources / ...), never after it, and open the named section when the
+        # addition doesn't bring its own heading.
+        at = _backmatter_start(headings, len(lines))
+        if wanted and not re.match(r"^#{1,6} ", addition.lstrip()):
+            level = min((d for _, d, _ in headings if d > 1), default=2)
+            addition = f"{'#' * level} {wanted}\n\n{addition.strip()}"
     left, right = "".join(lines[:at]), "".join(lines[at:])
     return left + ("" if left.endswith("\n\n") or not left else "\n" if left.endswith("\n") else "\n\n") + addition.strip() + "\n\n" + right
 
