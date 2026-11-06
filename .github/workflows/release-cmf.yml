@@ -71,7 +71,7 @@ jobs:
 
   release:
     needs: [check, build]
-    runs-on: macos-14 # lipo, for the universal macOS binary
+    runs-on: macos-15 # lipo, for the universal macOS binary
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
