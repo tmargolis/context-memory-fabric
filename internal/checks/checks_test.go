@@ -387,6 +387,37 @@ func TestConnectorRow(t *testing.T) {
 	if r := byID(Evaluate(f))["connector"]; r.Level != NA || !strings.Contains(r.Detail, "Settings → Connectors") {
 		t.Fatalf("%+v", r)
 	}
+	// v1.0.4: Cowork's connector calls announce themselves as claude-code;
+	// the server reports them by how they signed in instead.
+	f.Health.ConnectorSeen = &probe.ConnectorSeen{Calls: 40, LastSeen: at.Add(-time.Hour), Names: []string{"claude_code"},
+		Captures: 6, LastCapture: at.Add(-3 * time.Hour)}
+	r := byID(Evaluate(f))["connector"]
+	if r.Level != OK || !strings.Contains(r.Detail, "calls       40 in the last day (the apps call themselves claude_code)") ||
+		!strings.Contains(r.Detail, "captures    6 capture calls in the last 7 days") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// With connector calls reported apart, Claude Desktop and Claude Code (no
+// local entries) both show the connector as their connection.
+func TestConnectorCallsConnectBothClaudeRows(t *testing.T) {
+	f := healthy()
+	f.Env["CMF_MCP_ISSUER_URL"] = "https://mac.tail1.ts.net"
+	f.Clients = []clients.State{
+		{ID: "claude-code", Label: "Claude Code", Path: "/u/.claude.json", Installed: true},
+		{ID: "claude-desktop", Label: "Claude Desktop", Path: "/u/cfg.json", Installed: true},
+	}
+	f.Health.ClientsSeen = nil
+	f.Health.ConnectorSeen = &probe.ConnectorSeen{Calls: 3, LastSeen: at.Add(-time.Hour), Names: []string{"claude_code"}}
+	r := byID(Evaluate(f))
+	for _, id := range []string{"app-claude-code", "app-claude-desktop"} {
+		if c := r[id]; c.Level != OK || !strings.Contains(c.Detail, "connection  the claude.ai connector (no local entry") {
+			t.Fatalf("%s: %+v", id, c)
+		}
+	}
+	if r["connector"].Level != OK {
+		t.Fatalf("%+v", r["connector"])
+	}
 }
 
 // An app whose entry looks fine but whose calls the server refuses (a lapsed

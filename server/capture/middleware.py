@@ -55,6 +55,33 @@ def _client_info_for(session: Any) -> Optional[Any]:
     return getattr(client_params, "client_info", None) if client_params is not None else None
 
 
+def auth_via(request: Any) -> Optional[str]:
+    """How an HTTP call signed in: "connector" (an OAuth client such as the
+    claude.ai connector), "local" (this computer's CMF_MCP_AUTH_TOKEN), or None
+    (stdio, or no auth).
+
+    The client name can't tell a connector call apart: Cowork and Chat reach
+    CMF through the claude.ai connector announcing themselves as "claude-code",
+    the same name the Claude Code CLI uses on a local entry (2026-11-06).
+    """
+    scope = getattr(request, "scope", None)
+    user = scope.get("user") if isinstance(scope, dict) else None
+    token = getattr(user, "access_token", None)
+    if token is None:
+        try:
+            from mcp.server.auth.middleware.auth_context import get_access_token
+
+            token = get_access_token()
+        except Exception:  # noqa: BLE001 - capture never fails a call
+            token = None
+    client_id = getattr(token, "client_id", None)
+    if not client_id:
+        return None
+    from server.core.oauth_provider import LOCAL_CLIENT_ID
+
+    return "local" if client_id == LOCAL_CLIENT_ID else "connector"
+
+
 def build_tool_call_event(
     *,
     tool_name: str,
@@ -62,6 +89,7 @@ def build_tool_call_event(
     result: Any,
     session: Any,
     request_id: Any,
+    via: Optional[str] = None,
 ) -> Optional[SourceEvent]:
     """Construct the SourceEvent for one captured tool call, or None if filtered out."""
     client_info = _client_info_for(session)
@@ -105,6 +133,7 @@ def build_tool_call_event(
         metadata={
             "client_version": identity.client_version(client_info),
             "redacted_field_count": redacted_count,
+            "via": via,
         },
     )
     return event, redacted_count
@@ -162,7 +191,8 @@ class CaptureMiddleware:
             self._health.record_dropped("queue_full")
             logger.warning("Capture queue full — dropped event for tool call (event_id=%s)", event.event_id)
 
-    async def _capture_tool_call(self, tool_name: str, arguments: dict[str, Any], result: Any, session: Any, request_id: Any) -> None:
+    async def _capture_tool_call(self, tool_name: str, arguments: dict[str, Any], result: Any, session: Any, request_id: Any,
+                                 via: Optional[str] = None) -> None:
         try:
             built = build_tool_call_event(
                 tool_name=tool_name,
@@ -170,6 +200,7 @@ class CaptureMiddleware:
                 result=result,
                 session=session,
                 request_id=request_id,
+                via=via,
             )
             if built is None:
                 return
@@ -210,11 +241,15 @@ class CaptureMiddleware:
             return result
 
         arguments = params.get("arguments") or {}
+        try:
+            via = auth_via(getattr(ctx, "request", None))
+        except Exception:  # noqa: BLE001 - capture never fails a call
+            via = None
         # Fire-and-forget: scheduled as a task, not awaited, so a slow or
         # failing capture can never add latency to a response the client
         # already has.
         asyncio.create_task(
-            self._capture_tool_call(tool_name, arguments, result, ctx.session, ctx.request_id)
+            self._capture_tool_call(tool_name, arguments, result, ctx.session, ctx.request_id, via)
         )
         return result
 

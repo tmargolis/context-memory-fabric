@@ -143,3 +143,6 @@ scripts/dedupe_entities_report.py
 scripts/import_claude_history_prompts.py
 
 testers
+
+# Claude Code's per-machine settings (permissions, local overrides)
+.claude/

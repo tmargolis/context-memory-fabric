@@ -56,7 +56,11 @@ def falkordb_status(graph: str) -> dict[str, Any]:
 
 
 def clients_seen(journal_path: Optional[Path] = None, now: Optional[datetime] = None) -> list[dict[str, Any]]:
-    """AI apps that called a CMF tool in the last 24 h, from the journal's tool-call events."""
+    """AI apps that called a CMF tool in the last 24 h, from the journal's tool-call events.
+
+    Calls that came through the claude.ai connector are left out: their client
+    name can't say which app made them, so connector_seen reports them instead.
+    """
     from server.journal.store import DEFAULT_JOURNAL_PATH
 
     path = Path(journal_path) if journal_path is not None else DEFAULT_JOURNAL_PATH
@@ -69,6 +73,7 @@ def clients_seen(journal_path: Optional[Path] = None, now: Optional[datetime] = 
             rows = conn.execute(
                 "SELECT harness, MAX(observed_at), COUNT(*), json_extract(metadata_json, '$.client_version') "
                 "FROM events WHERE event_type = 'mcp_tool_call' AND observed_at >= ? "
+                "AND COALESCE(json_extract(metadata_json, '$.via'), '') != 'connector' "
                 "GROUP BY harness ORDER BY MAX(observed_at) DESC",
                 (since,),
             ).fetchall()
@@ -80,6 +85,46 @@ def clients_seen(journal_path: Optional[Path] = None, now: Optional[datetime] = 
         {"harness": harness, "last_seen": last_seen, "calls": calls, "client_version": client_version}
         for harness, last_seen, calls, client_version in rows
     ]
+
+
+def connector_seen(journal_path: Optional[Path] = None, now: Optional[datetime] = None) -> dict[str, Any]:
+    """Calls that signed in through the claude.ai connector (an OAuth client).
+
+    calls / last_seen / names cover the last 24 h (names: the harnesses the
+    clients announced, e.g. claude_code for Cowork); captures / last_capture
+    count capture_session calls over the last 7 days. Empty when none.
+    """
+    from server.journal.store import DEFAULT_JOURNAL_PATH
+
+    path = Path(journal_path) if journal_path is not None else DEFAULT_JOURNAL_PATH
+    if not path.exists():
+        return {}
+    now = now or datetime.now(timezone.utc)
+    day, week = (now - CLIENTS_SEEN_WINDOW).isoformat(), (now - LIVE_CAPTURES_WINDOW).isoformat()
+    via = "json_extract(metadata_json, '$.via') = 'connector'"
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            calls, last_seen = conn.execute(
+                f"SELECT COUNT(*), MAX(observed_at) FROM events WHERE event_type = 'mcp_tool_call' AND {via} AND observed_at >= ?",
+                (day,),
+            ).fetchone()
+            names = [r[0] for r in conn.execute(
+                f"SELECT DISTINCT harness FROM events WHERE event_type = 'mcp_tool_call' AND {via} AND observed_at >= ? "
+                "ORDER BY harness", (day,),
+            ).fetchall()]
+            captures, last_capture = conn.execute(
+                f"SELECT COUNT(*), MAX(observed_at) FROM events WHERE event_type = 'mcp_tool_call' AND {via} "
+                "AND json_extract(content_json, '$.tool') = 'capture_session' AND observed_at >= ?",
+                (week,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    if not calls and not captures:
+        return {}
+    return {"calls": calls, "last_seen": last_seen, "names": names, "captures": captures, "last_capture": last_capture}
 
 
 def embedding_status(configured: int, graph: str, graph_exists: Optional[bool]) -> dict[str, Any]:
@@ -224,6 +269,7 @@ def snapshot(provider_tests: bool = False) -> dict[str, Any]:
         "retryable_writes": retryable,
         "llm_context": llm_context(config),
         "clients_seen": clients_seen(),
+        "connector_seen": connector_seen(),
         "live_captures": live_captures(),
         "refused_calls": refused.recent(),
         "config_check": startup_check.LAST_RESULT.as_dict() if startup_check.LAST_RESULT else None,

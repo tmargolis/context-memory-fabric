@@ -236,7 +236,7 @@ One connector on your claude.ai account reaches CMF from Claude Desktop's Chat a
 3. Click **Connect**. CMF's consent page asks for `CMF_MCP_OAUTH_PASSWORD` from `~/.cmf/.env`.
 4. Start a new conversation (or a new `claude` session). `claude mcp list` shows it as `claude.ai Context Memory Fabric`.
 
-Calls through the connector reach CMF named as Claude Desktop, whichever Claude app made them, so Status shows them on the Claude Desktop row. Don't also add a local entry for the same app: its tools would appear twice.
+Calls through the connector can't say which Claude app made them: Cowork, for one, announces itself as `claude-code`, the CLI's name. From v1.0.4 the server tells them apart by how they sign in (OAuth rather than the local token), and Status counts them, and the capture calls among them, on the claude.ai connector row; the Claude Desktop and Claude Code rows show the connector as their connection. Don't also add a local entry for the same app: its tools would appear twice.
 
 With capture off, memories come from what your AI apps save through CMF's tools (`remember`, `capture_session`) as you work.
 

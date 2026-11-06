@@ -94,6 +94,10 @@ type Health struct {
 	// Items each app staged with capture_session in the last 7 days, by
 	// harness (v0.1.7; absent before).
 	LiveCaptures map[string]LiveCapture `json:"live_captures"`
+	// Calls that signed in through the claude.ai connector (OAuth), which
+	// ClientsSeen leaves out: their client name can't say which app made
+	// them (v1.0.4; absent before).
+	ConnectorSeen *ConnectorSeen `json:"connector_seen"`
 	LLMContext   *LLMContext            `json:"llm_context"`
 	// Item 1.1; absent from servers that predate it.
 	ConfigCheck   *ConfigCheck   `json:"config_check"`
@@ -120,6 +124,16 @@ type BackgroundWrite struct {
 }
 
 // LiveCapture is one app's recent capture_session items.
+// ConnectorSeen: calls and names over the last day, capture_session calls
+// over the last 7 days.
+type ConnectorSeen struct {
+	Calls       int       `json:"calls"`
+	LastSeen    time.Time `json:"last_seen"`
+	Names       []string  `json:"names"`
+	Captures    int       `json:"captures"`
+	LastCapture time.Time `json:"last_capture"`
+}
+
 type LiveCapture struct {
 	Count int       `json:"count"`
 	Last  time.Time `json:"last"`

@@ -616,6 +616,26 @@ func checkClients(f probe.Facts) Result {
 	return r
 }
 
+// connectorLast is the latest call through the claude.ai connector. Servers
+// from v1.0.4 report connector calls by how they signed in (OAuth); older ones
+// only by name, and only Chat ever announced itself as claude_desktop: Cowork
+// says claude-code, so its connector calls looked like the CLI's.
+func connectorLast(f probe.Facts) time.Time {
+	var last time.Time
+	if f.Health == nil {
+		return last
+	}
+	if cs := f.Health.ConnectorSeen; cs != nil {
+		last = cs.LastSeen
+	}
+	for _, c := range f.Health.ClientsSeen {
+		if c.Harness == "claude_desktop" && c.LastSeen.After(last) {
+			last = c.LastSeen
+		}
+	}
+	return last
+}
+
 // checkConnector: the claude.ai connector, the recommended way for Claude
 // Desktop (Chat, Cowork, Code tab) and Claude Code to reach CMF. It needs
 // remote access (a public address with OAuth); it's active when Claude calls
@@ -627,14 +647,7 @@ func checkConnector(f probe.Facts) Result {
 		r.Level, r.Detail = NA, "not set up: it needs remote access first (`cmf remote enable tailscale`), then the connector added in claude.ai"
 		return r
 	}
-	var last time.Time
-	if f.Health != nil {
-		for _, c := range f.Health.ClientsSeen {
-			if c.Harness == "claude_desktop" && c.LastSeen.After(last) {
-				last = c.LastSeen
-			}
-		}
-	}
+	last := connectorLast(f)
 	if rc, ok := refusedSince(f, last, func(h string) bool { return strings.HasPrefix(h, "claude") && h != "claude_code" }); ok {
 		r.Level, r.Detail = Warn, refusedLine(f, rc)+"\naddress     "+addr+"/mcp\nreconnect it in claude.ai → Settings → Connectors (Disconnect, then Connect), then start a new conversation"
 		return r
@@ -643,7 +656,21 @@ func checkConnector(f probe.Facts) Result {
 		r.Level, r.Detail = NA, "remote access is on, but no Claude call came through a connector in the last day\naddress     "+addr+"/mcp\nadd it in claude.ai → Settings → Connectors, then start a new conversation"
 		return r
 	}
-	r.Level, r.Detail = OK, "active\naddress     "+addr+"/mcp\nlast call   "+stamp(last)+"\ncovers      Claude Desktop (Chat, Cowork, Code tab) and Claude Code"
+	lines := []string{"active", "address     " + addr + "/mcp", "last call   " + stamp(last)}
+	if cs := f.Health.ConnectorSeen; cs != nil {
+		if cs.Calls > 0 {
+			calls := fmt.Sprintf("calls       %d in the last day", cs.Calls)
+			if len(cs.Names) > 0 {
+				calls += " (the apps call themselves " + strings.Join(cs.Names, ", ") + ")"
+			}
+			lines = append(lines, calls)
+		}
+		if cs.Captures > 0 {
+			lines = append(lines, fmt.Sprintf("captures    %d capture calls in the last 7 days (latest %s)", cs.Captures, stamp(cs.LastCapture)))
+		}
+	}
+	lines = append(lines, "covers      Claude Desktop (Chat, Cowork, Code tab) and Claude Code")
+	r.Level, r.Detail = OK, strings.Join(lines, "\n")
 	return r
 }
 
@@ -681,12 +708,10 @@ func checkApps(f probe.Facts) []Result {
 		sourceByID[s.ID] = s
 	}
 	// A claude.ai connector belongs to the account, so every Claude app
-	// signed in to it has it; its calls arrive named claude_desktop.
+	// signed in to it has it, and its calls can't say which app made them.
 	connector := false
-	if d, ok := clientByID["claude-desktop"]; ok && len(d.CMF()) == 0 && f.Health != nil {
-		for _, c := range f.Health.ClientsSeen {
-			connector = connector || c.Harness == "claude_desktop"
-		}
+	if d, ok := clientByID["claude-desktop"]; ok && len(d.CMF()) == 0 {
+		connector = !connectorLast(f).IsZero()
 	}
 	var out []Result
 	for _, a := range appRows {
@@ -720,8 +745,8 @@ func checkApps(f probe.Facts) []Result {
 				lines = append(lines, "connection  "+state+" in "+tilde(c.Path))
 			}
 		}
-		if noEntry && connector && a.ID == "app-claude-code" {
-			lines[0] = "connection  the claude.ai connector (its calls show under Claude Desktop)"
+		if noEntry && connector && (a.ID == "app-claude-code" || a.ID == "app-claude-desktop") {
+			lines[0] = "connection  the claude.ai connector (no local entry in " + tilde(clientByID[a.Client].Path) + "; its calls and captures show on the connector row)"
 			connected = true
 		}
 		instrProblem := ""
