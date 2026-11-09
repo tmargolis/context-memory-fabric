@@ -63,7 +63,7 @@ Prompted by the first second-user setup call (Noel, 2026-10-21). Plan, per-item 
 - **Docker with no checkout ([Phase 2](setup-simplification-plan.md#phase-2-docker-stack-that-needs-no-checkout)):** multi-arch image `ghcr.io/tmargolis/context-memory-fabric`, one user compose file plus a dev overlay, capture poller as a container, one config home in `~/.cmf/` for both install modes; Todd's install consolidated 2026-10-23.
 - **Context Memory Fabric management app ([Phase 3](setup-simplification-plan.md#phase-3-the-context-memory-fabric-management-app)):** `cmf` (Go) with status/doctor and Fix actions, feature manifest with apply/restore and dated backups, client config writers, `cmf migrate`, embedded GUI, `cmf bridge` (no Node), install modes, remote access helper, capture wiring and token estimates.
 - **First-run and docs ([Phase 4](setup-simplification-plan.md#phase-4-first-run-value-and-docs)):** `cmf backfill`, QUICKSTART.md, SETUP.md and CLIENTS.md led by the app.
-- **Releases:** v0.1.0 → v0.1.9 and v1.0.0 → v1.0.4 (2026-10-25 → 11-06); [build steps](setup-simplification-plan.md#build-steps).
+- **Releases:** v0.1.0 → v0.1.9 and v1.0.0 → v1.0.5 (2026-10-25 → 11-09); [build steps](setup-simplification-plan.md#build-steps).
 - **Left open there:** in-app Update (3.7); remote access in the UI (3.10); actual-vs-estimate, dollar estimates and the per-source poller switch (3.11); `cmf migrate` against a real old install; the [definition-of-done](setup-simplification-plan.md#5-definition-of-done) tester runs beyond Todd's Mac.
 
 ### Tasks
