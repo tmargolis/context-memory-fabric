@@ -92,7 +92,7 @@ async def explain_graph(
     edge_rows = await driver.execute_query(
         "MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity) WHERE $uuid IN r.episodes "
         "RETURN r.uuid AS uuid, s.name AS source, r.fact AS fact, t.name AS target, "
-        "r.valid_at AS valid_at, r.invalid_at AS invalid_at",
+        "r.valid_at AS valid_at, r.invalid_at AS invalid_at, r.expired_at AS expired_at",
         uuid=uuid,
     )
     edges = _records(edge_rows)

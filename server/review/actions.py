@@ -21,13 +21,19 @@ because call 41 exhausted the Gemini free tier.
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
 from pathlib import Path
 import sqlite3
 from typing import Any, Optional
 
-from server.consolidation.promotion import PromotionStore, promote_reviewed
+from server.consolidation.promotion import (
+    PromotionStore,
+    _chronological_key,
+    _reference_time,
+    promote_reviewed,
+)
 from server.consolidation.store import ConsolidationStore
 from server.core.config import default_reviewer
 from server.episode_proposals import move_episode_mirror
@@ -185,6 +191,69 @@ def expand_evidence(
     )
     return {"dry_run": False, "memory_id": memory_id, "prior_count": len(prior), "new_count": len(merged),
             "added": added, "audit_id": audit_id}
+
+
+_PRECISIONS = ("exact", "day", "month", "year")
+
+
+def set_event_date(
+    conn: sqlite3.Connection,
+    review_store: ReviewStore,
+    memory_id: str,
+    reason: str,
+    event_date: Optional[str] = None,
+    date_precision: Optional[str] = None,
+    reviewer: str = DEFAULT_REVIEWER,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Set a staged episode's `event_date`, which promotion hands Graphiti as `valid_at`.
+
+    With no `event_date`, uses the source conversation's `observed_at` (the
+    transcript timestamp) at `exact` precision, the time promotion would
+    fall back to anyway; setting it makes the date explicit in review and
+    lets a reviewer correct it. Keeps the memory_id, so open review runs and
+    their recommendations still point at the row. Refused once the episode
+    has any promotion history: by then the date lives in the graph, and
+    `correct_memory` is the path. Audited via `ReviewStore.note()`; the
+    review verdict is untouched.
+    """
+    row = conn.execute(
+        "SELECT dm.event_date, dm.date_precision, ev.observed_at FROM derived_memories dm "
+        "LEFT JOIN events ev ON ev.event_id = dm.source_event_id WHERE dm.memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    if row is None:
+        return {"error": f"no derived_memories row for memory_id={memory_id!r}", "memory_id": memory_id}
+    try:
+        promoted = conn.execute("SELECT 1 FROM promotions WHERE memory_id = ?", (memory_id,)).fetchone()
+    except sqlite3.OperationalError:  # no promotions table: nothing has ever been promoted
+        promoted = None
+    if promoted:
+        return {"error": "episode has promotion history; use correct_memory to re-date it in the graph",
+                "memory_id": memory_id}
+    if event_date is None:
+        if not row["observed_at"]:
+            return {"error": "no event_date given and the source conversation has no timestamp", "memory_id": memory_id}
+        event_date, date_precision = row["observed_at"], date_precision or "exact"
+    else:
+        try:
+            datetime.fromisoformat(event_date)
+        except ValueError:
+            return {"error": f"event_date {event_date!r} is not an ISO date", "memory_id": memory_id}
+        date_precision = date_precision or ("day" if len(event_date) == 10 else "exact")
+    if date_precision not in _PRECISIONS:
+        return {"error": f"date_precision must be one of {', '.join(_PRECISIONS)}", "memory_id": memory_id}
+
+    prior = {"event_date": row["event_date"], "date_precision": row["date_precision"]}
+    new = {"event_date": event_date, "date_precision": date_precision}
+    if dry_run or prior == new:
+        return {"dry_run": dry_run, "memory_id": memory_id, "prior": prior, "new": new, "changed": prior != new}
+    conn.execute("UPDATE derived_memories SET event_date = ?, date_precision = ? WHERE memory_id = ?",
+                 (event_date, date_precision, memory_id))
+    conn.commit()
+    audit_id = review_store.note(memory_id, "set_event_date", reviewer, reason, prior_state=prior, new_state=new)
+    return {"dry_run": False, "memory_id": memory_id, "prior": prior, "new": new, "changed": True,
+            "audit_id": audit_id}
 
 
 def bulk_reject(
@@ -458,6 +527,19 @@ def sample_audit(
     return [dict(r) for r in rows]
 
 
+def chronological(
+    consolidation_store: ConsolidationStore, journal_store: SqliteEventStore, memory_ids: list[str]
+) -> list[str]:
+    """`memory_ids` sorted by the time promotion will give each one (oldest
+    first, undated last; unknown ids keep their place at the end), so Graphiti
+    sees an older state before the episode that replaced it."""
+    times = {
+        row["memory_id"]: _chronological_key(_reference_time(row, journal_store.get(row["source_event_id"])))
+        for row in consolidation_store.get_derived_memories(list(memory_ids))
+    }
+    return sorted(memory_ids, key=lambda m: times.get(m, _chronological_key(None)))
+
+
 async def promote_approved(
     consolidation_store: ConsolidationStore,
     journal_store: SqliteEventStore,
@@ -530,7 +612,10 @@ async def promote_approved(
                 "note": "not an approved, un-superseded episode — check its review verdict",
             }
         approved = [memory_id]
-    pending = [m for m in approved if not promotion_store.is_promoted(m)]
+    # Oldest event first (not review order), before `limit`, so a capped run
+    # takes the earliest states and a later run's newer ones can invalidate them.
+    pending = chronological(consolidation_store, journal_store,
+                            [m for m in approved if not promotion_store.is_promoted(m)])
     if limit is not None:
         pending = pending[:limit]
     if not pending:

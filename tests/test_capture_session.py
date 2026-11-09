@@ -62,6 +62,36 @@ class TestCaptureSessionEpisodes(unittest.TestCase):
         self.assertEqual(row["reasoning_kind"], "decision")
         self.assertEqual(row["project"], "atlas")  # was dropped: every live capture promoted under misc
 
+    def _capture_one(self, **overrides):
+        results = capture_session(items=[self._episode_item(**overrides)], project="atlas",
+                                  source_description="planning session", session=self.session,
+                                  request_id="req1", db_path=self.db_path)
+        return results[0]
+
+    def test_episode_is_dated_at_capture_time_by_default(self):
+        """Every live capture used to stage with event_date NULL, so promotion
+        stamped it with the promotion time and Graphiti couldn't order it
+        against the episodes that later superseded it (2026-11-09)."""
+        from datetime import datetime, timedelta, timezone
+        before = datetime.now(timezone.utc)
+        r = self._capture_one()
+        with ConsolidationStore(db_path=self.db_path) as store:
+            row = store.get_derived_memory(r.memory_id)
+        stamped = datetime.fromisoformat(row["event_date"])
+        self.assertEqual(row["date_precision"], "exact")
+        self.assertTrue(before - timedelta(seconds=1) <= stamped <= datetime.now(timezone.utc))
+
+    def test_caller_event_date_wins_with_its_precision(self):
+        r = self._capture_one(event_date="2026-11-01")
+        with ConsolidationStore(db_path=self.db_path) as store:
+            row = store.get_derived_memory(r.memory_id)
+        self.assertEqual((row["event_date"][:10], row["date_precision"]), ("2026-11-01", "day"))
+
+    def test_bad_event_date_reported_not_raised(self):
+        r = self._capture_one(event_date="last Tuesday")
+        self.assertFalse(r.ok)
+        self.assertIn("event_date", r.error)
+
     def test_evidence_text_is_journaled_as_a_real_event(self):
         results = capture_session(
             items=[self._episode_item()],

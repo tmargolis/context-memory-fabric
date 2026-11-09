@@ -195,8 +195,27 @@ def _capture_episode_item(
     if not evidence_text:
         return SessionItemResult("episode", False, "", error="'evidence_text' is required for every item.")
 
+    raw_date = item.get("event_date")
+    event_date: Optional[datetime] = None
+    if raw_date:
+        try:
+            event_date = datetime.fromisoformat(str(raw_date).strip())
+        except ValueError:
+            return SessionItemResult("episode", False, "",
+                                     error="'event_date' must be an ISO date (YYYY-MM-DD) or datetime.")
+
     event = _journal_evidence(evidence_text, project, session, request_id, db_path=db_path,
                               source_description=source_description)
+
+    # Promotion hands event_date to Graphiti as valid_at, which is what lets a
+    # later contradicting episode set invalid_at on this one's facts. Every
+    # live capture used to stage undated and get the promotion time instead
+    # (found 2026-11-09). Default: the capture time, when the session reports
+    # it; a caller recording something that happened earlier passes event_date.
+    if event_date is None:
+        event_date, precision = event.observed_at, DatePrecision.EXACT
+    else:
+        precision = DatePrecision.DAY if len(str(raw_date).strip()) == 10 else DatePrecision.EXACT
 
     episode = ReasoningEpisode(
         category=ExtractionCategory.EPISODIC,
@@ -207,6 +226,8 @@ def _capture_episode_item(
         driving_question=item.get("driving_question") or None,
         rationale=item.get("rationale") or source_description or None,
         thread_key=item.get("thread_key") or None,
+        event_date=event_date,
+        date_precision=precision,
     )
 
     job_id = f"job:cowork_live:{event.event_id}::{POLICY_NAME}@{POLICY_VERSION}"

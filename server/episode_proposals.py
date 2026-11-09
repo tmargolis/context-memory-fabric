@@ -268,7 +268,10 @@ def list_episode_mirrors(
 def attach_valid_at(items: list[dict[str, Any]], db_path: Optional[Path] = None) -> list[dict[str, Any]]:
     """Add `valid_at` + `date_precision` to each mirror, in place: the derived row's event_date,
     which promotion hands Graphiti as valid_at. Read at view time, not stored in the mirror, so a
-    re-dated row shows its current date. None means promotion will stamp the promotion time."""
+    re-dated row shows its current date. A row with no event_date shows its source conversation's
+    time with precision `conversation`, the same fallback promotion uses
+    (server.consolidation.promotion._reference_time). None means neither exists, and promotion
+    will stamp the promotion time."""
     for d in items:
         d.setdefault("valid_at", None)
         d.setdefault("date_precision", None)
@@ -280,15 +283,23 @@ def attach_valid_at(items: list[dict[str, Any]], db_path: Optional[Path] = None)
         db_path = DEFAULT_JOURNAL_PATH
     if not Path(db_path).is_file():
         return items
+    qmarks = ",".join("?" * len(ids))
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-            rows = conn.execute(
-                f"SELECT memory_id, event_date, date_precision FROM derived_memories "
-                f"WHERE memory_id IN ({','.join('?' * len(ids))})", ids,
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    f"SELECT dm.memory_id, dm.event_date, dm.date_precision, ev.observed_at "
+                    f"FROM derived_memories dm LEFT JOIN events ev ON ev.event_id = dm.source_event_id "
+                    f"WHERE dm.memory_id IN ({qmarks})", ids,
+                ).fetchall()
+            except sqlite3.OperationalError:  # no events table: dated rows only
+                rows = conn.execute(
+                    f"SELECT memory_id, event_date, date_precision, NULL FROM derived_memories "
+                    f"WHERE memory_id IN ({qmarks})", ids,
+                ).fetchall()
     except sqlite3.OperationalError:  # a journal with no consolidation tables yet
         return items
-    dates = {r[0]: (r[1], r[2]) for r in rows}
+    dates = {r[0]: (r[1], r[2]) if r[1] else ((r[3], "conversation") if r[3] else (None, r[2])) for r in rows}
     for d in items:
         if d.get("memory_id") in dates:
             d["valid_at"], d["date_precision"] = dates[d["memory_id"]]

@@ -6,12 +6,14 @@
     python -m server.review.cli export --out review.json [--tier 1]
     python -m server.review.cli apply --verdicts verdicts.json
     python -m server.review.cli explain <memory_id> [--graph]
+    python -m server.review.cli check-supersession <memory_id> [...]
     python -m server.review.cli bulk-reject --category ambiguous --reason "..." [--apply]
     python -m server.review.cli retire-stale-versions [--apply]
     python -m server.review.cli confirm-superseded [--apply]
     python -m server.review.cli sample-audit <batch_id> [-n 100]
     python -m server.review.cli revert-batch <batch_id> [--apply]
     python -m server.review.cli expand-evidence <memory_id> --event-ids ID [ID ...] --reason "..." [--apply]
+    python -m server.review.cli redate <memory_id> [...] [--date ISO [--precision day]] --reason "..." [--apply]
     python -m server.review.cli promote [--apply] [--limit N] [--memory-id ID ... [--spark-slot]]
     python -m server.review.cli correct-memory <memory_id> --content "..." --reason "..." [--apply]
     python -m server.review.cli delete-memory <memory_id> --reason "..." [--apply]
@@ -177,6 +179,36 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_supersession(args: argparse.Namespace) -> int:
+    """For each promoted episode, oldest first: its valid_at and every fact
+    extracted from it, marking the ones Graphiti has since invalidated. An
+    older episode whose state a later one replaced should show its replaced
+    facts with invalid_at at (or near) the later episode's valid_at."""
+    from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
+    from server.review.graph_explain import explain_graph
+
+    async def run() -> list[dict]:
+        g = get_graphiti()
+        with PromotionStore(args.db) as ps:
+            return [r for r in [await explain_graph(ps, m, g) for m in args.memory_ids] if r] + \
+                   [{"memory_id": m, "not_promoted": True} for m in args.memory_ids
+                    if ps.get(m) is None]
+
+    results = asyncio.run(run())
+    results.sort(key=lambda r: str(r.get("valid_at") or "~"))
+    for r in results:
+        if r.get("not_promoted") or not r.get("found_in_graph", True):
+            print(f"\n{r['memory_id']}: not in the graph")
+            continue
+        edges = r["edges"]
+        invalid = [e for e in edges if e.get("invalid_at")]
+        print(f"\n{r['episode_name']}  valid_at={r['valid_at']}  facts={len(edges)}  invalidated={len(invalid)}")
+        for e in edges:
+            mark = f"INVALID at {e['invalid_at']}" if e.get("invalid_at") else "current"
+            print(f"  [{mark}] {e['fact']}  (valid_at={e.get('valid_at')})")
+    return 0
+
+
 def cmd_correct_memory(args: argparse.Namespace) -> int:
     from server.providers.memory_graphiti import get_graphiti  # lazy — pulls in Graphiti
     from server.review.correction import correct_memory
@@ -256,6 +288,19 @@ def cmd_expand_evidence(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_redate(args: argparse.Namespace) -> int:
+    with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs:
+        results = [
+            actions.set_event_date(
+                cs._conn, rs, mid, reason=args.reason, event_date=args.date, date_precision=args.precision,
+                reviewer=args.reviewer, dry_run=not args.apply,
+            )
+            for mid in args.memory_ids
+        ]
+    _print_json(results)
+    return 1 if any("error" in r for r in results) else 0
+
+
 def cmd_revert(args: argparse.Namespace) -> int:
     with ConsolidationStore(args.db) as cs, ReviewStore(args.db) as rs:
         _print_json(actions.revert_batch(cs._conn, rs, args.batch_id, reviewer=args.reviewer, dry_run=not args.apply))
@@ -275,9 +320,9 @@ def cmd_promote(args: argparse.Namespace) -> int:
             )
             _print_json(result)
             return 0
-        # Named episodes (the nightly review's confirm): one at a time, each
-        # printed as it finishes, optionally waiting for the Spark slot first.
-        for memory_id in args.memory_id:
+        # Named episodes (the nightly review's confirm): one at a time, oldest
+        # first, each printed as it finishes, optionally waiting for the Spark slot.
+        for memory_id in actions.chronological(cs, js, args.memory_id):
             result = asyncio.run(_promote_one(args, cs, js, ps, rs, remember, memory_id, get_default_tag_fn()))
             _print_json({"memory_id": memory_id, **result})
             sys.stdout.flush()
@@ -350,6 +395,11 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Also walk into Graphiti for extracted entities/edges (promoted memories only)")
     p_explain.set_defaults(func=cmd_explain)
 
+    p_sup = sub.add_parser("check-supersession",
+                           help="Show promoted episodes' facts and which ones Graphiti has invalidated")
+    p_sup.add_argument("memory_ids", nargs="+")
+    p_sup.set_defaults(func=cmd_check_supersession)
+
     p_bulk = sub.add_parser("bulk-reject", help="Reject a filtered population in one recorded action")
     p_bulk.add_argument("--reason", required=True)
     p_bulk.add_argument("--policy-name", dest="policy_name", default="heuristic-pattern")
@@ -381,6 +431,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_ee.add_argument("--reason", required=True)
     p_ee.add_argument("--apply", action="store_true")
     p_ee.set_defaults(func=cmd_expand_evidence)
+
+    p_rd = sub.add_parser("redate", help="Set staged episodes' event_date (default: their conversation's time)")
+    p_rd.add_argument("memory_ids", nargs="+")
+    p_rd.add_argument("--date", default=None, help="ISO date or datetime; omit to use the conversation's time")
+    p_rd.add_argument("--precision", default=None, choices=["exact", "day", "month", "year"])
+    p_rd.add_argument("--reason", required=True)
+    p_rd.add_argument("--apply", action="store_true")
+    p_rd.set_defaults(func=cmd_redate)
 
     p_rev = sub.add_parser("revert-batch", help="Undo a bulk action, restoring the prior approval_state")
     p_rev.add_argument("batch_id")

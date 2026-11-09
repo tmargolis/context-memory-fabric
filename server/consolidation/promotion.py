@@ -341,6 +341,32 @@ def _semantic_episode_name(
     return f"{prefix}-{promotion_store.max_semantic_seq(prefix, graph_name) + 1:03d}"
 
 
+def _reference_time(row: sqlite3.Row, source_event: Any) -> Optional[datetime]:
+    """The time an episode is promoted at, which Graphiti stores as `valid_at`.
+
+    The row's own `event_date` when extraction found one; otherwise the
+    source conversation's `observed_at` (the transcript timestamp), not
+    "now". Graphiti decides which of two contradicting facts is newer, and
+    sets `invalid_at` on the older one, from these times. Stamping undated
+    episodes with the promotion time made an older state and the state that
+    replaced it look equally new. None only when the source event is gone too.
+    """
+    if row["event_date"]:
+        return datetime.fromisoformat(row["event_date"])
+    observed = getattr(source_event, "observed_at", None)
+    return observed if isinstance(observed, datetime) else None
+
+
+def _chronological_key(reference_time: Optional[datetime]) -> tuple[int, datetime]:
+    """Sort key: oldest first, undated last. Naive dates count as UTC so
+    day-only `event_date`s compare with timezone-aware transcript times."""
+    if reference_time is None:
+        return (1, datetime.min.replace(tzinfo=timezone.utc))
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+    return (0, reference_time)
+
+
 async def promote_auto_accepted(
     consolidation_store: ConsolidationStore,
     journal_store: SqliteEventStore,
@@ -425,7 +451,7 @@ async def promote_auto_accepted(
         harness = source_event.source.harness if source_event else "unknown"
 
         episode_name = _episode_name_for(memory_id, row["event_date"])
-        reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
+        reference_time = _reference_time(row, source_event)
         source_description = (
             f"Promoted from {harness} evidence via {row['policy_name']}@{row['policy_version']} "
             f"(memory_id={memory_id})"
@@ -611,8 +637,10 @@ async def promote_reviewed(
     (any policy — reasoning-episode or heuristic) into episodic memory.
 
     Same idempotency ledger and per-row failure isolation as
-    `promote_auto_accepted`. The candidate set is exactly `memory_ids`, in
-    order, rather than an `approval_state` query.
+    `promote_auto_accepted`. The candidate set is exactly `memory_ids`
+    rather than an `approval_state` query, promoted oldest first by
+    `_reference_time` (undated last) so Graphiti can invalidate an older
+    state's facts when the episode that replaced it arrives.
 
     `GeminiQuotaExhaustedError` handling, when `wait_through_rate_limit`
     (the default): sleep for exactly as long as
@@ -674,14 +702,20 @@ async def promote_reviewed(
     if rate_limiter is None and wait_through_rate_limit:
         rate_limiter = get_default_rate_limiter()
 
+    # Oldest first, so when a later episode contradicts an earlier one the
+    # earlier facts are already in the graph for Graphiti to invalidate.
+    timed = []
     for row in candidates:
-        memory_id = row["memory_id"]
         source_event = journal_store.get(row["source_event_id"])
+        timed.append((row, source_event, _reference_time(row, source_event)))
+    timed.sort(key=lambda t: _chronological_key(t[2]))
+
+    for row, source_event, reference_time in timed:
+        memory_id = row["memory_id"]
         harness = source_event.source.harness if source_event else "unknown"
         episode_name = _semantic_episode_name(
             memory_id, harness, row["project"], promotion_store, graph_name
         )
-        reference_time = datetime.fromisoformat(row["event_date"]) if row["event_date"] else None
 
         row_waited = 0.0
         while True:

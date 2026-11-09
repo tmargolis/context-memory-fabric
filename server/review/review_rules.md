@@ -15,12 +15,13 @@ Every recommendation needs a short reason a person can check in one read ("proce
 Approve:
 - Decisions, plans, findings, rejected alternatives and retrospectives that someone could act on later, with enough context to stand alone (what was decided, why, when).
 - Dated facts about the user's work, projects, preferences or state that a later question could need.
+- **Superseded states that held for a while:** a decision, plan or state that was in effect (acted on, built, used, shipped) before something later in the batch replaced it. Approve both the old and the new episode; don't reject or flag the old one for being superseded. Promotion goes in date order, and the graph sets `invalid_at` on the old facts when the newer episode contradicts them, so recall can still answer "what did we use before, and when did it change?" Check that both carry a date (`valid_at`); flag one only if its date is wrong.
 
 Reject:
 - **Process narration:** "the assistant investigated…", "planned to read the file…", kickoffs and search steps with no result.
 - **Questions with no answer** in the episode.
 - **Duplicates** of another item in this batch, or of something the conversation already recorded better (prefer the merged, fuller one).
-- **Stale snapshots:** a state that later work in the same batch or conversation reversed or superseded.
+- **Short-lived churn:** an intermediate plan or guess that was revised within the same working session before anything was acted on (e.g. "will use X" → minutes later "actually Y"). The newer episode covers it. If the earlier state was actually in effect, approve it instead (see above).
 - One-off task chatter, transient drafts, casual remarks, speculation.
 - Facts the code or repository itself already records (function names, file layout), unless the episode adds why.
 
