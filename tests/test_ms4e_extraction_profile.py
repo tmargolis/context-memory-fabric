@@ -28,6 +28,9 @@ from server.providers.extraction_profile import (
     RECALL_INSTRUCTIONS,
     EXAMPLE_SETTINGS,
     extraction_examples,
+    fact_instructions_for,
+    render_recall_fact_instructions,
+    RECALL_FACT_INSTRUCTIONS,
     extraction_kwargs,
     render_recall_profile,
 )
@@ -121,21 +124,26 @@ class TestOntology(unittest.TestCase):
                     self.assertEqual(model.model_fields, {})
                     self.assertTrue((model.__doc__ or "").strip())
 
-    def test_recall_instructions_have_entity_and_fact_sections(self):
-        # One string reaches both extract_nodes and extract_edges, so each
-        # rule says which step it governs, and the fact step gets its own.
-        entity_at = RECALL_INSTRUCTIONS.index("ENTITY RULES")
-        fact_at = RECALL_INSTRUCTIONS.index("FACT RULES")
-        self.assertLess(entity_at, fact_at)
-        self.assertLess(RECALL_INSTRUCTIONS.index("Never extract:"), fact_at)
-        facts = RECALL_INSTRUCTIONS[fact_at:]
-        for needed in ("drafted, sent", "does not have to be an entity", "never about the TEXT itself",
+    def test_fact_rules_are_a_separate_text(self):
+        # One string reaches both extract_nodes and extract_edges; fact rules
+        # in it made qwen return no entities on long episodes (2026-11-10), so
+        # they live in RECALL_FACT_INSTRUCTIONS, swapped in by edge_extraction.
+        self.assertNotIn("drafted, sent", RECALL_INSTRUCTIONS)
+        self.assertNotIn("Never extract", RECALL_FACT_INSTRUCTIONS)
+        for needed in ("every relationship", "one fact per change", "not yet sent",
+                       "is not itself one of the ENTITIES", "never about the TEXT itself",
                        "valid_at is when", "invalid_at only when"):
             with self.subTest(needed=needed):
-                self.assertIn(needed, facts)
+                self.assertIn(needed, RECALL_FACT_INSTRUCTIONS)
+
+    def test_fact_instructions_for(self):
+        self.assertEqual(fact_instructions_for(RECALL_INSTRUCTIONS), RECALL_FACT_INSTRUCTIONS)
+        self.assertEqual(fact_instructions_for(RECALL_INSTRUCTIONS + "\nPROJECT ENTITY: x"), RECALL_FACT_INSTRUCTIONS)
+        self.assertEqual(fact_instructions_for(LEGACY_INSTRUCTIONS), LEGACY_INSTRUCTIONS)
+        self.assertIsNone(fact_instructions_for(None))
 
     def test_fact_rule_examples_use_the_configured_person(self):
-        text, _ = render_recall_profile({**extraction_examples(), "person": ["Canary Person"]})
+        text = render_recall_fact_instructions({**extraction_examples(), "person": ["Canary Person"]})
         self.assertIn("'Canary Person drafted a reply", text)
 
     def test_recall_adds_format_and_topic(self):

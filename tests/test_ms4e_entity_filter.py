@@ -83,6 +83,13 @@ class TestPrune(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed, ["qa_dump.json", "Phase 6 step 1"])
         self.assertEqual(driver.deleted, ["n1", "n4"])  # layer 40 predates this episode: kept
 
+    async def test_software_typing_trusts_packages_not_calls_or_camel_case(self):
+        names = {"n1": "huggingface_hub", "n2": "extract()", "n3": "drawSegment", "n4": "place() function"}
+        driver = FakeDriver({k: 0 for k in names})
+        nodes = [SimpleNamespace(uuid=k, name=v, labels=["Entity", "Software"]) for k, v in names.items()]
+        removed = await prune_debris_entities(driver, "ep-1", nodes)
+        self.assertEqual(removed, ["extract()", "drawSegment", "place() function"])
+
     async def test_missing_node_is_skipped(self):
         driver = FakeDriver({})
         self.assertEqual(await prune_debris_entities(driver, "ep-1", [_node("gone", "x.py")]), [])

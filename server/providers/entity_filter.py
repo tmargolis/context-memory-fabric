@@ -108,6 +108,15 @@ def debris_filter_enabled() -> bool:
 _TRUSTED_IDENTIFIER_TYPES = {"Software", "AIModel"}
 
 
+def _never_a_package(name: str) -> bool:
+    """A call (extract(), place() function) or a camelCase name (drawSegment)
+    is code even when the model types it Software: the Software/AIModel trust
+    is for package-shaped names like huggingface_hub (2026-11-10 MS4e replay
+    kept extract(), place(), fetch() and drawSegment that way)."""
+    n = name.strip()
+    return bool(_CALL.search(n) or (" " not in n and _CAMEL.match(n)))
+
+
 def _records(rows: Any) -> list[Any]:
     return rows[0] if rows and isinstance(rows[0], list) else (rows or [])
 
@@ -125,7 +134,8 @@ async def prune_debris_entities(driver: Any, episode_uuid: str, nodes: list[Any]
         # A package name like huggingface_hub is identifier-shaped but real:
         # trust the model's Software/AIModel typing for identifiers, never for
         # files, numbers or labels (MS4e: the one false positive in 16).
-        if category == "code_identifier" and set(getattr(node, "labels", []) or []) & _TRUSTED_IDENTIFIER_TYPES:
+        if (category == "code_identifier" and set(getattr(node, "labels", []) or []) & _TRUSTED_IDENTIFIER_TYPES
+                and not _never_a_package(node.name)):
             continue
         rows = _records(await driver.execute_query(
             "MATCH (n:Entity {uuid: $uuid}) "
