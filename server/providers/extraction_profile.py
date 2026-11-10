@@ -102,7 +102,15 @@ def extraction_examples() -> dict[str, list[str]]:
     return out
 
 
+# Graphiti pastes custom_extraction_instructions into BOTH the entity prompt
+# (extract_nodes) and the fact prompt (extract_edges), so every line here is
+# read twice. Until 2026-11-10 the text spoke only about entities; in the fact
+# prompt that meant "never extract numbers ... labels ... quoted words" with no
+# word on facts, and qwen left out the state changes later episodes must
+# supersede (a rules draft revised, a reply drafted then sent). Each section is
+# now headed with the step it governs.
 _RECALL_INSTRUCTIONS_TEMPLATE = (
+    "ENTITY RULES (they decide which entities to extract; they do not limit what a fact may say):\n"
     "The TEXT is a third-person summary of work from a personal knowledge log: decisions, plans, "
     "findings and troubleshooting, often followed by 'Driving question:' and 'Reasoning:' lines. "
     "Extract EVERY entity in it that fits one of the entity types, including ones mentioned only in "
@@ -123,7 +131,35 @@ _RECALL_INSTRUCTIONS_TEMPLATE = (
     "- labels local to one discussion (Option C, Phase 6, Phase 6 step 1, step-0)\n"
     "- UI details and process narration (arrowhead size, progress bar, timed test)\n"
     "- quoted words and sentence fragments ('Depends', 'There')\n"
-    "Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity."
+    "Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity, but a person the TEXT "
+    "names (such as {person}) is an entity even when the work is theirs.\n"
+    "An organization, board or group named only as a modifier is still an entity: 'the condo board's "
+    "rules draft' names the condo board, 'Acme Corp's screening questions' names Acme Corp.\n"
+    "\n"
+    "FACT RULES (they decide which facts to extract between the entities):\n"
+    "- Extract the current state of each thing the TEXT says was drafted, sent, added, removed, moved, "
+    "revised, scheduled, rescheduled, decided, reversed or left undone, with its concrete details, so "
+    "that a later TEXT can replace it. Examples: '{person} drafted a reply to the recruiter at Acme Corp "
+    "but has not sent it'; 'The meeting rules draft for the condo board puts owner comment before each "
+    "motion'. A later TEXT saying the reply was sent, or that owner comment moved to the start of "
+    "meetings, then replaces those facts.\n"
+    "- When the TEXT lists several changes (added X, moved Y, removed Z), extract each change as its own "
+    "fact, saying what it was before when the TEXT says so.\n"
+    "- Keep the words that say a state is pending or partial ('not yet sent', 'is weighing', 'plans to', "
+    "'draft') in the fact's text: they are what a later TEXT contradicts.\n"
+    "- A draft, rule, message, budget, meeting or decision does not have to be an entity: state the "
+    "change as a fact between the person or group it belongs to and the closest other entity (who it is "
+    "for, what it governs, which organization it concerns).\n"
+    "- Numbers, dates, durations and counts belong in a fact's text whenever the TEXT gives them; the "
+    "entity rules against numbers do not apply to facts.\n"
+    "- Facts are about the work and the world, never about the TEXT itself: no fact about which project "
+    "or log it belongs to, where it came from, the session, tool or harness that recorded it, or how it "
+    "was reasoned.\n"
+    "- Dates: valid_at is when the fact became true, which is usually the time the TEXT was written "
+    "(REFERENCE_TIME); set invalid_at only when the TEXT says the fact has already stopped being true. A "
+    "date the fact mentions (a meeting date, a deadline, a follow-up date, a day someone is unavailable) "
+    "is neither: a meeting scheduled on Nov 6 for Nov 24 is valid from Nov 6, and keep Nov 24 in the "
+    "fact's text."
 )
 
 # (label, model name, docstring template). A label is the dict key Graphiti
@@ -216,9 +252,12 @@ def _project_instruction(source_description: Optional[str]) -> str:
     name = project_entity_name(source_description)
     if not name:
         return ""
+    # Phrased as an entity rule, not as a sentence about the TEXT: "This TEXT
+    # comes from the user's 'condo' project" reached the fact prompt too and
+    # came back as a fact (2026-11-09).
     return (
-        f"\nThis TEXT comes from the user's '{name}' project. Always extract '{name}' as an entity "
-        f"(a project, or the topic the work is about), even if the TEXT doesn't name it."
+        f"\nPROJECT ENTITY: always extract '{name}' as an entity (a project, or the topic the work is "
+        f"about), even if the TEXT doesn't name it. Which project the TEXT is filed under is never a fact."
     )
 
 

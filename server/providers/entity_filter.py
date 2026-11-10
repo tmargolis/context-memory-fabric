@@ -45,6 +45,11 @@ _CALL = re.compile(r"\(\)|\bfunction$")  # place() function, read_layers()
 _EXCEPTION = re.compile(r"^[A-Z]\w*(Error|Exception)$")
 _QUOTED = re.compile(r"^['\"`].*['\"`]$")
 _DIMENSION = re.compile(r"\d[DdKk]")  # 2D, 3D, 4K: names, not measurements
+# A number followed by a capitalized word is a name, not a measure: "1400
+# Board", "1400 N State Pkwy", "10 Downing Street", "7-Eleven". Until
+# 2026-11-10 _NUMERIC deleted these, and their facts with them (condo-020's
+# rules-draft facts all hung off "1400 Board").
+_NUMBERED_NAME = re.compile(r"^\d[\d,.]*[ -]+[A-Z]")
 
 
 def _looks_like_path(name: str) -> bool:
@@ -84,6 +89,8 @@ def noise_category(name: str) -> Optional[str]:
         return "code_identifier"
     if _LOCAL_LABEL.match(n):
         return "local_label"
+    if _NUMBERED_NAME.match(n):
+        return None
     if _NUMERIC.search(n):
         return "number_or_measure"
     return None

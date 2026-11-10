@@ -574,9 +574,22 @@ def enriched_episode_content(row: sqlite3.Row) -> str:
     if q and q.group(1).strip():
         parts.append(f"Driving question: {q.group(1).strip()}")
     w = _REASON_RATIONALE_RE.search(reason)
-    if w and w.group(1).strip() and episode_body_includes_reasoning():
+    if w and w.group(1).strip() and not _is_capture_placeholder(w.group(1)) and episode_body_includes_reasoning():
         parts.append(f"Reasoning: {w.group(1).strip()}")
     return "\n".join(parts)
+
+
+# Until 2026-11-10 capture_session() used its source_description ("claude
+# session (remote_cowork)") as the rationale of any item that gave none, so
+# most live captures reached the graph ending in "Reasoning: claude session
+# (remote_cowork)" and Graphiti turned that into facts like "Todd used
+# remote_cowork for reasoning". The capture side no longer does this; this
+# keeps the rows already staged that way out of the episode body.
+_CAPTURE_PLACEHOLDER_RE = re.compile(r"^\s*claude session \([^)]*\)\s*\.?\s*$", re.IGNORECASE)
+
+
+def _is_capture_placeholder(rationale: str) -> bool:
+    return bool(_CAPTURE_PLACEHOLDER_RE.match(rationale))
 
 
 def episode_body_includes_reasoning() -> bool:

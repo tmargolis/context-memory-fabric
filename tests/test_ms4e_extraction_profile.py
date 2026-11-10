@@ -121,6 +121,23 @@ class TestOntology(unittest.TestCase):
                     self.assertEqual(model.model_fields, {})
                     self.assertTrue((model.__doc__ or "").strip())
 
+    def test_recall_instructions_have_entity_and_fact_sections(self):
+        # One string reaches both extract_nodes and extract_edges, so each
+        # rule says which step it governs, and the fact step gets its own.
+        entity_at = RECALL_INSTRUCTIONS.index("ENTITY RULES")
+        fact_at = RECALL_INSTRUCTIONS.index("FACT RULES")
+        self.assertLess(entity_at, fact_at)
+        self.assertLess(RECALL_INSTRUCTIONS.index("Never extract:"), fact_at)
+        facts = RECALL_INSTRUCTIONS[fact_at:]
+        for needed in ("drafted, sent", "does not have to be an entity", "never about the TEXT itself",
+                       "valid_at is when", "invalid_at only when"):
+            with self.subTest(needed=needed):
+                self.assertIn(needed, facts)
+
+    def test_fact_rule_examples_use_the_configured_person(self):
+        text, _ = render_recall_profile({**extraction_examples(), "person": ["Canary Person"]})
+        self.assertIn("'Canary Person drafted a reply", text)
+
     def test_recall_adds_format_and_topic(self):
         self.assertTrue({"Format", "Topic"} <= set(RECALL_ENTITY_TYPES))
 
@@ -206,10 +223,19 @@ class TestTypedRecallProject(unittest.TestCase):
     def test_display_name_from_taxonomy(self):
         text = self._instructions("Promoted from claude_code via extract@1.3 | project=career-navigator-dev | evidence=2")
         self.assertTrue(text.startswith(RECALL_INSTRUCTIONS))
-        self.assertIn("'Career Navigator' project", text)
+        self.assertIn("always extract 'Career Navigator' as an entity", text)
 
     def test_slug_fallback_without_display_name(self):
-        self.assertIn("'ev charging' project", self._instructions("x | project=ev-charging"))
+        self.assertIn("always extract 'ev charging' as an entity", self._instructions("x | project=ev-charging"))
+
+    def test_project_hint_is_not_a_quotable_statement_about_the_text(self):
+        # Graphiti pastes the instructions into the fact prompt too, and
+        # qwen turned "This TEXT comes from the user's 'condo' project" into
+        # a fact (2026-11-09). The hint is an entity rule and says the filing
+        # label is never a fact.
+        text = self._instructions("x | project=condo")
+        self.assertNotIn("comes from", text)
+        self.assertIn("never a fact", text)
 
     def test_no_project_or_misc_adds_nothing(self):
         for sd in (None, "Context Memory Fabric MCP", "x | project=misc | y"):

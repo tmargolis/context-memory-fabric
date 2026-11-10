@@ -224,7 +224,11 @@ def _capture_episode_item(
         confidence=confidence,
         evidence_event_ids=[event.event_id],
         driving_question=item.get("driving_question") or None,
-        rationale=item.get("rationale") or source_description or None,
+        # Never source_description: it names the capturing surface ("claude
+        # session (remote_cowork)"), and as a rationale it reached the graph
+        # as a "Reasoning:" line that extraction turned into facts. It is
+        # still recorded on the journal event (and drives surface_harness).
+        rationale=item.get("rationale") or None,
         thread_key=item.get("thread_key") or None,
         event_date=event_date,
         date_precision=precision,

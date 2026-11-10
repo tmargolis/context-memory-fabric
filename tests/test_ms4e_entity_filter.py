@@ -41,6 +41,21 @@ class TestNoiseCategoryRefinements(unittest.TestCase):
                 self.assertEqual(noise_category(name), category)
 
 
+class TestNumberedNames(unittest.TestCase):
+    """A number followed by a capitalized word is a name (2026-11-10): the
+    filter used to delete "1400 Board" and every fact hanging off it."""
+
+    def test_numbered_names_are_kept(self):
+        for name in ["1400 Board", "1400 N State Pkwy", "1400 N State Pkwy Board", "10 Downing Street", "7-Eleven"]:
+            with self.subTest(name=name):
+                self.assertIsNone(noise_category(name))
+
+    def test_measures_are_still_dropped(self):
+        for name in ["2 minutes 14 seconds", "21 layers", "30-day notice", "2026/2027 budget", "317MB", "0.0.0.0"]:
+            with self.subTest(name=name):
+                self.assertEqual(noise_category(name), "number_or_measure")
+
+
 class FakeDriver:
     def __init__(self, other_mentions: dict[str, int]):
         self.other_mentions = other_mentions
