@@ -62,6 +62,19 @@ class TestEnrichedEpisodeContent(unittest.TestCase):
         self.assertIn("Driving question: Why does the NAS still show bad permissions?", out)
         self.assertIn("Reasoning: Observed permissions post-sync and isolated it to SMB/QNAP behaviour.", out)
 
+    def test_capture_surface_placeholder_is_not_reasoning(self):
+        # capture_session() used to store its source_description as the
+        # rationale; Graphiti then made facts like "Todd used remote_cowork
+        # for reasoning" out of the Reasoning line (2026-11-09).
+        for placeholder in ("claude session (remote_cowork)", "Claude session (local-agent).", " claude session () "):
+            with self.subTest(placeholder=placeholder):
+                row = _row(reason=f"reasoning_kind=decision | why: {placeholder} | status=open")
+                self.assertEqual(enriched_episode_content(row), row["statement"])
+
+    def test_real_rationale_mentioning_a_session_is_kept(self):
+        row = _row(reason="why: The claude session (remote_cowork) crashed, so the import was rerun. | status=open")
+        self.assertIn("Reasoning: The claude session (remote_cowork) crashed", enriched_episode_content(row))
+
     def test_alternatives_are_never_included(self):
         row = _row(
             reason=(

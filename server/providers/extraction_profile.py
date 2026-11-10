@@ -102,6 +102,15 @@ def extraction_examples() -> dict[str, list[str]]:
     return out
 
 
+# Graphiti pastes custom_extraction_instructions into BOTH the entity prompt
+# (extract_nodes) and the fact prompt (extract_edges). Until 2026-11-10 the
+# fact prompt therefore got only these entity rules ("never extract numbers
+# ... labels ... quoted words") and nothing on facts, and qwen left out the
+# state changes later episodes must supersede (a rules draft revised, a reply
+# drafted then sent). Adding fact rules to this same text made qwen return no
+# entities at all on some long episodes (the MS4e failure mode), so the fact
+# rules are a separate text: server.providers.edge_extraction swaps it in for
+# the fact call only (fact_instructions_for below).
 _RECALL_INSTRUCTIONS_TEMPLATE = (
     "The TEXT is a third-person summary of work from a personal knowledge log: decisions, plans, "
     "findings and troubleshooting, often followed by 'Driving question:' and 'Reasoning:' lines. "
@@ -123,7 +132,36 @@ _RECALL_INSTRUCTIONS_TEMPLATE = (
     "- labels local to one discussion (Option C, Phase 6, Phase 6 step 1, step-0)\n"
     "- UI details and process narration (arrowhead size, progress bar, timed test)\n"
     "- quoted words and sentence fragments ('Depends', 'There')\n"
-    "Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity."
+    "Do NOT extract the narrator (\"the user\", \"the assistant\") as an entity, but a person the TEXT "
+    "names (such as {person}) is an entity even when the work is theirs.\n"
+    "An organization, board or group named only as a modifier is still an entity: 'the condo board's "
+    "rules draft' names the condo board, 'Acme Corp's screening questions' names Acme Corp."
+)
+
+# The fact prompt's instructions (typed-recall), in place of the entity rules
+# above. Graphiti's own extract_edges prompt already asks for "all factual
+# relationships between the given ENTITIES"; these add what CMF needs on top.
+_RECALL_FACT_INSTRUCTIONS_TEMPLATE = (
+    "The TEXT is a third-person summary of work from a personal knowledge log. Besides every "
+    "relationship it states between the ENTITIES (which tools, methods, formats and models a project or "
+    "person uses, adopts, replaces or drops; who did what with whom), make sure of these:\n"
+    "- Changes: when the TEXT says something was drafted, sent, added, removed, moved, revised, "
+    "scheduled, rescheduled, decided, reversed, replaced or left undone, extract its current state with "
+    "the concrete details, one fact per change, saying what it was before when the TEXT says so. Keep the "
+    "words that say a state is pending or partial ('not yet sent', 'is weighing', 'plans to', 'draft'): "
+    "they are what a later TEXT contradicts. Examples: '{person} drafted a reply to the recruiter at Acme "
+    "Corp but has not sent it'; '{workstream} replaced its CSV export with Parquet'.\n"
+    "- When the thing that changed (a draft, rule, message, budget, meeting or decision) is not itself one "
+    "of the ENTITIES, still state the change as a fact, between the person or group it belongs to and "
+    "another entity it concerns.\n"
+    "- Keep numbers, dates, durations and counts in the fact's text.\n"
+    "- Facts are about the work and the world, never about the TEXT itself: no fact about which project "
+    "or log it belongs to, where it came from, the session, tool or harness that recorded it, or how it "
+    "was reasoned.\n"
+    "- Dates: valid_at is when the fact became true, usually REFERENCE_TIME; set invalid_at only when "
+    "the TEXT says the fact has already stopped being true. A date the fact mentions (a meeting date, a "
+    "deadline, a follow-up date) is neither: a meeting scheduled on Nov 6 for Nov 24 is valid from Nov 6, "
+    "with Nov 24 in the fact's text."
 )
 
 # (label, model name, docstring template). A label is the dict key Graphiti
@@ -182,15 +220,7 @@ def render_recall_profile(
     Types are docstring-only models built fresh on each call, so rendering
     with other examples never touches the module-level ones.
     """
-    ex = extraction_examples() if examples is None else examples
-    fields = {
-        "workstream": ex["workstreams"][0],
-        "workstreams": ", ".join(ex["workstreams"]),
-        "hardware": ", ".join(ex["hardware"]),
-        "topics": ", ".join(ex["topics"]),
-        "person": ex["person"][0],
-        "debris_files": ", ".join(ex["debris_files"]),
-    }
+    fields = _example_fields(examples)
     instructions = _RECALL_INSTRUCTIONS_TEMPLATE.format(**fields)
     types = {
         label: create_model(model_name, __doc__=template.format(**fields), __module__=__name__)
@@ -199,9 +229,37 @@ def render_recall_profile(
     return instructions, types
 
 
+def render_recall_fact_instructions(examples: Optional[dict[str, list[str]]] = None) -> str:
+    """The typed-recall fact-prompt instructions with `examples` filled in."""
+    return _RECALL_FACT_INSTRUCTIONS_TEMPLATE.format(**_example_fields(examples))
+
+
+def _example_fields(examples: Optional[dict[str, list[str]]]) -> dict[str, str]:
+    ex = extraction_examples() if examples is None else examples
+    return {
+        "workstream": ex["workstreams"][0],
+        "workstreams": ", ".join(ex["workstreams"]),
+        "hardware": ", ".join(ex["hardware"]),
+        "topics": ", ".join(ex["topics"]),
+        "person": ex["person"][0],
+        "debris_files": ", ".join(ex["debris_files"]),
+    }
+
+
 # Rendered once at import: server/__init__.py has loaded .env by then, so a
 # change to the example settings takes effect on the next restart.
 RECALL_INSTRUCTIONS, RECALL_ENTITY_TYPES = render_recall_profile()
+RECALL_FACT_INSTRUCTIONS = render_recall_fact_instructions()
+
+
+def fact_instructions_for(entity_instructions: Optional[str]) -> Optional[str]:
+    """What the fact prompt should get when add_episode() was given
+    `entity_instructions`: typed-recall's fact text for typed-recall's entity
+    text (with or without its project line), anything else unchanged (legacy
+    keeps its pre-MS4e behaviour)."""
+    if entity_instructions and entity_instructions.startswith(RECALL_INSTRUCTIONS):
+        return RECALL_FACT_INSTRUCTIONS
+    return entity_instructions
 
 _PROJECT_IN_SOURCE = re.compile(r"(?:^|\|)\s*project=([^|\s]+)")
 
@@ -216,9 +274,12 @@ def _project_instruction(source_description: Optional[str]) -> str:
     name = project_entity_name(source_description)
     if not name:
         return ""
+    # Phrased as an entity rule, not as a sentence about the TEXT: "This TEXT
+    # comes from the user's 'condo' project" reached the fact prompt too and
+    # came back as a fact (2026-11-09).
     return (
-        f"\nThis TEXT comes from the user's '{name}' project. Always extract '{name}' as an entity "
-        f"(a project, or the topic the work is about), even if the TEXT doesn't name it."
+        f"\nPROJECT ENTITY: always extract '{name}' as an entity (a project, or the topic the work is "
+        f"about), even if the TEXT doesn't name it. Which project the TEXT is filed under is never a fact."
     )
 
 

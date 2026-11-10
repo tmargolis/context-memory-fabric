@@ -37,3 +37,21 @@ def test_model_for_each_provider(monkeypatch):
     assert model_for(c, "openai", "embeddings") == "text-embedding-3-small"
     monkeypatch.setenv("CMF_GEMINI_MODEL_CHAIN", "gemini-a, gemini-b")
     assert model_for(c, "gemini", "llm") == "gemini-a" and model_for(c, "gemini", "embeddings") == "gemini-embedding-001"
+
+
+def test_source_description_is_not_used_as_the_rationale(tmp_path):
+    """The surface label ("claude session (remote_cowork)") used to fill in for
+    a missing rationale and reached the graph as a Reasoning line (2026-11-09)."""
+    import sqlite3
+
+    db = tmp_path / "journal.db"
+    bare = {"destination": "episode", "statement": "Chose X.", "reasoning_kind": "decision", "confidence": 0.9,
+            "evidence_text": "we chose X"}
+    reasoned = {**bare, "statement": "Chose Y.", "evidence_text": "we chose Y", "rationale": "Y is cheaper."}
+    results = capture_session(items=[bare, reasoned], project="cmf",
+                              source_description="claude session (remote_cowork)",
+                              session=_Session(), request_id="r1", db_path=db)
+    assert all(r.ok for r in results), [r.error for r in results]
+    reasons = dict(sqlite3.connect(db).execute("SELECT statement, reason FROM derived_memories").fetchall())
+    assert "claude session" not in (reasons["Chose X."] or "")
+    assert "why: Y is cheaper." in reasons["Chose Y."]

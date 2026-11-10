@@ -41,6 +41,21 @@ class TestNoiseCategoryRefinements(unittest.TestCase):
                 self.assertEqual(noise_category(name), category)
 
 
+class TestNumberedNames(unittest.TestCase):
+    """A number followed by a capitalized word is a name (2026-11-10): the
+    filter used to delete "1400 Board" and every fact hanging off it."""
+
+    def test_numbered_names_are_kept(self):
+        for name in ["1400 Board", "1400 N State Pkwy", "1400 N State Pkwy Board", "10 Downing Street", "7-Eleven"]:
+            with self.subTest(name=name):
+                self.assertIsNone(noise_category(name))
+
+    def test_measures_are_still_dropped(self):
+        for name in ["2 minutes 14 seconds", "21 layers", "30-day notice", "2026/2027 budget", "317MB", "0.0.0.0"]:
+            with self.subTest(name=name):
+                self.assertEqual(noise_category(name), "number_or_measure")
+
+
 class FakeDriver:
     def __init__(self, other_mentions: dict[str, int]):
         self.other_mentions = other_mentions
@@ -67,6 +82,13 @@ class TestPrune(unittest.IsolatedAsyncioTestCase):
         removed = await prune_debris_entities(driver, "ep-1", nodes)
         self.assertEqual(removed, ["qa_dump.json", "Phase 6 step 1"])
         self.assertEqual(driver.deleted, ["n1", "n4"])  # layer 40 predates this episode: kept
+
+    async def test_software_typing_trusts_packages_not_calls_or_camel_case(self):
+        names = {"n1": "huggingface_hub", "n2": "extract()", "n3": "drawSegment", "n4": "place() function"}
+        driver = FakeDriver({k: 0 for k in names})
+        nodes = [SimpleNamespace(uuid=k, name=v, labels=["Entity", "Software"]) for k, v in names.items()]
+        removed = await prune_debris_entities(driver, "ep-1", nodes)
+        self.assertEqual(removed, ["extract()", "drawSegment", "place() function"])
 
     async def test_missing_node_is_skipped(self):
         driver = FakeDriver({})

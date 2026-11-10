@@ -28,6 +28,9 @@ from server.providers.extraction_profile import (
     RECALL_INSTRUCTIONS,
     EXAMPLE_SETTINGS,
     extraction_examples,
+    fact_instructions_for,
+    render_recall_fact_instructions,
+    RECALL_FACT_INSTRUCTIONS,
     extraction_kwargs,
     render_recall_profile,
 )
@@ -121,6 +124,28 @@ class TestOntology(unittest.TestCase):
                     self.assertEqual(model.model_fields, {})
                     self.assertTrue((model.__doc__ or "").strip())
 
+    def test_fact_rules_are_a_separate_text(self):
+        # One string reaches both extract_nodes and extract_edges; fact rules
+        # in it made qwen return no entities on long episodes (2026-11-10), so
+        # they live in RECALL_FACT_INSTRUCTIONS, swapped in by edge_extraction.
+        self.assertNotIn("drafted, sent", RECALL_INSTRUCTIONS)
+        self.assertNotIn("Never extract", RECALL_FACT_INSTRUCTIONS)
+        for needed in ("every relationship", "one fact per change", "not yet sent",
+                       "is not itself one of the ENTITIES", "never about the TEXT itself",
+                       "valid_at is when", "invalid_at only when"):
+            with self.subTest(needed=needed):
+                self.assertIn(needed, RECALL_FACT_INSTRUCTIONS)
+
+    def test_fact_instructions_for(self):
+        self.assertEqual(fact_instructions_for(RECALL_INSTRUCTIONS), RECALL_FACT_INSTRUCTIONS)
+        self.assertEqual(fact_instructions_for(RECALL_INSTRUCTIONS + "\nPROJECT ENTITY: x"), RECALL_FACT_INSTRUCTIONS)
+        self.assertEqual(fact_instructions_for(LEGACY_INSTRUCTIONS), LEGACY_INSTRUCTIONS)
+        self.assertIsNone(fact_instructions_for(None))
+
+    def test_fact_rule_examples_use_the_configured_person(self):
+        text = render_recall_fact_instructions({**extraction_examples(), "person": ["Canary Person"]})
+        self.assertIn("'Canary Person drafted a reply", text)
+
     def test_recall_adds_format_and_topic(self):
         self.assertTrue({"Format", "Topic"} <= set(RECALL_ENTITY_TYPES))
 
@@ -206,10 +231,19 @@ class TestTypedRecallProject(unittest.TestCase):
     def test_display_name_from_taxonomy(self):
         text = self._instructions("Promoted from claude_code via extract@1.3 | project=career-navigator-dev | evidence=2")
         self.assertTrue(text.startswith(RECALL_INSTRUCTIONS))
-        self.assertIn("'Career Navigator' project", text)
+        self.assertIn("always extract 'Career Navigator' as an entity", text)
 
     def test_slug_fallback_without_display_name(self):
-        self.assertIn("'ev charging' project", self._instructions("x | project=ev-charging"))
+        self.assertIn("always extract 'ev charging' as an entity", self._instructions("x | project=ev-charging"))
+
+    def test_project_hint_is_not_a_quotable_statement_about_the_text(self):
+        # Graphiti pastes the instructions into the fact prompt too, and
+        # qwen turned "This TEXT comes from the user's 'condo' project" into
+        # a fact (2026-11-09). The hint is an entity rule and says the filing
+        # label is never a fact.
+        text = self._instructions("x | project=condo")
+        self.assertNotIn("comes from", text)
+        self.assertIn("never a fact", text)
 
     def test_no_project_or_misc_adds_nothing(self):
         for sd in (None, "Context Memory Fabric MCP", "x | project=misc | y"):

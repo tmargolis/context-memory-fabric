@@ -42,12 +42,17 @@ from server.core.rate_limiter import (
     get_default_rate_limiter,
     is_transient_gemini_error as _is_transient_gemini_error,
 )
+from server.providers import edge_extraction
 from server.providers.episode_postprocess import postprocess_episode
 from server.providers.extraction_profile import LEGACY_INSTRUCTIONS, extraction_kwargs
 from server.providers.falkor_driver import CMFFalkorDriver, falkordb_connection_params
 
 load_env()
 logger = logging.getLogger(__name__)
+
+# CMF's fact-extraction adjustments: fact-prompt instructions and same-day
+# fact dates (server.providers.edge_extraction).
+edge_extraction.install()
 
 # Cached Graphiti instances per (event_loop_id, graph_name, model)
 _GRAPHITI_INSTANCES: dict[tuple[Optional[int], str], Graphiti] = {}

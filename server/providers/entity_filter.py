@@ -45,6 +45,11 @@ _CALL = re.compile(r"\(\)|\bfunction$")  # place() function, read_layers()
 _EXCEPTION = re.compile(r"^[A-Z]\w*(Error|Exception)$")
 _QUOTED = re.compile(r"^['\"`].*['\"`]$")
 _DIMENSION = re.compile(r"\d[DdKk]")  # 2D, 3D, 4K: names, not measurements
+# A number followed by a capitalized word is a name, not a measure: "1400
+# Board", "1400 N State Pkwy", "10 Downing Street", "7-Eleven". Until
+# 2026-11-10 _NUMERIC deleted these, and their facts with them (condo-020's
+# rules-draft facts all hung off "1400 Board").
+_NUMBERED_NAME = re.compile(r"^\d[\d,.]*[ -]+[A-Z]")
 
 
 def _looks_like_path(name: str) -> bool:
@@ -84,6 +89,8 @@ def noise_category(name: str) -> Optional[str]:
         return "code_identifier"
     if _LOCAL_LABEL.match(n):
         return "local_label"
+    if _NUMBERED_NAME.match(n):
+        return None
     if _NUMERIC.search(n):
         return "number_or_measure"
     return None
@@ -99,6 +106,15 @@ def debris_filter_enabled() -> bool:
 
 
 _TRUSTED_IDENTIFIER_TYPES = {"Software", "AIModel"}
+
+
+def _never_a_package(name: str) -> bool:
+    """A call (extract(), place() function) or a camelCase name (drawSegment)
+    is code even when the model types it Software: the Software/AIModel trust
+    is for package-shaped names like huggingface_hub (2026-11-10 MS4e replay
+    kept extract(), place(), fetch() and drawSegment that way)."""
+    n = name.strip()
+    return bool(_CALL.search(n) or (" " not in n and _CAMEL.match(n)))
 
 
 def _records(rows: Any) -> list[Any]:
@@ -118,7 +134,8 @@ async def prune_debris_entities(driver: Any, episode_uuid: str, nodes: list[Any]
         # A package name like huggingface_hub is identifier-shaped but real:
         # trust the model's Software/AIModel typing for identifiers, never for
         # files, numbers or labels (MS4e: the one false positive in 16).
-        if category == "code_identifier" and set(getattr(node, "labels", []) or []) & _TRUSTED_IDENTIFIER_TYPES:
+        if (category == "code_identifier" and set(getattr(node, "labels", []) or []) & _TRUSTED_IDENTIFIER_TYPES
+                and not _never_a_package(node.name)):
             continue
         rows = _records(await driver.execute_query(
             "MATCH (n:Entity {uuid: $uuid}) "
