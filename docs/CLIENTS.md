@@ -253,6 +253,8 @@ Turn Funnel off when you're done testing: `tailscale funnel --bg off` (or `tails
 
 To see how often the public URL is unreachable (remote clients report this as a transient 502), run `scripts/probe_endpoint.py run` on a schedule; it checks the server both locally and at `CMF_MCP_ISSUER_URL`, and `scripts/probe_endpoint.py summary` separates "server down" from "public path down". A launchd template is in `deploy/monitoring/macos/`.
 
+If the local model is reached through an SSH tunnel managed by launchd (for example `com.cmf.spark-tunnel`, `ssh -N -L 12345:127.0.0.1:1234 spark`), add `--restart-tunnel com.cmf.spark-tunnel` to the probe. A tunnel can degrade so that it still answers one request at a time but drops some of the parallel calls Graphiti makes for each episode, and promotions then fail with "Connection error.". With the flag, each run also sends 6 model-list requests to `CMF_LOCAL_BASE_URL` at once. If any fail, it checks again 5 seconds later. If they fail a second time, it restarts the job with `launchctl kickstart -k` (at most once every 30 minutes) and logs the restart and the result after it as a `tunnel` row. `--tunnel` alone only records the result. Status runs the same parallel test from inside the server (`/health?check=providers`); when it fails, the providers row offers **Restart the tunnel to the model**. Promotion retries an episode whose model connection drops (after 30 s, 1, 2 and 4 minutes) before recording it as failed.
+
 ---
 
 ## MCP-Boundary Capture (Milestone 4a)

@@ -284,6 +284,73 @@ class TestPromoteReviewed(MS36Base):
         self.assertEqual(run["api_stalls"], 1)
         self.assertEqual(attempts["n"], 2)
 
+    async def _with_fast_connection_backoff(self, remember_fn, **kw):
+        import server.consolidation.promotion as promotion_mod
+        original = promotion_mod._CONNECTION_RETRY_BACKOFF_SECONDS
+        promotion_mod._CONNECTION_RETRY_BACKOFF_SECONDS = (0.001,) * len(original)
+        try:
+            return await promote_reviewed(
+                self.cons, self.journal, self.prom, remember_fn,
+                ["r:0::reasoning-episode@0.2"], dry_run=False, inter_call_delay=0, **kw,
+            )
+        finally:
+            promotion_mod._CONNECTION_RETRY_BACKOFF_SECONDS = original
+
+    async def test_a_dropped_connection_to_the_model_is_retried_not_failed(self):
+        # 2026-11-09: a degraded SSH tunnel dropped some of Graphiti's
+        # parallel calls; the OpenAI SDK raised APIConnectionError
+        # ("Connection error.") from httpx.RemoteProtocolError and the
+        # episode was recorded as failed. Now it waits and tries again.
+        import httpx
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        attempts = {"n": 0}
+
+        class APIConnectionError(Exception):
+            pass
+
+        async def drops_twice(**kw):
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                try:
+                    raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+                except httpx.RemoteProtocolError as inner:
+                    raise APIConnectionError("Connection error.") from inner
+            self.calls.append(kw)
+            return {}
+
+        run = await self._with_fast_connection_backoff(drops_twice)
+        self.assertEqual((len(run["promoted"]), len(run["failed"])), (1, 0))
+        self.assertEqual((run["connection_stalls"], run["api_stalls"]), (2, 0))
+        self.assertEqual(attempts["n"], 3)
+        self.assertTrue(self.prom.is_promoted("r:0::reasoning-episode@0.2"))
+
+    async def test_a_model_that_stays_unreachable_still_fails_after_bounded_retries(self):
+        import server.consolidation.promotion as promotion_mod
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+        attempts = {"n": 0}
+
+        async def always_down(**kw):
+            attempts["n"] += 1
+            raise ConnectionRefusedError(61, "Connection refused")
+
+        run = await self._with_fast_connection_backoff(always_down)
+        retries = len(promotion_mod._CONNECTION_RETRY_BACKOFF_SECONDS)
+        self.assertEqual((len(run["promoted"]), len(run["failed"])), (0, 1))
+        self.assertEqual((run["connection_stalls"], attempts["n"]), (retries, retries + 1))
+        self.assertIn("Connection refused", run["failed"][0]["error"])
+
+    async def test_connection_errors_fail_fast_when_waiting_is_off(self):
+        self.journal.append(ev("e0"))
+        self._reason_row("r:0::reasoning-episode@0.2", episode(evidence=["e0"]))
+
+        async def down(**kw):
+            raise ConnectionResetError("Connection reset by peer")
+
+        run = await self._with_fast_connection_backoff(down, wait_through_rate_limit=False)
+        self.assertEqual((len(run["failed"]), run["connection_stalls"]), (1, 0))
+
     async def test_a_genuinely_unrelated_error_is_not_retried_as_transient(self):
         # A real bug (bad statement content, a schema mismatch, ...) must
         # still fail fast — only the specific transient-shaped messages

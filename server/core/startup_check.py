@@ -318,6 +318,47 @@ def provider_test(role: str, provider: str, config: CMFConfig, get: Optional[Cal
     return out
 
 
+# Graphiti fires several LLM calls per episode at once. A local model reached
+# through an SSH port-forward (`ssh -L`) opens one SSH channel per connection,
+# and a degraded tunnel can keep answering one request while dropping about
+# half of a parallel burst (2026-11-09: 4 of 8 failed with RemoteProtocolError,
+# promotions failed with "Connection error.", and restarting the tunnel fixed
+# it). One request at a time can't see that, so the local LLM endpoint also
+# gets PARALLEL_REQUESTS at once, each on its own connection.
+PARALLEL_REQUESTS = 6
+PARALLEL_HINT = ("the path to the model drops concurrent connections, so extraction calls fail; "
+                 "if it goes through an SSH tunnel, restarting the tunnel usually fixes it")
+
+
+def parallel_test(role: str, provider: str, config: CMFConfig, get: Optional[Callable[..., Any]] = None,
+                  n: int = PARALLEL_REQUESTS) -> dict[str, Any]:
+    """{"role", "provider", "kind": "parallel", "ok", "detail"}: n model-list requests at once; never raises."""
+    import httpx
+    from concurrent.futures import ThreadPoolExecutor
+
+    url, headers = _models_request(provider, config, role)
+    # httpx.get opens a fresh connection per call: n requests, n tunnel channels.
+    get = get or (lambda u, h: httpx.get(u, headers=h, timeout=10.0))
+
+    def one(_: int) -> Optional[str]:
+        try:
+            response = get(url, headers)
+        except Exception as e:  # noqa: BLE001
+            return type(e).__name__
+        return f"HTTP {response.status_code}" if response.status_code >= 500 else None
+
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        errors = [e for e in pool.map(one, range(n)) if e]
+    out: dict[str, Any] = {"role": f"{role} ({n} at once)", "provider": provider, "kind": "parallel",
+                           "ok": not errors}
+    if errors:
+        kinds = ", ".join(sorted(set(errors)))
+        out["detail"] = f"{len(errors)} of {n} parallel requests failed ({kinds}); {PARALLEL_HINT}"
+    else:
+        out["detail"] = f"all {n} parallel requests answered"
+    return out
+
+
 def provider_tests(get: Optional[Callable[..., Any]] = None) -> list[dict[str, Any]]:
     """Live tests of the LLM, embeddings and capture providers (distinct ones only)."""
     try:
@@ -344,4 +385,10 @@ def provider_tests(get: Optional[Callable[..., Any]] = None) -> list[dict[str, A
     with ThreadPoolExecutor(max_workers=len(first)) as pool:
         futures = {ep: pool.submit(provider_test, role, provider, config, get) for ep, (role, provider) in first.items()}
         answers = {ep: f.result() for ep, f in futures.items()}
-    return [{**answers[endpoint(role, provider)], "role": role} for role, provider in roles]
+    out = [{**answers[endpoint(role, provider)], "role": role} for role, provider in roles]
+    # The parallel burst only where it can fail differently from the single
+    # call: a local LLM endpoint that already answered once.
+    llm = (config.llm_provider, "llm")
+    if config.llm_provider == LOCAL_PROVIDER and answers.get(llm, {}).get("ok"):
+        out.append(parallel_test("LLM", LOCAL_PROVIDER, config, get))
+    return out

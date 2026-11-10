@@ -47,5 +47,43 @@ class TestTransientErrorClassification(unittest.TestCase):
         self.assertFalse(_is_transient_gemini_error(ValueError("content cannot be empty")))
 
 
+class TestConnectionErrors(unittest.TestCase):
+    """rate_limiter.is_connection_error: a dropped connection, not an answer or a timeout."""
+
+    def test_sdk_wrapped_remote_protocol_error(self):
+        import httpx
+        from server.core.rate_limiter import is_connection_error
+
+        class APIConnectionError(Exception):
+            pass
+
+        try:
+            try:
+                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            except httpx.RemoteProtocolError as inner:
+                raise APIConnectionError("Connection error.") from inner
+        except APIConnectionError as e:
+            wrapped = e
+        self.assertTrue(is_connection_error(wrapped))
+        # Graphiti or remember() re-raising it under another type keeps the chain.
+        try:
+            try:
+                raise wrapped
+            except APIConnectionError:
+                raise RuntimeError("extraction failed")
+        except RuntimeError as e:
+            self.assertTrue(is_connection_error(e))
+
+    def test_refused_and_reset_count_timeouts_and_answers_do_not(self):
+        import httpx
+        from server.core.rate_limiter import is_connection_error
+
+        self.assertTrue(is_connection_error(ConnectionRefusedError(61, "Connection refused")))
+        self.assertTrue(is_connection_error(httpx.ConnectError("All connection attempts failed")))
+        self.assertFalse(is_connection_error(httpx.ReadTimeout("timed out")))
+        self.assertFalse(is_connection_error(RuntimeError("503 UNAVAILABLE")))
+        self.assertFalse(is_connection_error(ValueError("content cannot be empty")))
+
+
 if __name__ == "__main__":
     unittest.main()

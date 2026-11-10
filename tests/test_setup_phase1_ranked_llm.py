@@ -187,4 +187,5 @@ def test_provider_tests_cover_the_chain(monkeypatch):
 
     tests = startup_check.provider_tests(lambda u, h: SimpleNamespace(status_code=200, json=lambda: {"data": []}))
     assert [(t["role"], t["provider"]) for t in tests] == [
-        ("LLM", "local"), ("LLM fallback", "anthropic"), ("embeddings", "local"), ("background capture", "local")]
+        ("LLM", "local"), ("LLM fallback", "anthropic"), ("embeddings", "local"), ("background capture", "local"),
+        (f"LLM ({startup_check.PARALLEL_REQUESTS} at once)", "local")]  # the local LLM's parallel burst

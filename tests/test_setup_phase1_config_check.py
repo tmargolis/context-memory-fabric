@@ -143,9 +143,52 @@ def test_provider_test_local_lists_model():
         return _response(200, {"data": [{"id": config.local_llm_model}, {"id": config.local_embed_model}]})
 
     tests = startup_check.provider_tests(get)
-    assert [t["role"] for t in tests] == ["LLM", "embeddings", "background capture"]
+    n = startup_check.PARALLEL_REQUESTS
+    assert [t["role"] for t in tests] == ["LLM", "embeddings", "background capture", f"LLM ({n} at once)"]
     assert all(t["ok"] for t in tests), tests
-    assert calls == ["http://127.0.0.1:12345/v1/models"] * 2  # capture reuses the LLM's answer
+    assert tests[-1]["kind"] == "parallel"
+    # One call each for the LLM and embeddings (capture reuses the LLM's answer), then the burst.
+    assert calls == ["http://127.0.0.1:12345/v1/models"] * (2 + n)
+
+
+def test_parallel_test_flags_a_tunnel_that_drops_some_concurrent_requests():
+    # 2026-11-09: single requests answered, about half of a burst didn't.
+    import threading
+
+    import httpx
+
+    lock, seen = threading.Lock(), []
+
+    def get(url, headers):
+        with lock:
+            seen.append(url)
+            i = len(seen)
+        if i % 2:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return _response(200, {"data": []})
+
+    out = startup_check.parallel_test("LLM", "local", load_config(), get, n=6)
+    assert len(seen) == 6
+    assert out["ok"] is False and out["kind"] == "parallel" and out["role"] == "LLM (6 at once)"
+    assert out["detail"].startswith("3 of 6 parallel requests failed (RemoteProtocolError); ")
+    assert "restarting the tunnel" in out["detail"]
+    assert startup_check.parallel_test("LLM", "local", load_config(), lambda u, h: _response(503, {}), n=2)["detail"] \
+        .startswith("2 of 2 parallel requests failed (HTTP 503)")
+
+
+def test_no_parallel_burst_when_the_single_call_already_failed_or_the_llm_is_hosted(monkeypatch):
+    calls = []
+
+    def down(url, headers):
+        calls.append(url)
+        raise ConnectionError("refused")
+
+    tests = startup_check.provider_tests(down)
+    assert not any(t.get("kind") == "parallel" for t in tests)
+    monkeypatch.setenv("CMF_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    hosted = startup_check.provider_tests(lambda u, h: _response(200, {"data": []}))
+    assert not any(t.get("kind") == "parallel" for t in hosted)
 
 
 def test_provider_test_reports_rejected_key_and_missing_model(monkeypatch):

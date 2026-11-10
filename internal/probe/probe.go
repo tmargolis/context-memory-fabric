@@ -168,6 +168,9 @@ type ProviderTest struct {
 	Provider string `json:"provider"`
 	OK       bool   `json:"ok"`
 	Detail   string `json:"detail"`
+	// Kind is "parallel" for the burst of simultaneous requests to a local
+	// LLM (v1.0.6); "" for the single model-list call.
+	Kind string `json:"kind"`
 }
 
 type ClientSeen struct {

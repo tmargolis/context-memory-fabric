@@ -150,6 +150,45 @@ def is_transient_gemini_error(exc: Exception) -> bool:
     return classify_transient_error(exc) is not None
 
 
+# A dropped connection to the model server, as opposed to an answer from it.
+# The case that motivated this (2026-11-09): an SSH tunnel to the Spark kept
+# answering single requests but dropped about half of Graphiti's parallel
+# calls; httpx raised RemoteProtocolError ("Server disconnected without
+# sending a response"), the OpenAI SDK wrapped it as APIConnectionError
+# ("Connection error."), and promotions were recorded as failed although a
+# restarted tunnel fixed it at once. Timeouts are left out on purpose: a slow
+# local model isn't helped by being sent the same long call again.
+CONNECTION_ERROR_TYPES = (
+    "RemoteProtocolError", "ConnectError", "ReadError", "WriteError",
+    "APIConnectionError", "ConnectionResetError", "ConnectionRefusedError", "ConnectionAbortedError",
+)
+CONNECTION_TIMEOUT_TYPES = ("APITimeoutError", "ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout", "TimeoutError")
+CONNECTION_ERROR_MARKERS = (
+    "connection error.",
+    "server disconnected without sending a response",
+    "peer closed connection",
+    "connection reset by peer",
+)
+
+
+def is_connection_error(exc: BaseException) -> bool:
+    """True when exc, or anything in its cause/context chain, is a dropped
+    or refused connection to a provider (not a timeout, not an HTTP answer)."""
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__
+        if name in CONNECTION_TIMEOUT_TYPES:
+            return False
+        if name in CONNECTION_ERROR_TYPES:
+            return True
+        if any(marker in str(current).lower() for marker in CONNECTION_ERROR_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _date_str(epoch_seconds: float) -> str:
     from datetime import datetime
 

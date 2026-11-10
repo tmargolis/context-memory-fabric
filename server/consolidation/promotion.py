@@ -34,6 +34,7 @@ from server.core.rate_limiter import (
     GeminiQuotaExhaustedError,
     GeminiRateLimiter,
     get_default_rate_limiter,
+    is_connection_error,
     is_transient_gemini_error,
 )
 from server.journal.store import SqliteEventStore, DEFAULT_JOURNAL_PATH
@@ -77,6 +78,18 @@ def default_inter_call_delay() -> float:
 # already adds for the same reason (landing exactly on the boundary is not
 # reliably past it).
 _API_TRANSIENT_ERROR_BACKOFF_SECONDS = 65.0
+
+# Backoff before each retry of an episode whose remember() died on a dropped
+# connection to the model (rate_limiter.is_connection_error), e.g. a degraded
+# SSH tunnel to the Spark. ~7.5 min in all: long enough for the endpoint
+# probe's 5-minute run to notice and restart the tunnel
+# (scripts/probe_endpoint.py --restart-tunnel), short enough that a model
+# that's really gone still fails the episode instead of stalling the batch.
+# Graphiti's add_episode saves nothing until its extraction calls have all
+# succeeded, so retrying a dropped call repeats no writes. The exception is
+# an episode too long for the model's context (saved as -p2, -p3 parts):
+# parts already saved are saved again, exactly as a manual re-run would.
+_CONNECTION_RETRY_BACKOFF_SECONDS = (30.0, 60.0, 120.0, 240.0)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS promotions (
@@ -699,6 +712,7 @@ async def promote_reviewed(
     result["waited_seconds"] = 0.0
     result["quota_stalls"] = 0
     result["api_stalls"] = 0
+    result["connection_stalls"] = 0
     if rate_limiter is None and wait_through_rate_limit:
         rate_limiter = get_default_rate_limiter()
 
@@ -718,6 +732,7 @@ async def promote_reviewed(
         )
 
         row_waited = 0.0
+        connection_retries = 0
         while True:
             try:
                 await remember_fn(
@@ -780,6 +795,20 @@ async def promote_reviewed(
                     row_waited += wait
                     result["waited_seconds"] += wait
                     result["api_stalls"] += 1
+                    continue
+                if (wait_through_rate_limit and is_connection_error(e)
+                        and connection_retries < len(_CONNECTION_RETRY_BACKOFF_SECONDS)):
+                    wait = _CONNECTION_RETRY_BACKOFF_SECONDS[connection_retries]
+                    connection_retries += 1
+                    logger.warning(
+                        f"Lost the connection to the model while promoting {memory_id}; retrying in {wait:.0f}s "
+                        f"(attempt {connection_retries + 1}/{len(_CONNECTION_RETRY_BACKOFF_SECONDS) + 1}, "
+                        f"not counted as failed). If this repeats, check the tunnel to the model: {e}"
+                    )
+                    await asyncio.sleep(wait)
+                    row_waited += wait
+                    result["waited_seconds"] += wait
+                    result["connection_stalls"] += 1
                     continue
                 logger.error(f"Failed to promote {memory_id}: {e}")
                 promotion_store.record_failure(memory_id, str(e), graph_name)

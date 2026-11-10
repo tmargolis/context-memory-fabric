@@ -439,13 +439,18 @@ func checkProviders(f probe.Facts) Result {
 		}
 		return r
 	}
-	var bad, good []string
+	var bad, good, extra []string
+	localDown := false
 	for _, t := range h.ProviderTests {
 		s := fmt.Sprintf("%s %s: %s", t.Role, t.Provider, t.Detail)
-		if t.OK {
+		switch {
+		case t.OK && t.Kind == "parallel":
+			extra = append(extra, t.Detail)
+		case t.OK:
 			good = append(good, fmt.Sprintf("%s %s", t.Role, t.Provider))
-		} else {
+		default:
 			bad = append(bad, s)
+			localDown = localDown || t.Provider == "local"
 		}
 	}
 	var warnings []string
@@ -458,12 +463,39 @@ func checkProviders(f probe.Facts) Result {
 	switch {
 	case len(bad) > 0:
 		r.Level, r.Detail = Fail, strings.Join(bad, "; ")
+		if localDown {
+			r.Fix = tunnelFix(f)
+		}
 	case len(warnings) > 0:
 		r.Level, r.Detail = Warn, strings.Join(warnings, "; ")
 	default:
-		r.Level, r.Detail = OK, strings.Join(good, ", ")+" answer"
+		r.Level, r.Detail = OK, strings.Join(append([]string{strings.Join(good, ", ") + " answer"}, extra...), "; ")
 	}
 	return r
+}
+
+// tunnelFix restarts the launchd jobs that look like a tunnel to the local
+// model (com.cmf.*tunnel*, e.g. com.cmf.spark-tunnel running `ssh -N -L`).
+// A degraded SSH tunnel can answer one request while dropping parallel ones;
+// `kickstart -k` replaces the ssh process and fixes that at once. The jobs
+// are the user's own: CMF only restarts them, it never edits or unloads them.
+func tunnelFix(f probe.Facts) *Fix {
+	var steps []Step
+	for _, job := range f.Launchd {
+		if job.Loaded && IsTunnelJob(job.Label) {
+			steps = append(steps, step("restart "+job.Label,
+				run.Cmd{Name: "sh", Args: []string{"-c", "launchctl kickstart -k gui/$(id -u)/" + job.Label}, Timeout: 30 * time.Second}))
+		}
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	return &Fix{Label: "Restart the tunnel to the model", Steps: steps}
+}
+
+// IsTunnelJob: a com.cmf.* launchd job whose name says it is a tunnel.
+func IsTunnelJob(label string) bool {
+	return strings.HasPrefix(label, "com.cmf.") && strings.Contains(label, "tunnel")
 }
 
 // smallContextLine: a local model loaded with too small a context makes

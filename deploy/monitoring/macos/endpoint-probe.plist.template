@@ -2,7 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- CMF endpoint probe (scripts/probe_endpoint.py): every 5 minutes, checks the server locally and at
      CMF_MCP_ISSUER_URL and appends to imports/state/endpoint_probe.jsonl. Replace {{REPO}} and {{LOG_DIR}},
-     save as ~/Library/LaunchAgents/com.cmf.endpoint-probe.plist, then: launchctl load <that file>. -->
+     save as ~/Library/LaunchAgents/com.cmf.endpoint-probe.plist, then: launchctl load <that file>.
+     If the local model is reached through a launchd SSH tunnel (com.cmf.spark-tunnel), uncomment the two
+     lines below: each run also sends parallel requests to the model and restarts the tunnel when they fail
+     twice (at most every 30 minutes). A degraded tunnel can answer single requests and still drop parallel
+     ones, which breaks extraction. -->
 <plist version="1.0">
 <dict>
 	<key>Label</key>
@@ -12,6 +16,8 @@
 		<string>{{REPO}}/.venv/bin/python3</string>
 		<string>{{REPO}}/scripts/probe_endpoint.py</string>
 		<string>run</string>
+		<!-- <string>--restart-tunnel</string> -->
+		<!-- <string>com.cmf.spark-tunnel</string> -->
 	</array>
 	<key>WorkingDirectory</key>
 	<string>{{REPO}}</string>

@@ -283,6 +283,42 @@ func TestProviderRow(t *testing.T) {
 	}
 }
 
+// 2026-11-09: the Spark tunnel answered single requests but dropped half of
+// a parallel burst. The row fails on the parallel test alone and offers to
+// restart the user's tunnel job (never to edit or unload it).
+func TestProviderRowParallelFailureOffersTunnelRestart(t *testing.T) {
+	f := healthy()
+	f.Health.ProviderTests = []probe.ProviderTest{
+		{Role: "LLM", Provider: "local", OK: true, Detail: "answers"},
+		{Role: "LLM (6 at once)", Provider: "local", Kind: "parallel", OK: true, Detail: "all 6 parallel requests answered"},
+		{Role: "embeddings", Provider: "local", OK: true, Detail: "answers"},
+	}
+	if r := byID(Evaluate(f))["providers"]; r.Level != OK || r.Fix != nil ||
+		r.Detail != "LLM local, embeddings local answer; all 6 parallel requests answered" {
+		t.Fatalf("healthy: %+v", r)
+	}
+	f.Health.ProviderTests[1].OK = false
+	f.Health.ProviderTests[1].Detail = "3 of 6 parallel requests failed (RemoteProtocolError); the path to the model drops concurrent connections"
+	r := byID(Evaluate(f))["providers"]
+	if r.Level != Fail || !strings.Contains(r.Detail, "LLM (6 at once) local: 3 of 6") {
+		t.Fatalf("%+v", r)
+	}
+	if r.Fix == nil || len(r.Fix.Steps) != 1 || r.Fix.Steps[0].Show != "sh -c launchctl kickstart -k gui/$(id -u)/com.cmf.spark-tunnel" {
+		t.Fatalf("fix: %+v", r.Fix)
+	}
+	// No loaded tunnel job: nothing CMF can restart, so no fix.
+	f.Launchd[2].Loaded = false
+	if r := byID(Evaluate(f))["providers"]; r.Fix != nil {
+		t.Fatalf("%+v", r.Fix)
+	}
+	// A hosted provider failing isn't the tunnel's fault.
+	f.Launchd[2].Loaded = true
+	f.Health.ProviderTests = []probe.ProviderTest{{Role: "LLM", Provider: "openai", Detail: "openai answered HTTP 500"}}
+	if r := byID(Evaluate(f))["providers"]; r.Level != Fail || r.Fix != nil {
+		t.Fatalf("%+v", r)
+	}
+}
+
 func TestEmbeddingRow(t *testing.T) {
 	f := healthy()
 	f.Health.Graph = "g"
