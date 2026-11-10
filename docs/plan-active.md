@@ -176,6 +176,7 @@ B01–B04, the first low-Spark shortlist, were closed 2026-10-10 and moved to pl
 | B19 | Project-less `claude_desktop_code` promotions | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b19--project-less-claude_desktop_code-promotions-closed-2026-10-26) |
 | B20 | Saves that overflow the local model's context are lost | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b20--saves-that-overflow-the-local-models-context-are-lost-closed-2026-10-26) |
 | B21 | Codex keeps a stale OAuth login beside the token | **Closed 2026-10-26** → [plan-history.md](plan-history.md#b21--codex-keeps-a-stale-oauth-login-beside-the-token-closed-2026-10-26) |
+| [B22](#b22--silent-empty-entity-extraction) | Silent empty entity extraction | Open; Spark replays, repeated runs |
 
 ### Recurring review operations
 
@@ -305,6 +306,22 @@ Raised in review on [PR #6](https://github.com/username/context-memory-fabric/pu
 
 - [ ] **`exchange_refresh_token` drops `resource`.** `exchange_authorization_code` persists `authorization_code.resource` (`server/core/oauth_provider.py:161`); the refresh path hardcodes `None` (`:202`), so a token's audience binding silently disappears the first time it refreshes. Not exploitable today — the SDK's `ProviderTokenVerifier` only calls `load_access_token` and never checks `resource` — but it becomes a real bug the moment RFC 8707 audience validation is enabled, and it would surface ~30 days after a client first connects. `RefreshToken` needs to carry the resource forward for this to be fixable at all. **Deferred (User, 2026-09-28):** `resource` names which server a token was issued for, not which client or IP holds it, so this only bites with more than one server behind the same auth *and* audience validation turned on. Neither applies to this single-server deployment.
 
+
+### B22 — Silent empty entity extraction
+
+#### About one episode in five gets no entities (found 2026-11-10, extraction supersession fix)
+
+Found while measuring the supersession extraction fix (branch `claude/amazing-ramanujan-62240a`) on scratch replays. On the production `typed-recall` profile with `unsloth/qwen3.5-122b-a10b`, the entity-extraction call returns nothing for roughly one episode in five. `ensure_project_entity` (`server/providers/episode_postprocess.py`) then adds the project entity, so the episode looks extracted, but it gets no other entities and no facts.
+
+- **Measured:** 6/30 MS4e sample episodes on the unchanged base code (3fe763c), 6/30 on the fixed branch, and 2/12 on a replay of short live captures. It happens on short and long episodes alike, so it predates the supersession work.
+- **Hidden by the metric:** `scripts/ms4e_entity_quality.py` reports `empty=0%` because the backfilled project entity counts as a mention.
+- **Related noise:** fact counts from identical runs vary widely (the base code gave 52 and then 25 facts on the same 6 episodes). Some of that swing is probably this failure.
+
+- [ ] **Find the cause.** Capture the raw `extract_nodes` response for an affected episode and tell apart an empty list, a JSON/schema failure retried into empty, a truncation, and a structured-output (`CMF_LOCAL_STRUCTURED_MODE=json_schema`) problem.
+- [ ] **Make the metric honest.** Count project-entity-only episodes as empty in `ms4e_entity_quality.py`.
+- [ ] **Fix and measure** (for example, a retry on an empty entity list, or a prompt or structured-output change). Compare with at least two runs per variant; one replay can't separate a change from run-to-run noise.
+
+**How to replay:** the MS4e sample's episodes survive only in the NAS journal (`/Volumes/nas-data/projects/context-memory-fabric/imports/journal/journal.db`; the live journal starts at the 2026-10-23 move). Copy it locally, run `scripts/rebuild_graph_from_ledger.py` in a one-off `cmf-server` container with `CMF_STATE_DIR` pointing at the copy, hold the live Spark slot (`server.adapters.spark_lock.llm_slot`; the script doesn't take it), and write only to new scratch graph names.
 
 ---
 
