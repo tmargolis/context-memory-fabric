@@ -428,7 +428,10 @@ func (p Prober) listener(ctx context.Context, port int) *Listener {
 	if p.OS == "windows" {
 		return nil // netstat parsing comes with the Windows test pass (plan section 5).
 	}
-	r := p.Runner.Run(ctx, run.Cmd{Name: "lsof", Args: []string{"-nP", "-iTCP:" + strconv.Itoa(port), "-sTCP:LISTEN", "-Fpc"}})
+	// -b avoids kernel calls that can block: without it lsof stalls on a hung
+	// network mount (the hidden Time Machine SMB share) past the 15s timeout
+	// and Status falsely reports "nothing is listening".
+	r := p.Runner.Run(ctx, run.Cmd{Name: "lsof", Args: []string{"-b", "-nP", "-iTCP:" + strconv.Itoa(port), "-sTCP:LISTEN", "-Fpc"}})
 	// -F output: p<pid> then c<command> lines.
 	var l Listener
 	for _, line := range strings.Split(r.Stdout, "\n") {

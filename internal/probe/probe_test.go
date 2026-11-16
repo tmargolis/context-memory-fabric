@@ -44,7 +44,7 @@ func healthyFake(h home.Home) *run.Fake {
 		"docker version --format {{.Server.Version}}":                             {Stdout: "29.7.2\n"},
 		"docker compose --project-directory " + h.Dir + " ps --all --format json": {Stdout: composePS},
 		"docker ps --all --format json":                                           {Stdout: dockerPS},
-		"lsof -nP -iTCP:8000 -sTCP:LISTEN -Fpc":                                   {Stdout: "p45964\nccom.docke\nf144\n"},
+		"lsof -b -nP -iTCP:8000 -sTCP:LISTEN -Fpc":                                {Stdout: "p45964\nccom.docke\nf144\n"},
 		"launchctl list":                                                          {Stdout: launchctlList},
 		"id -u":                                                                   {Stdout: "501\n"},
 		"launchctl print-disabled gui/501":                                        {Stdout: printDisabled},
