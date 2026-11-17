@@ -33,6 +33,7 @@ import uuid
 
 from server.core.env import review_rules_path
 from server.journal.store import DEFAULT_JOURNAL_PATH
+from server.review.duplicates import find_duplicates
 
 VERDICTS = ("approve", "reject", "flag")
 MAX_BATCH = 50
@@ -202,6 +203,40 @@ def _doc_shape(proposal: Any, wiki_root: Optional[Path]) -> dict[str, Any]:
     return shape
 
 
+def _run_name(started_at: Optional[str]) -> str:
+    """A run's Chicago-local date, 'Nov 12' (run ids carry a UTC time; the 11:11 PM run lands on the next UTC day)."""
+    from zoneinfo import ZoneInfo
+
+    try:
+        started = datetime.fromisoformat(started_at or "")
+    except ValueError:
+        return "earlier run"
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    local = started.astimezone(ZoneInfo("America/Chicago"))
+    return f"{local.strftime('%b')} {local.day}"
+
+
+def _earlier_unconfirmed_episodes(store: RecommendationStore, mirrors_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Episodes of runs the user has not confirmed yet, as comparison rows for find_duplicates."""
+    rows: list[dict[str, Any]] = []
+    for run_id in store.unconfirmed_runs():
+        run = store.run(run_id)
+        verdicts = {r["item_id"]: r["verdict"] for r in store.recommendations(run_id)}
+        name = _run_name(run["started_at"] if run else None)
+        for it in json.loads(run["items_json"] or "[]") if run else []:
+            if it.get("item_type") != "episode":
+                continue
+            m = mirrors_by_id.get(it["item_id"], {})
+            rows.append({
+                "ref": f"{name} {it['label']} ({verdicts.get(it['item_id'], 'pending')})",
+                "item_id": it["item_id"],
+                "thread_key": m.get("thread_key"),
+                "conversation_id": m.get("conversation_id"),
+            })
+    return rows
+
+
 def build_batch(
     store: RecommendationStore,
     *,
@@ -217,10 +252,8 @@ def build_batch(
     max_items = max(1, min(int(max_items), MAX_BATCH))
     seen = store.seen_item_ids()
 
-    episodes = [
-        m for m in list_episode_mirrors(tier="tier1", approval_state="queued_for_review", base_dir=episode_base_dir)
-        if m.get("memory_id") and m["memory_id"] not in seen
-    ]
+    queued = list_episode_mirrors(tier="tier1", approval_state="queued_for_review", base_dir=episode_base_dir)
+    episodes = [m for m in queued if m.get("memory_id") and m["memory_id"] not in seen]
     episodes.sort(key=lambda m: m.get("written_at") or "")
     docs = [p for p in list_proposals(status="pending_review", proposals_dir=proposals_dir) if p.provider == "wiki" and p.proposal_id not in seen]
     docs.sort(key=lambda p: p.created_at or "")
@@ -263,6 +296,13 @@ def build_batch(
             "created_at": p.created_at,
             **_doc_shape(p, wiki_root),
         })
+
+    # Cross-run duplicates: mark episodes that repeat one from a run still awaiting confirmation.
+    ep_items = [i for i in items if i["item_type"] == "episode"]
+    if ep_items:
+        hits = find_duplicates(ep_items, _earlier_unconfirmed_episodes(store, {m["memory_id"]: m for m in queued if m.get("memory_id")}))
+        for item in ep_items:
+            item.update(hits.get(item["label"], {}))
 
     run_id = store.start_run(items) if items else None
     return {

@@ -403,3 +403,34 @@ def test_store_adds_close_columns_to_an_older_journal(tmp_path):
     with rec.RecommendationStore(db) as store:
         cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(review_runs)")}
     assert {"closed_at", "close_reason"} <= cols
+
+
+def test_batch_marks_an_episode_that_repeats_one_from_an_unconfirmed_run(env):
+    c1, c2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    w1, w2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    def mid(conv):
+        return f"reason:{conv}:claude_code:{conv}:{w1}:claude_code:{conv}:{w2}:0::extract@1.7"
+
+    def mirror(conv):
+        write_episode_mirror(
+            memory_id=mid(conv), reasoning_kind="decision", statement="Same transcript, saved twice",
+            confidence=0.8, evidence_event_ids=["e1"], policy_name="extract", policy_version="1.7",
+            approval_state="queued_for_review", conversation_id=conv, harness="claude_code",
+            project="acme", thread_key="shared-thread", base_dir=env["mirrors"],
+        )
+
+    mirror(c1)
+    first = _batch(env)
+    assert not any("likely_duplicate_of" in i for i in first["items"])
+    rec.record(env["store"], first["run_id"],
+               [{"label": i["label"], "verdict": "approve", "reason": "ok"} for i in first["items"]],
+               proposals_dir=env["docs"])
+    kept = next(i["label"] for i in first["items"] if i["item_id"] == mid(c1))
+
+    mirror(c2)
+    second = _batch(env)
+    dup = next(i for i in second["items"] if i["item_id"] == mid(c2))
+    assert len(dup["likely_duplicate_of"]) == 1
+    assert dup["likely_duplicate_of"][0].endswith(f"{kept} (approve)")
+    assert not any("likely_duplicate_of" in i for i in second["items"] if i is not dup)
