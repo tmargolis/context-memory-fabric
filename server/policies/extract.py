@@ -34,8 +34,9 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 import os
 
-from server.consolidation.project_aliases import resolve_project
+from server.consolidation.project_aliases import project_wiki_folders, resolve_project
 from server.core.env import review_rules_path
+from server.policies.doc_validate import collapse_stacked_body, drop_restated_sections, fix_frontmatter_project
 from server.core.models import DatePrecision, SourceEvent
 from server.core.rate_limiter import GeminiQuotaExhaustedError, GeminiRateLimiter
 from server.policies.protocols import ExtractionCategory, PolicyContext, ReasoningEpisode
@@ -380,6 +381,11 @@ def _canonicalize_doc_project_folder(target_path: str, project: str, existing_fo
         if _fold(existing) == project_key:
             folder = existing
             break
+    # An operator-declared folder (CMF_PROJECT_WIKI_FOLDERS) beats the slug-derived guess, which
+    # would mint a duplicate folder when the slug and the folder are named differently.
+    declared = project_wiki_folders().get(re.sub(r"[^a-z0-9]+", "-", project.lower()).strip("-"))
+    if declared:
+        folder = next((e for e in existing_folders if _fold(e) == _fold(declared)), declared)
 
     if parts[2] == folder:
         return target_path  # model already picked (a spelling of) the right folder
@@ -705,6 +711,8 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
             existing_body = strip_frontmatter(current).strip()
             if existing_body and existing_body in proposed_content:
                 proposed_content = proposed_content.replace(existing_body, "", 1).strip()
+            # A model-restated copy of sections the page already has (reviews kept rejecting these).
+            proposed_content = drop_restated_sections(proposed_content, existing_body)
             if not proposed_content.strip():
                 return None
         else:
@@ -734,8 +742,13 @@ class ExtractPolicyV1(ReasoningEpisodePolicyV1):
                 target_path = _canonicalize_doc_project_folder(target_path, project, existing_project_folders)
 
         if not matched_existing:
+            proposed_content = collapse_stacked_body(proposed_content)  # one copy of a page emitted several times
             proposed_content = _ensure_frontmatter(
                 proposed_content, target_path=target_path, harness=harness, created_date=created_date, updated_date=updated_date
+            )
+            # The page's `project:` line is written by the model; the resolved slug is ground truth.
+            proposed_content = fix_frontmatter_project(
+                proposed_content, project if project and project not in ("unknown", "other", "tmp-other") else None
             )
 
         return ReasoningEpisode(

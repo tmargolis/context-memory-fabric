@@ -35,6 +35,26 @@ def project_aliases() -> dict[str, str]:
     return out
 
 
+def project_wiki_folders() -> dict[str, str]:
+    """`CMF_PROJECT_WIKI_FOLDERS="slug=Folder-Name,..."`: the wiki folder a project's pages live in.
+
+    For when the folder is named differently from the slug (slug `widgets-dev`, pages
+    under `WIKI/projects/Widgets/`), where the default slug-to-folder guess would mint
+    a duplicate folder. The folder name keeps the casing written here.
+    """
+    out: dict[str, str] = {}
+    for item in (os.getenv("CMF_PROJECT_WIKI_FOLDERS") or "").split(","):
+        if not item.strip():
+            continue
+        slug, sep, folder = item.partition("=")
+        slug, folder = _slug(slug), folder.strip().strip("/")
+        if not sep or not slug or not folder or "/" in folder:
+            logger.warning("ignoring malformed CMF_PROJECT_WIKI_FOLDERS entry %r", item)
+            continue
+        out[slug] = folder
+    return out
+
+
 def resolve_project(project: Optional[str], aliases: Optional[dict[str, str]] = None) -> Optional[str]:
     """`project` with its alias applied (one hop; aliases are not chained)."""
     if not project:
