@@ -21,6 +21,7 @@ Reject:
 - **Process narration:** "the assistant investigated…", "planned to read the file…", kickoffs and search steps with no result.
 - **Questions with no answer** in the episode.
 - **Duplicates** of another item in this batch, or of something the conversation already recorded better (prefer the merged, fuller one).
+- **Cross-run duplicates:** an episode with `likely_duplicate_of` has the same source transcript windows as an item in a run still awaiting confirmation, or earlier in this batch. Reject it as a duplicate of the named item, unless this one is clearly fuller, in which case flag both so the user chooses. `same_thread_as` is weaker (the same thread under another conversation): compare the statements and reject only a real duplicate.
 - **Short-lived churn:** an intermediate plan or guess that was revised within the same working session before anything was acted on (e.g. "will use X" → minutes later "actually Y"). The newer episode covers it. If the earlier state was actually in effect, approve it instead (see above).
 - One-off task chatter, transient drafts, casual remarks, speculation.
 - Facts the code or repository itself already records (function names, file layout), unless the episode adds why.
