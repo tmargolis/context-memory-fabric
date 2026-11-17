@@ -47,6 +47,10 @@ Reject:
 
 Frontmatter dates (`created`, `updated`) come from when the conversation happened, not from the review date.
 
+## Rebuilding (only when told not to flag)
+
+When the task says there is no flag verdict, an item that is part good and part bad is rejected with a reason that starts `rebuild:` and says what to keep and what to drop or fix. Then, after `record_review_recommendations`, call `rebuild_review_item` once for each such item with the corrected material: an episode's rebuilt statement; for a doc on an existing page, only the new material (never the page again); for a new page, the whole page with complete frontmatter. That stages a new pending item for the next run. A rebuilt item (its rationale starts "Rebuild of") is judged like any other: approve it if it is now sound, otherwise reject it plainly without `rebuild:`. An item is rebuilt once and a rebuild is never rebuilt; the tool refuses both.
+
 ## Always flag rather than decide
 
 - Which project an item belongs to, when it's unclear or would need a new project name.

@@ -425,6 +425,7 @@ class TestImportMemoriesIntegration(unittest.IsolatedAsyncioTestCase):
             # Nightly auto-review (2026-10-08)
             "get_review_batch",
             "record_review_recommendations",
+            "rebuild_review_item",  # nightly review rebuild step
             "list_review_recommendations",
             "confirm_review_recommendations",
             "close_review_run",  # 2026-10-18
