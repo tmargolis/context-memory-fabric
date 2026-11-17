@@ -143,7 +143,7 @@ class TestCapabilityDrivenToolRegistration(unittest.IsolatedAsyncioTestCase):
         # inspect_knowledge_document (2026-10-21, optional source inspection) +
         # memory_status (2026-10-23, background remember outcomes) +
         # cmf_selftest (2026-10-24, setup item 1.7).
-        self.assertEqual(len(names), 34)
+        self.assertEqual(len(names), 35)
 
 
 if __name__ == "__main__":

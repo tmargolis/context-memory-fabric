@@ -41,6 +41,8 @@ What a yes does (`confirm_review_recommendations`):
 
 From any other chat or app, `list_review_recommendations` shows the latest unconfirmed run again, and `confirm_review_recommendations` confirms it. Items a run has recommended on aren't offered to the next run; a night with nothing new reports so. Each run covers at most 50 items, oldest first; a backlog is worked through over several nights.
 
+**No flag step (optional).** If you tell the task never to flag, it rejects an item that is part good and part bad with a reason starting `rebuild:`, then calls `rebuild_review_item` with the corrected material. That stages a new pending item, shown in the summary as "Rebuilt as …", which the next run judges like any other. An item is rebuilt once, and a rebuild is never rebuilt, so the loop ends after one round. Confirming a run never touches a rebuild.
+
 A run you won't confirm (stale, its items decided some other way) can be closed with `close_review_run(run_id, reason)`. It records no verdict; the run stops showing as unconfirmed, and its items that are still queued go to the next run.
 
 ## Notes per app

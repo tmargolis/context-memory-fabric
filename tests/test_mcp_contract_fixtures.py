@@ -96,7 +96,8 @@ class TestMCPContractFixtures(unittest.TestCase):
         # 32 as of Notion paragraph inspection (2026-10-21).
         # 33 as of memory_status (2026-10-23, background remember outcomes).
         # 34 as of cmf_selftest (2026-10-24, setup item 1.7).
-        self.assertEqual(len(self.expected), 34)
+        # 35 as of rebuild_review_item (2026-11-17, nightly review rebuild step).
+        self.assertEqual(len(self.expected), 35)
 
 
 if __name__ == "__main__":

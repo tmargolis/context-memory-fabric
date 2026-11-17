@@ -1922,6 +1922,57 @@ async def record_review_recommendations(
 
 
 @app.tool(
+    title="Rebuild Review Item",
+    annotations=types.ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=False,
+    ),
+)
+async def rebuild_review_item(
+    run_id: Annotated[str, Field(description="The run_id from get_review_batch.")],
+    label: Annotated[str, Field(description="The item's label, e.g. 'EP3' or 'DOC1'. It must be one you rejected with a reason starting 'rebuild:'.")],
+    content: Annotated[
+        str,
+        Field(description="The corrected material. Episode: the rebuilt statement (keep the good part, drop or fix the rest). "
+                          "Doc on an existing page: only the new material to add, not the page again. "
+                          "Doc for a new page: the whole page with complete frontmatter."),
+    ],
+    target_heading: Annotated[Optional[str], Field(description="Docs only: the heading the addition goes under, when it differs from the original's.")] = None,
+    ctx: Context = None,  # type: ignore[assignment]
+) -> str:
+    """Stage the corrected version of an item you rejected with a 'rebuild:' reason (nightly review, no human flag step).
+
+    WHEN TO USE:
+    - In the nightly review, after record_review_recommendations, once for each EP or DOC you rejected
+      because part is good and part is bad. The reason you recorded starts 'rebuild:' and says what to keep
+      and what to drop or fix; `content` is that corrected material.
+
+    CRITICAL SAFETY CONTRACT:
+    - Stages a NEW pending item; the next nightly run judges it like any other. Approves nothing and
+      changes no memory or wiki page.
+    - An item is rebuilt once, and a rebuild is never rebuilt (its rationale starts 'Rebuild of'): reject
+      such an item plainly, without 'rebuild:'.
+    """
+    from server.review.rebuild import rebuild_item
+    from server.review.recommendations import RecommendationStore
+
+    request_ctx = ctx.request_context if ctx is not None else None
+    try:
+        with RecommendationStore() as store:
+            result = rebuild_item(
+                store, run_id, label, content, target_heading=target_heading,
+                session=request_ctx.session if request_ctx else None,
+                request_id=request_ctx.request_id if request_ctx else None,
+                wiki_root=_wiki_root_or_none(),
+            )
+    except ValueError as e:
+        return f"Could not rebuild {label}: {e}"
+    return f"Rebuilt {label} as `{result['rebuilt_as']}`; it will be judged in the next nightly run."
+
+
+@app.tool(
     title="List Review Recommendations",
     annotations=types.ToolAnnotations(
         read_only_hint=True,

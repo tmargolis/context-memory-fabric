@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS review_recommendations (
     verdict TEXT NOT NULL,
     reason TEXT NOT NULL,
     rebuild_proposal_id TEXT,
+    rebuilt_as TEXT,
     summary TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     final_verdict TEXT,
@@ -93,6 +94,9 @@ class RecommendationStore:
         for col in ("closed_at", "close_reason"):  # added 2026-10-18 for close_run
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE review_runs ADD COLUMN {col} TEXT")
+        rec_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(review_recommendations)")}
+        if "rebuilt_as" not in rec_cols:  # added with the rebuild step; confirm never reads it (unlike rebuild_proposal_id)
+            self._conn.execute("ALTER TABLE review_recommendations ADD COLUMN rebuilt_as TEXT")
         self._conn.commit()
 
     def close(self) -> None:
@@ -165,6 +169,12 @@ class RecommendationStore:
             "UPDATE review_recommendations SET status = ?, final_verdict = ?, decided_at = ? WHERE run_id = ? AND item_id = ?",
             (status, final_verdict, _now(), run_id, item_id),
         )
+        self._conn.commit()
+
+    def set_rebuild(self, run_id: str, item_id: str, new_id: str) -> None:
+        """Link a rejected item to the new item staged in its place (the rebuild step)."""
+        self._conn.execute("UPDATE review_recommendations SET rebuilt_as = ? WHERE run_id = ? AND item_id = ?",
+                           (new_id, run_id, item_id))
         self._conn.commit()
 
     def mark_closed(self, run_id: str, reason: Optional[str]) -> int:
@@ -411,11 +421,14 @@ def format_summary(store: RecommendationStore, run_id: str, *,
         out += ["", "**Episodes (EP)**", "", "| # | Statement | Reasoning | File |", "|---|---|---|---|"]
         for r in eps:
             link = _json_link(store, r, episode_base_dir=episode_base_dir, proposals_dir=proposals_dir)
-            out.append(f"| {r['label']} | {_cell(r['summary'])} | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)} | {link} |")
+            rebuilt = f" Rebuilt as `{r['rebuilt_as']}` for the next run." if r["rebuilt_as"] else ""
+            out.append(f"| {r['label']} | {_cell(r['summary'])} | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)}{rebuilt} | {link} |")
     if docs:
         out += ["", "**Doc proposals (DOC)**", "", "| # | Target path | Rationale | File |", "|---|---|---|---|"]
         for r in docs:
             rebuild = f" Rebuild drafted as `{r['rebuild_proposal_id']}`." if r["rebuild_proposal_id"] else ""
+            if r["rebuilt_as"]:
+                rebuild += f" Rebuilt as `{r['rebuilt_as']}` for the next run."
             link = _json_link(store, r, episode_base_dir=episode_base_dir, proposals_dir=proposals_dir)
             out.append(f"| {r['label']} | `{r['summary']}` | {_VERDICT_WORD[r['verdict']]} {_cell(r['reason'], 240)}{rebuild} | {link} |")
     out += ["", f"Say **yes** to confirm (`confirm_review_recommendations(run_id=\"{run_id}\")`), or e.g. "
