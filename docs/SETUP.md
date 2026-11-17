@@ -336,6 +336,7 @@ Configuration lives in `~/.cmf/.env`, which the app's Features page edits; the s
 | `CMF_EXTRACTION_PROFILE` | No | `typed-recall` | Entity extraction prompt. `legacy` (the pre-2026-09-28 prompt) is opt-in, for reproducing old extraction. |
 | `CMF_PROJECT_ROOTS` | No | macOS `~/Dev`, `~/Documents` | Folders whose subfolders are projects (comma-separated). Set it on Linux and Windows. |
 | `CMF_PROJECT_FOLDER_MAP` / `CMF_PROJECT_ALIASES` | No | — | Map a folder to a project, or fold one project name into another (`path=project,...` / `old=new,...`). |
+| `CMF_PROJECT_WIKI_FOLDERS` | No | — | The `WIKI/projects/` folder a project's new pages go in when it is named differently from the project (`slug=Folder,...`). |
 | `CMF_REVIEWER` | No | OS login name | Name recorded on review verdicts. |
 | `CMF_REVIEW_RULES_PATH` | No | `<state>/review-rules.md` | A Markdown file of your own review rules, appended to the generic ones the [nightly review](NIGHTLY-REVIEW.md) follows. The default lives in CMF's state folder (`~/.cmf/state/review-rules.md`), where the Docker containers can read it too; a relative path counts from that folder. |
 | `CMF_EXTRACTION_WORKSTREAMS` / `_HARDWARE` / `_TOPICS` / `_PERSON` / `_DEBRIS_FILES` | No | generic examples | Names from your own work shown to the extraction model as examples (comma-separated). |
