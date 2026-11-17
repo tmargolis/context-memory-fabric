@@ -30,6 +30,12 @@ search-path = ["."]
 dev = [
     "pytest>=9.1.1",
 ]
+# Offline prompt tuning for the review judge (scripts/tune_review_judge.py). Never installed in the
+# server image (the Dockerfile syncs with --no-dev) and never imported by server/.
+tune = [
+    "dspy>=3.5",
+    "optuna>=4",
+]
 
 [tool.pytest.ini_options]
 # Tests marked `live` call real external APIs/services. They are excluded by default:
