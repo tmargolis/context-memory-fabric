@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "context-memory-fabric"
-version = "1.0.7"
+version = "1.0.8"
 source = { editable = "." }
 dependencies = [
     { name = "graphiti-core", extra = ["anthropic", "falkordb", "google-genai"] },
