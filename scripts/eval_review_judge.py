@@ -54,6 +54,15 @@ SYSTEM = (
 )
 
 
+NO_FLAG = (
+    "There is no flag verdict. Nobody will review your decision, so every item must be approve or reject. "
+    "Wherever the rules below say to flag, decide instead: approve when the item stands as written, or when "
+    "the only problem is a wrong project slug (put the right slug in the reason); reject when the content is "
+    "not worth keeping, or when part is good and part is bad, in which case start the reason with 'rebuild:' "
+    "and say what to keep and what to drop or fix. Never answer flag.\n\n"
+)
+
+
 def rules_text() -> str:
     text = RULES_PATH.read_text(encoding="utf-8").strip()
     mine = Path(os.environ.get("CMF_REVIEW_RULES_PATH", STATE / "review-rules.md"))
@@ -202,6 +211,7 @@ def main() -> int:
     ap.add_argument("--split", default=",".join(SPLITS_DEFAULT))
     ap.add_argument("--chunk-items", type=int, default=0, help="judge each run in chunks of N items (for small-context local models)")
     ap.add_argument("--tag", default="", help="suffix for result files (keeps runs on different eval rows apart)")
+    ap.add_argument("--no-flag", action="store_true", help="approve or reject only; a flag counts as no answer")
     ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
                     help="Anthropic reasoning effort (adaptive thinking); omit for the plain call")
     ap.add_argument("--pause", type=float, default=0.5, help="seconds between calls (raise for rate-limited models)")
@@ -225,6 +235,9 @@ def main() -> int:
         return 0
 
     system = SYSTEM + rules_text()
+    if args.no_flag:  # decisions only, to test removing the human review step
+        system = SYSTEM.replace("approve|reject|flag", "approve|reject") + rules_text()
+        system = system.replace("# Rules\n\n", NO_FLAG + "# Rules\n\n", 1)
     models = [m for m in args.models.split(",") if m]
     prices = json.loads(Path(args.prices).read_text()) if args.prices else {}
 
