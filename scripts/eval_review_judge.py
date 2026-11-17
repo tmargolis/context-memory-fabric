@@ -153,12 +153,18 @@ def post(url: str, headers: dict, body: dict, timeout: int = 900) -> dict:
         raise RuntimeError(f"HTTP {exc.code}: {exc.read().decode()[:300]}") from None
 
 
+EFFORT: str | None = None  # set from --effort (Anthropic models only)
+
+
 def call(provider: str, model: str, system: str, user: str, env: dict) -> tuple[str, int, int]:
     """Returns (text, input_tokens, output_tokens)."""
     if provider == "anthropic":
+        body = {"model": model, "max_tokens": 16000, "system": system, "messages": [{"role": "user", "content": user}]}
+        if EFFORT:  # reasoning depth; thinking is adaptive (the nightly task runs Opus 5.5 at medium)
+            body["thinking"] = {"type": "adaptive"}
+            body["output_config"] = {"effort": EFFORT}
         r = post("https://api.anthropic.com/v1/messages",
-                 {"x-api-key": env["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"},
-                 {"model": model, "max_tokens": 16000, "system": system, "messages": [{"role": "user", "content": user}]})
+                 {"x-api-key": env["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"}, body)
         text = "".join(b.get("text", "") for b in r["content"])
         return text, r["usage"]["input_tokens"], r["usage"]["output_tokens"]
     if provider in ("openai", "local"):
@@ -196,11 +202,15 @@ def main() -> int:
     ap.add_argument("--split", default=",".join(SPLITS_DEFAULT))
     ap.add_argument("--chunk-items", type=int, default=0, help="judge each run in chunks of N items (for small-context local models)")
     ap.add_argument("--tag", default="", help="suffix for result files (keeps runs on different eval rows apart)")
+    ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
+                    help="Anthropic reasoning effort (adaptive thinking); omit for the plain call")
     ap.add_argument("--pause", type=float, default=0.5, help="seconds between calls (raise for rate-limited models)")
     ap.add_argument("--dry-run", action="store_true", help="estimate tokens/cost only; no API calls")
     ap.add_argument("--score-stored", action="store_true", help="score the nightly judge's stored recommendations")
     ap.add_argument("--prices", default=None, help="JSON file {provider:model: [in, out]} USD per million tokens")
     args = ap.parse_args()
+    global EFFORT
+    EFFORT = args.effort
 
     splits = tuple(s for s in args.split.split(",") if s)
     rows = load_rows(splits)
